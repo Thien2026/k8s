@@ -5,6 +5,10 @@ ingress:
   ingressClassName: nginx
   extraAnnotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "1800"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
   tls:
     source: secret
     secretName: tls-rancher-ingress
