@@ -19,6 +19,9 @@ fi
 : "${DOMAIN:?DOMAIN chưa set trong config/env.sh}"
 : "${LETSENCRYPT_EMAIL:?LETSENCRYPT_EMAIL chưa set}"
 
+# RKE2 cài kubectl tại đây, chưa có trong PATH mặc định
+export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:${PATH}"
+
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
 }
