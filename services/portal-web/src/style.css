@@ -8,26 +8,31 @@ body {
   color: #e7e9ea;
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 14px;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .layout {
   display: flex;
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .sidebar {
-  width: 240px;
+  width: 252px;
   flex-shrink: 0;
   background: #161d26;
   border-right: 1px solid #2f3943;
-  overflow-y: auto;
-  padding: 16px 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  position: sticky;
+  top: 0;
 }
 
 .sidebar-brand {
-  padding: 0 16px 16px;
+  padding: 16px;
   border-bottom: 1px solid #2f3943;
-  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .sidebar-brand h1 {
@@ -41,21 +46,52 @@ body {
   font-size: 12px;
 }
 
-.nav-group {
-  margin-bottom: 8px;
+.sidebar-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0 16px;
 }
 
-.nav-group-title {
-  padding: 8px 16px 4px;
+.nav-group {
+  margin-bottom: 4px;
+}
+
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 8px 16px;
+  background: none;
+  border: none;
+  color: #8b98a5;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: #6e7a86;
+  cursor: pointer;
+  text-align: left;
+}
+
+.nav-group-toggle:hover {
+  color: #c8d0d8;
+}
+
+.nav-group-toggle .chev {
+  margin-right: 6px;
+  font-size: 10px;
+  width: 12px;
+}
+
+.nav-group-items {
+  overflow: hidden;
+}
+
+.nav-group-items.collapsed {
+  display: none;
 }
 
 .nav-link {
   display: block;
-  padding: 8px 16px;
+  padding: 8px 16px 8px 28px;
   color: #c8d0d8;
   text-decoration: none;
   cursor: pointer;
@@ -77,6 +113,7 @@ body {
   flex: 1;
   overflow: auto;
   padding: 24px;
+  height: 100vh;
 }
 
 .page-title {
@@ -103,6 +140,92 @@ body {
   margin-bottom: 16px;
 }
 
+.card h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.stat-box {
+  background: #121a24;
+  border-radius: 10px;
+  padding: 16px;
+  text-align: center;
+}
+
+.stat-box .num {
+  font-size: 28px;
+  font-weight: 700;
+  color: #5eb3f6;
+}
+
+.stat-box .lbl {
+  font-size: 12px;
+  color: #8b98a5;
+  margin-top: 4px;
+}
+
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.meta-row span {
+  color: #8b98a5;
+}
+
+.meta-row strong {
+  color: #e7e9ea;
+}
+
+.bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.bar {
+  height: 8px;
+  background: #243044;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.bar > i {
+  display: block;
+  height: 100%;
+  background: #5eb3f6;
+  border-radius: 4px;
+}
+
+.components {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.comp {
+  background: #121a24;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.comp.ok::before {
+  content: "✓ ";
+  color: #4ade80;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -117,6 +240,7 @@ td {
   text-align: left;
   padding: 10px 12px;
   border-bottom: 1px solid #2f3943;
+  vertical-align: top;
 }
 
 th {
@@ -142,18 +266,64 @@ tr:hover td {
   color: #4ade80;
 }
 
+.badge-warn {
+  color: #fbbf24;
+}
+
 .loading {
   padding: 24px;
   color: #8b98a5;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.pagination button {
+  background: #243044;
+  border: 1px solid #2f3943;
+  color: #e7e9ea;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.pagination button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pagination select {
+  background: #243044;
+  border: 1px solid #2f3943;
+  color: #e7e9ea;
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+
 @media (max-width: 768px) {
+  body {
+    overflow: auto;
+  }
+
   .layout {
     flex-direction: column;
+    height: auto;
   }
 
   .sidebar {
     width: 100%;
-    max-height: 40vh;
+    height: auto;
+    max-height: 45vh;
+    position: relative;
+  }
+
+  .main {
+    height: auto;
   }
 }

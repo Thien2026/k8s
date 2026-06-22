@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 	"github.com/go-chi/chi/v5"
@@ -12,10 +13,10 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, _ *http.Request) {
 		Key   string `json:"key"`
 		Label string `json:"label"`
 		Group string `json:"group"`
-		Type  string `json:"type"` // k8s | rancher
+		Type  string `json:"type"`
 	}
 	menu := []item{
-		{Key: "overview", Label: "Tổng quan", Group: "Cluster", Type: "page"},
+		{Key: "overview", Label: "Cluster Dashboard", Group: "Platform", Type: "page"},
 		{Key: "clusters", Label: "Clusters", Group: "Cluster", Type: "rancher"},
 		{Key: "projects", Label: "Projects", Group: "Cluster", Type: "rancher"},
 	}
@@ -35,14 +36,39 @@ func (h *Handler) rancherRequired(w http.ResponseWriter) bool {
 	return true
 }
 
+func parsePageLimit(r *http.Request) (page, limit int) {
+	page, _ = strconv.Atoi(r.URL.Query().Get("page"))
+	limit, _ = strconv.Atoi(r.URL.Query().Get("limit"))
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 50
+	}
+	return page, limit
+}
+
+func (h *Handler) ClusterDashboard(w http.ResponseWriter, r *http.Request) {
+	if !h.rancherRequired(w) {
+		return
+	}
+	dash, err := h.rancher.ClusterDashboard(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, dash)
+}
+
 func (h *Handler) ListK8sResource(w http.ResponseWriter, r *http.Request) {
 	if !h.rancherRequired(w) {
 		return
 	}
 	key := chi.URLParam(r, "resource")
 	ns := r.URL.Query().Get("namespace")
+	page, limit := parsePageLimit(r)
 
-	list, err := h.rancher.ListK8s(r.Context(), key, ns)
+	list, err := h.rancher.ListK8s(r.Context(), key, ns, page, limit)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return

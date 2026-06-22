@@ -1,4 +1,5 @@
 const $ = (sel) => document.querySelector(sel);
+const state = { page: {}, limit: 50 };
 
 function esc(s) {
   if (s == null) return "";
@@ -49,32 +50,151 @@ function renderTable(columns, rows) {
   );
 }
 
+function renderPagination(route, total, page, limit, onChange) {
+  const pages = Math.max(1, Math.ceil(total / limit));
+  const start = total === 0 ? 0 : (page - 1) * limit + 1;
+  const end = Math.min(page * limit, total);
+  const id = "pager-" + route.replace(/\W/g, "");
+  setTimeout(() => {
+    const prev = document.getElementById(id + "-prev");
+    const next = document.getElementById(id + "-next");
+    const sel = document.getElementById(id + "-limit");
+    if (prev) prev.onclick = () => onChange(page - 1, limit);
+    if (next) next.onclick = () => onChange(page + 1, limit);
+    if (sel) sel.onchange = () => onChange(1, parseInt(sel.value, 10));
+  }, 0);
+  return (
+    '<div class="pagination" id="' +
+    id +
+    '">' +
+    '<span class="muted">' +
+    start +
+    "–" +
+    end +
+    " / " +
+    total +
+    "</span>" +
+    '<div style="display:flex;gap:8px;align-items:center">' +
+    '<select id="' +
+    id +
+    '-limit">' +
+    [25, 50, 100]
+      .map(
+        (n) =>
+          '<option value="' +
+          n +
+          '"' +
+          (n === limit ? " selected" : "") +
+          ">" +
+          n +
+          "/trang</option>"
+      )
+      .join("") +
+    "</select>" +
+    '<button id="' +
+    id +
+    '-prev"' +
+    (page <= 1 ? " disabled" : "") +
+    ">← Trước</button>" +
+    '<span class="muted">' +
+    page +
+    "/" +
+    pages +
+    "</span>" +
+    '<button id="' +
+    id +
+    '-next"' +
+    (page >= pages ? " disabled" : "") +
+    ">Sau →</button>" +
+    "</div></div>"
+  );
+}
+
 async function pageOverview(main) {
-  main.innerHTML = '<p class="loading">Đang tải tổng quan…</p>';
-  const data = await api("/api/v1/dashboard");
-  const h = data.health || {};
-  const c = data.cluster || {};
-  let clusterHtml = "—";
-  if (c.connected && c.total != null) {
-    clusterHtml =
-      '<span class="ok">Clusters: <strong>' +
-      c.ready +
-      "/" +
-      c.total +
-      " ready</strong></span>";
-  } else if (c.error) {
-    clusterHtml = '<span class="error">' + esc(c.error) + "</span>";
+  main.innerHTML = '<p class="loading">Đang tải Cluster Dashboard…</p>';
+  const d = await api("/api/v1/rancher/cluster/dashboard");
+  const c = d.counts || {};
+  const cap = d.capacity || {};
+  const podsPct = cap.pods_max ? Math.round((cap.pods_used / cap.pods_max) * 100) : 0;
+
+  let eventsHtml = "";
+  if (d.recent_events && d.recent_events.length) {
+    eventsHtml = renderTable(
+      [
+        { key: "status", label: "Type" },
+        { key: "reason", label: "Reason" },
+        { key: "object", label: "Object" },
+        { key: "message", label: "Message" },
+        { key: "created", label: "Seen", render: (r) => esc(fmtTime(r.created)) },
+      ],
+      d.recent_events
+    );
+  } else {
+    eventsHtml = '<p class="muted">Không có events gần đây.</p>';
   }
+
+  const comps = (d.components || [])
+    .map((x) => '<span class="comp ok">' + esc(x.name) + "</span>")
+    .join("");
+
   main.innerHTML =
-    '<h2 class="page-title">Tổng quan</h2>' +
-    '<div class="card"><h3>API / DB</h3><p>' +
-    (h.status === "ok"
-      ? '<span class="ok">API <strong>ok</strong> · DB <strong>' + esc(h.database) + "</strong></span>"
-      : '<span class="error">' + esc(h.error || h.status) + "</span>") +
-    "</p></div>" +
-    '<div class="card"><h3>Cluster (Rancher)</h3><p>' +
-    clusterHtml +
-    "</p></div>";
+    '<h2 class="page-title">Cluster Dashboard — ' +
+    esc(d.name || d.cluster_id) +
+    "</h2>" +
+    '<div class="meta-row">' +
+    "<span>Provider: <strong>" +
+    esc(d.provider || "RKE2") +
+    "</strong></span>" +
+    "<span>K8s: <strong>" +
+    esc(d.k8s_version || "—") +
+    "</strong></span>" +
+    "<span>State: <strong>" +
+    esc(d.state || "—") +
+    "</strong></span>" +
+    "</div>" +
+    '<div class="stat-grid">' +
+    statBox(c.resources || 0, "Resources") +
+    statBox(c.nodes || 0, "Nodes") +
+    statBox(c.deployments || 0, "Deployments") +
+    statBox(c.pods || 0, "Pods") +
+    statBox(c.namespaces || 0, "Namespaces") +
+    statBox(c.services || 0, "Services") +
+    "</div>" +
+    '<div class="card"><h3>Capacity</h3>' +
+    '<div class="bar-label"><span>Pods</span><span>' +
+    (cap.pods_used || 0) +
+    "/" +
+    (cap.pods_max || 0) +
+    " (" +
+    podsPct +
+    "%)</span></div>" +
+    '<div class="bar"><i style="width:' +
+    podsPct +
+    '%"></i></div>' +
+    '<div class="meta-row">' +
+    "<span>CPU cores: <strong>" +
+    (cap.cpu_cores || "—") +
+    "</strong></span>" +
+    "<span>Memory: <strong>" +
+    (cap.mem_gib ? cap.mem_gib + " GiB" : "—") +
+    "</strong></span>" +
+    "</div></div>" +
+    '<div class="card"><h3>Components</h3><div class="components">' +
+    comps +
+    "</div></div>" +
+    '<div class="card"><h3>Recent Events <a href="#/events" class="muted" style="font-size:12px;margin-left:8px">Xem tất cả →</a></h3>' +
+    eventsHtml +
+    "</div>";
+}
+
+function statBox(n, label) {
+  return (
+    '<div class="stat-box"><div class="num">' +
+    n +
+    '</div><div class="lbl">' +
+    esc(label) +
+    "</div></div>"
+  );
 }
 
 async function pageRancherList(main, title, path, columns) {
@@ -90,59 +210,65 @@ async function pageRancherList(main, title, path, columns) {
     renderTable(columns, Array.isArray(rows) ? rows : []);
 }
 
-async function pageK8s(main, resource, label) {
-  main.innerHTML = '<p class="loading">Đang tải ' + esc(label) + "…</p>";
-  const data = await api("/api/v1/k8s/" + resource);
-  let cols;
+function k8sColumns(resource, data) {
   if (resource === "events") {
-    cols = [
+    return [
       {
         key: "status",
         label: "Type",
         render: (r) =>
           r.status === "Warning"
-            ? '<span class="badge" style="color:#fbbf24">' + esc(r.status) + "</span>"
+            ? '<span class="badge badge-warn">' + esc(r.status) + "</span>"
             : '<span class="badge badge-ok">' + esc(r.status || "Normal") + "</span>",
       },
       { key: "reason", label: "Reason" },
       { key: "object", label: "Object" },
       { key: "namespace", label: "Namespace" },
       { key: "message", label: "Message" },
-      {
-        key: "created",
-        label: "Last Seen",
-        render: (r) => esc(fmtTime(r.created)),
-      },
+      { key: "created", label: "Last Seen", render: (r) => esc(fmtTime(r.created)) },
     ];
-  } else {
-    cols = [
-      { key: "name", label: "Name" },
-      { key: "namespace", label: "Namespace" },
-      {
-        key: "status",
-        label: "Status",
-        render: (r) =>
-          r.status
-            ? '<span class="badge badge-ok">' + esc(r.status) + "</span>"
-            : "—",
-      },
-      {
-        key: "created",
-        label: "Age",
-        render: (r) => esc(fmtTime(r.created)),
-      },
-    ];
-    if (!data.items || !data.items.some((i) => i.namespace)) {
-      cols.splice(1, 1);
-    }
   }
+  const cols = [
+    { key: "name", label: "Name" },
+    { key: "namespace", label: "Namespace" },
+    {
+      key: "status",
+      label: "Status",
+      render: (r) =>
+        r.status
+          ? '<span class="badge badge-ok">' + esc(r.status) + "</span>"
+          : "—",
+    },
+    { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+  ];
+  if (!data.items || !data.items.some((i) => i.namespace)) {
+    cols.splice(1, 1);
+  }
+  return cols;
+}
+
+async function pageK8s(main, resource, label, page, limit) {
+  const route = resource;
+  page = page || state.page[route] || 1;
+  limit = limit || state.limit;
+  state.page[route] = page;
+  state.limit = limit;
+
+  main.innerHTML = '<p class="loading">Đang tải ' + esc(label) + "…</p>";
+  const data = await api(
+    "/api/v1/k8s/" + resource + "?page=" + page + "&limit=" + limit
+  );
+  const cols = k8sColumns(resource, data);
+  const onPage = (p, l) => pageK8s(main, resource, label, p, l);
+
   main.innerHTML =
     '<h2 class="page-title">' +
     esc(label) +
     ' <span class="muted">(' +
     data.total +
     ")</span></h2>" +
-    renderTable(cols, data.items || []);
+    renderTable(cols, data.items || []) +
+    renderPagination(route, data.total, data.page, data.limit, onPage);
 }
 
 const routes = {
@@ -167,8 +293,7 @@ const routes = {
 };
 
 function getRoute() {
-  const hash = location.hash.replace(/^#\/?/, "") || "overview";
-  return hash;
+  return location.hash.replace(/^#\/?/, "") || "overview";
 }
 
 async function navigate() {
@@ -194,6 +319,15 @@ async function navigate() {
   }
 }
 
+function groupCollapsed(group) {
+  const key = "nav-collapsed-" + group;
+  return localStorage.getItem(key) === "1";
+}
+
+function setGroupCollapsed(group, collapsed) {
+  localStorage.setItem("nav-collapsed-" + group, collapsed ? "1" : "0");
+}
+
 async function buildSidebar() {
   const nav = $("#sidebar-nav");
   const menu = await api("/api/v1/explorer/menu");
@@ -202,10 +336,28 @@ async function buildSidebar() {
     if (!groups[item.group]) groups[item.group] = [];
     groups[item.group].push(item);
   });
+
+  const order = ["Platform", "Cluster", "Workloads", "Networking", "Storage", "Config"];
   let html = "";
-  for (const [group, items] of Object.entries(groups)) {
-    html += '<div class="nav-group"><div class="nav-group-title">' + esc(group) + "</div>";
-    items.forEach((item) => {
+  for (const group of order) {
+    if (!groups[group]) continue;
+    const collapsed = groupCollapsed(group);
+    html +=
+      '<div class="nav-group" data-group="' +
+      esc(group) +
+      '">' +
+      '<button type="button" class="nav-group-toggle" data-group="' +
+      esc(group) +
+      '">' +
+      '<span class="chev">' +
+      (collapsed ? "▸" : "▾") +
+      "</span>" +
+      esc(group) +
+      "</button>" +
+      '<div class="nav-group-items' +
+      (collapsed ? " collapsed" : "") +
+      '">';
+    groups[group].forEach((item) => {
       html +=
         '<a class="nav-link" data-route="' +
         esc(item.key) +
@@ -215,9 +367,20 @@ async function buildSidebar() {
         esc(item.label) +
         "</a>";
     });
-    html += "</div>";
+    html += "</div></div>";
   }
   nav.innerHTML = html;
+
+  nav.querySelectorAll(".nav-group-toggle").forEach((btn) => {
+    btn.onclick = () => {
+      const g = btn.dataset.group;
+      const items = btn.nextElementSibling;
+      const nowCollapsed = !items.classList.contains("collapsed");
+      items.classList.toggle("collapsed", nowCollapsed);
+      btn.querySelector(".chev").textContent = nowCollapsed ? "▸" : "▾";
+      setGroupCollapsed(g, nowCollapsed);
+    };
+  });
 }
 
 window.addEventListener("hashchange", navigate);

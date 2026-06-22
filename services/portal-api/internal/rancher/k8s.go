@@ -4,18 +4,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 )
 
 type ResourceRow struct {
-	Name      string `json:"name"`
-	Namespace string `json:"namespace,omitempty"`
-	Created   string `json:"created,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Kind      string `json:"kind,omitempty"`
-	Reason    string `json:"reason,omitempty"`
-	Message   string `json:"message,omitempty"`
-	Object    string `json:"object,omitempty"`
+	Name      string  `json:"name"`
+	Namespace string  `json:"namespace,omitempty"`
+	Created   string  `json:"created,omitempty"`
+	Status    string  `json:"status,omitempty"`
+	Kind      string  `json:"kind,omitempty"`
+	Reason    string  `json:"reason,omitempty"`
+	Message   string  `json:"message,omitempty"`
+	Object    string  `json:"object,omitempty"`
+	PodsMax   int     `json:"pods_max,omitempty"`
+	PodsUsed  int     `json:"pods_used,omitempty"`
+	CPUCores  float64 `json:"cpu_cores,omitempty"`
+	MemGiB    float64 `json:"mem_gib,omitempty"`
 }
 
 type ResourceList struct {
@@ -23,6 +28,8 @@ type ResourceList struct {
 	Resource  string        `json:"resource"`
 	Label     string        `json:"label"`
 	Total     int           `json:"total"`
+	Page      int           `json:"page"`
+	Limit     int           `json:"limit"`
 	Items     []ResourceRow `json:"items"`
 }
 
@@ -92,13 +99,19 @@ func (c *Client) clusterID(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no rancher clusters found")
 }
 
-func (c *Client) ListK8s(ctx context.Context, key, namespace string) (ResourceList, error) {
+func (c *Client) ListK8s(ctx context.Context, key, namespace string, page, limit int) (ResourceList, error) {
 	res, ok := K8sResourceByKey(key)
 	if !ok {
 		return ResourceList{}, fmt.Errorf("unknown resource: %s", key)
 	}
 	if !c.Enabled() {
 		return ResourceList{}, fmt.Errorf("rancher not configured")
+	}
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 {
+		limit = 50
 	}
 
 	clusterID, err := c.clusterID(ctx)
@@ -111,9 +124,8 @@ func (c *Client) ListK8s(ctx context.Context, key, namespace string) (ResourceLi
 		path += "?limit=500"
 	}
 	if res.Namespaced && namespace != "" {
-		// .../apis/apps/v1/namespaces/{ns}/deployments
 		if strings.HasPrefix(path, "/apis/") {
-			parts := strings.SplitN(path, "/", 4) // "", "apis", group/version, resource
+			parts := strings.SplitN(path, "/", 4)
 			if len(parts) >= 4 {
 				path = fmt.Sprintf("/apis/%s/namespaces/%s/%s", parts[2], namespace, parts[3])
 			}
@@ -127,17 +139,31 @@ func (c *Client) ListK8s(ctx context.Context, key, namespace string) (ResourceLi
 		return ResourceList{}, err
 	}
 
-	items, err := parseK8sItems(body)
+	all, total, err := parseK8sItems(body)
 	if err != nil {
 		return ResourceList{}, err
+	}
+	if total == 0 {
+		total = len(all)
+	}
+
+	start := (page - 1) * limit
+	if start > len(all) {
+		start = len(all)
+	}
+	end := start + limit
+	if end > len(all) {
+		end = len(all)
 	}
 
 	return ResourceList{
 		ClusterID: clusterID,
 		Resource:  key,
 		Label:     res.Label,
-		Total:     len(items),
-		Items:     items,
+		Total:     total,
+		Page:      page,
+		Limit:     limit,
+		Items:     all[start:end],
 	}, nil
 }
 
@@ -189,27 +215,39 @@ func (c *Client) ListProjects(ctx context.Context) ([]ProjectRow, error) {
 	return out, nil
 }
 
-func parseK8sItems(body []byte) ([]ResourceRow, error) {
-	var list struct {
+func parseK8sItems(body []byte) ([]ResourceRow, int, error) {
+	var envelope struct {
 		Items []json.RawMessage `json:"items"`
+		Data  []json.RawMessage `json:"data"`
+		Count int               `json:"count"`
 	}
-	if err := json.Unmarshal(body, &list); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, 0, err
 	}
 
-	rows := make([]ResourceRow, 0, len(list.Items))
-	for _, raw := range list.Items {
+	rawItems := envelope.Items
+	if len(rawItems) == 0 {
+		rawItems = envelope.Data
+	}
+
+	rows := make([]ResourceRow, 0, len(rawItems))
+	for _, raw := range rawItems {
 		if row, ok := parseK8sItem(raw); ok {
 			rows = append(rows, row)
 		}
 	}
-	return rows, nil
+
+	total := envelope.Count
+	if total == 0 {
+		total = len(rows)
+	}
+	return rows, total, nil
 }
 
 func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 	var obj struct {
+		ID       string `json:"id"`
 		Kind     string `json:"kind"`
-		Type     string `json:"type"`
 		Reason   string `json:"reason"`
 		Note     string `json:"note"`
 		Message  string `json:"message"`
@@ -230,11 +268,17 @@ func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 			Namespace string `json:"namespace"`
 			Name      string `json:"name"`
 		} `json:"involvedObject"`
-		LastTimestamp string `json:"lastTimestamp"`
+		LastTimestamp string          `json:"lastTimestamp"`
 		Status        json.RawMessage `json:"status"`
+		Spec          json.RawMessage `json:"spec"`
 	}
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return ResourceRow{}, false
+	}
+
+	name := obj.Metadata.Name
+	if name == "" {
+		name = obj.ID
 	}
 
 	created := obj.EventTime
@@ -245,17 +289,17 @@ func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 		created = obj.Metadata.CreationTimestamp
 	}
 
+	kind := obj.Kind
 	row := ResourceRow{
-		Name:      obj.Metadata.Name,
+		Name:      name,
 		Namespace: obj.Metadata.Namespace,
 		Created:   created,
-		Kind:      obj.Kind,
-		Status:    extractStatus(obj.Kind, obj.Status),
+		Kind:      kind,
+		Status:    extractStatus(kind, obj.Status),
 	}
 
-	// events.k8s.io/v1 (K8s 1.35+) hoặc core/v1 Event
-	if obj.Type != "" || obj.Reason != "" || obj.Note != "" || obj.Regarding.Name != "" {
-		row.Status = obj.Type
+	if isEventObject(kind, obj.Reason, obj.Note, obj.EventTime, obj.Regarding.Name, obj.InvolvedObject.Name) {
+		row.Status = eventTypeFromRaw(raw)
 		row.Reason = obj.Reason
 		row.Message = obj.Note
 		if row.Message == "" {
@@ -271,13 +315,90 @@ func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 				row.Namespace = ref.Namespace
 			}
 		}
-		if row.Status == "" && obj.ReportingController != "" {
-			row.Status = "Normal"
-		}
 		return row, true
 	}
 
-	return row, true
+	if kind == "Node" {
+		enrichNodeRow(&row, obj.Status)
+	}
+
+	return row, name != ""
+}
+
+func isEventObject(kind, reason, note, eventTime, regarding, involved string) bool {
+	if strings.EqualFold(kind, "Event") {
+		return true
+	}
+	if eventTime != "" && reason != "" {
+		return true
+	}
+	if reason != "" && (regarding != "" || involved != "") {
+		return true
+	}
+	if note != "" && reason != "" {
+		return true
+	}
+	return false
+}
+
+func eventTypeFromRaw(raw json.RawMessage) string {
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil {
+		return "Normal"
+	}
+	if t, ok := m["type"].(string); ok && (t == "Normal" || t == "Warning") {
+		return t
+	}
+	return "Normal"
+}
+
+func enrichNodeRow(row *ResourceRow, status json.RawMessage) {
+	var st struct {
+		Allocatable map[string]string `json:"allocatable"`
+		Capacity    map[string]string `json:"capacity"`
+	}
+	if json.Unmarshal(status, &st) != nil {
+		return
+	}
+	if p, ok := st.Capacity["pods"]; ok {
+		fmt.Sscanf(p, "%d", &row.PodsMax)
+	}
+	row.CPUCores = parseCPU(st.Capacity["cpu"])
+	row.MemGiB = parseMemGiB(st.Capacity["memory"])
+}
+
+func parseCPU(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var v float64
+	if strings.HasSuffix(s, "m") {
+		fmt.Sscanf(s, "%f", &v)
+		return v / 1000
+	}
+	fmt.Sscanf(s, "%f", &v)
+	return v
+}
+
+func parseMemGiB(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var v float64
+	if strings.HasSuffix(s, "Ki") {
+		fmt.Sscanf(s, "%fKi", &v)
+		return v / (1024 * 1024)
+	}
+	if strings.HasSuffix(s, "Mi") {
+		fmt.Sscanf(s, "%fMi", &v)
+		return v / 1024
+	}
+	if strings.HasSuffix(s, "Gi") {
+		fmt.Sscanf(s, "%fGi", &v)
+		return v
+	}
+	fmt.Sscanf(s, "%f", &v)
+	return v / (1024 * 1024 * 1024)
 }
 
 func extractStatus(kind string, status json.RawMessage) string {
@@ -317,7 +438,7 @@ func extractStatus(kind string, status json.RawMessage) string {
 		if a, ok := generic["active"].([]any); ok {
 			return fmt.Sprintf("active=%d", len(a))
 		}
-	case "PersistentVolume", "PersistentVolumeClaim":
+	case "PersistentVolume", "PersistentVolumeClaim", "Namespace":
 		if phase, ok := generic["phase"].(string); ok {
 			return phase
 		}
@@ -329,4 +450,8 @@ func extractStatus(kind string, status json.RawMessage) string {
 		return "LB"
 	}
 	return ""
+}
+
+func round1(f float64) float64 {
+	return math.Round(f*10) / 10
 }
