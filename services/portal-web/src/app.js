@@ -115,7 +115,6 @@ async function pageOverview(main) {
   const d = await api("/api/v1/rancher/cluster/dashboard");
   const c = d.counts || {};
   const cap = d.capacity || {};
-  const podsPct = cap.pods_max ? Math.round((cap.pods_used / cap.pods_max) * 100) : 0;
 
   let eventsHtml = "";
   if (d.recent_events && d.recent_events.length) {
@@ -138,58 +137,98 @@ async function pageOverview(main) {
     .join("");
 
   main.innerHTML =
-    '<h2 class="page-title">Cluster Dashboard — ' +
+    '<div class="page-header">' +
+    '<h2 class="page-title">Cluster Dashboard</h2>' +
+    '<p class="page-subtitle">' +
     esc(d.name || d.cluster_id) +
-    "</h2>" +
-    '<div class="meta-row">' +
-    "<span>Provider: <strong>" +
-    esc(d.provider || "RKE2") +
-    "</strong></span>" +
-    "<span>K8s: <strong>" +
-    esc(d.k8s_version || "—") +
-    "</strong></span>" +
-    "<span>State: <strong>" +
+    ' · <span class="pill">' +
     esc(d.state || "—") +
-    "</strong></span>" +
+    "</span></p>" +
+    "</div>" +
+    '<div class="meta-chips">' +
+    chip("Provider", d.provider || "RKE2") +
+    chip("Kubernetes", d.k8s_version || "—") +
+    chip("Cluster ID", d.cluster_id) +
     "</div>" +
     '<div class="stat-grid">' +
-    statBox(c.resources || 0, "Resources") +
-    statBox(c.nodes || 0, "Nodes") +
-    statBox(c.deployments || 0, "Deployments") +
-    statBox(c.pods || 0, "Pods") +
-    statBox(c.namespaces || 0, "Namespaces") +
-    statBox(c.services || 0, "Services") +
+    statBox(c.resources || 0, "Resources", "📦") +
+    statBox(c.nodes || 0, "Nodes", "🖥") +
+    statBox(c.deployments || 0, "Deployments", "🚀") +
+    statBox(c.pods || 0, "Pods", "⬡") +
+    statBox(c.namespaces || 0, "Namespaces", "📁") +
+    statBox(c.services || 0, "Services", "🔗") +
     "</div>" +
-    '<div class="card"><h3>Capacity</h3>' +
-    '<div class="bar-label"><span>Pods</span><span>' +
-    (cap.pods_used || 0) +
-    "/" +
-    (cap.pods_max || 0) +
-    " (" +
-    podsPct +
-    "%)</span></div>" +
-    '<div class="bar"><i style="width:' +
-    podsPct +
-    '%"></i></div>' +
-    '<div class="meta-row">' +
-    "<span>CPU cores: <strong>" +
-    (cap.cpu_cores || "—") +
-    "</strong></span>" +
-    "<span>Memory: <strong>" +
-    (cap.mem_gib ? cap.mem_gib + " GiB" : "—") +
-    "</strong></span>" +
-    "</div></div>" +
-    '<div class="card"><h3>Components</h3><div class="components">' +
+    '<div class="card card-glass"><h3>Capacity</h3>' +
+    renderCapacity(cap) +
+    "</div>" +
+    '<div class="card card-glass"><h3>Components</h3><div class="components">' +
     comps +
     "</div></div>" +
-    '<div class="card"><h3>Recent Events <a href="#/events" class="muted" style="font-size:12px;margin-left:8px">Xem tất cả →</a></h3>' +
+    '<div class="card card-glass"><h3>Recent Events <a href="#/events" class="link-muted">Xem tất cả →</a></h3>' +
     eventsHtml +
     "</div>";
 }
 
-function statBox(n, label) {
+function chip(label, value) {
   return (
-    '<div class="stat-box"><div class="num">' +
+    '<div class="chip"><span class="chip-label">' +
+    esc(label) +
+    '</span><span class="chip-value">' +
+    esc(value) +
+    "</span></div>"
+  );
+}
+
+function meterRow(label, used, total, pct, tone) {
+  const p = pct != null ? pct : total ? Math.round((used / total) * 100) : 0;
+  return (
+    '<div class="meter">' +
+    '<div class="meter-head"><span>' +
+    esc(label) +
+    "</span><span>" +
+    esc(used) +
+    " / " +
+    esc(total) +
+    " <strong>(" +
+    p +
+    "%)</strong></span></div>" +
+    '<div class="meter-track"><i class="meter-fill ' +
+  (tone || "used") +
+    '" style="width:' +
+    Math.min(p, 100) +
+    '%"></i></div></div>'
+  );
+}
+
+function renderCapacity(cap) {
+  const pods = cap.pods || {};
+  const cpu = cap.cpu || {};
+  const mem = cap.memory || {};
+  return (
+    '<div class="cap-grid">' +
+    '<div class="cap-card"><h4>Pods</h4>' +
+    meterRow("Used", pods.used || 0, pods.total || 0, pods.used_pct) +
+    "</div>" +
+    '<div class="cap-card"><h4>CPU</h4>' +
+    meterRow("Reserved", cpu.reserved || 0, cpu.total || 0, cpu.reserved_pct, "reserved") +
+    meterRow("Used", cpu.used || 0, cpu.total || 0, cpu.used_pct, "used") +
+    '<div class="cap-unit">' +
+    esc(cpu.total || 0) +
+    " cores</div></div>" +
+    '<div class="cap-card"><h4>Memory</h4>' +
+    meterRow("Reserved", mem.reserved || 0, mem.total || 0, mem.reserved_pct, "reserved") +
+    meterRow("Used", mem.used || 0, mem.total || 0, mem.used_pct, "used") +
+    '<div class="cap-unit">' +
+    esc(mem.total || 0) +
+    " GiB</div></div></div>"
+  );
+}
+
+function statBox(n, label, icon) {
+  return (
+    '<div class="stat-box"><div class="stat-icon">' +
+    (icon || "") +
+    '</div><div class="num">' +
     n +
     '</div><div class="lbl">' +
     esc(label) +

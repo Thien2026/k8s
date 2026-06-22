@@ -19,13 +19,6 @@ type ClusterDashboard struct {
 	RecentEvents []ResourceRow  `json:"recent_events"`
 }
 
-type NodeCapacity struct {
-	PodsUsed   int     `json:"pods_used"`
-	PodsMax    int     `json:"pods_max"`
-	CPUCores   float64 `json:"cpu_cores"`
-	MemGiB     float64 `json:"mem_gib"`
-}
-
 type Component struct {
 	Name   string `json:"name"`
 	Status string `json:"status"`
@@ -84,18 +77,7 @@ func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error)
 		}
 	}
 
-	if nodes, err := c.ListK8s(ctx, "nodes", "", 1, 10); err == nil {
-		for _, n := range nodes.Items {
-			dash.Capacity.PodsMax += n.PodsMax
-			dash.Capacity.CPUCores += n.CPUCores
-			dash.Capacity.MemGiB += n.MemGiB
-		}
-		dash.Capacity.CPUCores = round1(dash.Capacity.CPUCores)
-		dash.Capacity.MemGiB = round1(dash.Capacity.MemGiB)
-	}
-	if pods, err := c.ListK8s(ctx, "pods", "", 1, 500); err == nil {
-		dash.Capacity.PodsUsed = pods.Total
-	}
+	dash.Capacity = c.buildCapacity(ctx, clusterID)
 
 	if events, err := c.ListK8s(ctx, "events", "", 1, 8); err == nil {
 		dash.RecentEvents = events.Items

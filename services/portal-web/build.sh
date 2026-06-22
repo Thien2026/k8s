@@ -23,6 +23,7 @@ ${CSS}
           <p>K8s Explorer</p>
         </div>
         <nav id="sidebar-nav" class="sidebar-nav loading">Đang tải menu…</nav>
+        <div class="sidebar-footer">© 2026 <strong>7mlabs</strong></div>
       </aside>
       <main id="main" class="main">
         <p class="loading">Đang tải…</p>
