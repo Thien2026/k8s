@@ -17,18 +17,29 @@ DB_USER="${POSTGRES_USER:-platform}"
 log "Cài PostgreSQL cho Platform Console (namespace: ${NS})"
 log "Lưu ý: DB này chỉ cho portal-api (user/project). DB app khách cài riêng per-app."
 
+ensure_storage_class() {
+  if kubectl get sc local-path >/dev/null 2>&1; then
+    log "StorageClass local-path đã có."
+    return
+  fi
+  log "Chưa có StorageClass — cài local-path-provisioner..."
+  kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.30/deploy/local-path-storage.yaml
+  kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite
+  log "local-path-provisioner OK"
+}
+
+ensure_storage_class
+
 helm repo add bitnami https://charts.bitnami.com/bitnami 2>/dev/null || true
 helm repo update bitnami
 
-STORAGE_CLASS="${POSTGRES_STORAGE_CLASS:-}"
-if [[ -z "${STORAGE_CLASS}" ]]; then
-  STORAGE_CLASS="$(kubectl get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' 2>/dev/null || true)"
-fi
-if [[ -z "${STORAGE_CLASS}" ]]; then
-  STORAGE_CLASS="local-path"
-  log "Dùng StorageClass mặc định: ${STORAGE_CLASS}"
-else
+STORAGE_CLASS="${POSTGRES_STORAGE_CLASS:-local-path}"
+if kubectl get sc "${STORAGE_CLASS}" >/dev/null 2>&1; then
   log "StorageClass: ${STORAGE_CLASS}"
+else
+  STORAGE_CLASS="$(kubectl get sc -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  [[ -n "${STORAGE_CLASS}" ]] || { log "Không có StorageClass"; exit 1; }
+  log "StorageClass fallback: ${STORAGE_CLASS}"
 fi
 
 HELM_SET=(
