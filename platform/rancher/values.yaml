@@ -1,0 +1,24 @@
+replicas: 1
+
+ingress:
+  enabled: true
+  ingressClassName: nginx
+  extraAnnotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  tls:
+    source: secret
+    secretName: tls-rancher-ingress
+
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 250m
+    memory: 512Mi
+
+# RKE2 đã có PSP/security — tắt PSP legacy của Rancher
+global:
+  cattle:
+    psp:
+      enabled: false

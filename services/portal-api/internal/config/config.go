@@ -3,9 +3,11 @@ package config
 import "os"
 
 type Config struct {
-	Port        string
-	DatabaseURL string
-	CORSOrigin  string
+	Port         string
+	DatabaseURL  string
+	CORSOrigin   string
+	RancherURL   string
+	RancherToken string
 }
 
 func Load() Config {
@@ -25,8 +27,10 @@ func Load() Config {
 	}
 
 	return Config{
-		Port:        port,
-		DatabaseURL: dbURL,
-		CORSOrigin:  cors,
+		Port:         port,
+		DatabaseURL:  dbURL,
+		CORSOrigin:   cors,
+		RancherURL:   os.Getenv("RANCHER_URL"),
+		RancherToken: os.Getenv("RANCHER_TOKEN"),
 	}
 }

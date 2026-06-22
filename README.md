@@ -54,14 +54,15 @@ k8s/
 ├── config/
 │   └── env.yaml          ← biến môi trường khách
 ├── bootstrap/            ← script cài cluster
-├── platform/             ← Helm/GitOps cho platform components
-│   ├── ingress/
-│   ├── cert-manager/
-│   ├── rancher/
-│   ├── harbor/
+├── platform/             ← config Helm từng engine (không phải script cài)
+│   ├── rancher/          ← values.yaml
+│   ├── harbor/           ← (sau)
 │   ├── argocd/
 │   ├── monitoring/
 │   └── logging/
+├── services/             ← Platform Console (tự code)
+│   ├── portal-api/
+│   └── portal-web/
 └── templates/
     └── new-project/      ← copy để thêm app mới
 ```

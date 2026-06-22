@@ -5,13 +5,14 @@ import (
 	"net/http"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/config"
+	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
+func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Client) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)
 
@@ -22,13 +23,14 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 		AllowCredentials: true,
 	}))
 
-	h := &Handler{db: db}
+	h := &Handler{db: db, rancher: rancherClient}
 
 	r.Get("/health", h.Health)
 	r.Get("/api/v1/health/db", h.HealthDB)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/dashboard", h.Dashboard)
+		r.Get("/cluster", h.ClusterSummary)
 		r.Get("/projects", h.ListProjects)
 	})
 
@@ -36,7 +38,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 }
 
 type Handler struct {
-	db *pgxpool.Pool
+	db      *pgxpool.Pool
+	rancher *rancher.Client
 }
 
 func (h *Handler) Health(w http.ResponseWriter, _ *http.Request) {
@@ -89,8 +92,24 @@ func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		projects = []project{}
 	}
 
+	cluster := map[string]any{"connected": false}
+	if h.rancher != nil && h.rancher.Enabled() {
+		if sum, err := h.rancher.ClusterSummary(r.Context()); err != nil {
+			cluster = map[string]any{"connected": false, "error": err.Error()}
+		} else {
+			cluster = map[string]any{
+				"connected": sum.Connected,
+				"total":     sum.Total,
+				"ready":     sum.Ready,
+				"not_ready": sum.NotReady,
+				"nodes":     sum.Nodes,
+			}
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"health":   health,
+		"cluster":  cluster,
 		"projects": projects,
 	})
 }

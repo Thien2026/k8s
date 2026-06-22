@@ -63,15 +63,15 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ## Phase 2 — Rancher
 
-- [ ] Cài Rancher (Helm) trên cluster
-- [ ] Truy cập Rancher UI qua domain riêng (vd: `rancher.{domain}`)
-- [ ] Tạo admin user, tắt password mặc định
-- [ ] Import cluster vào Rancher
-- [ ] Tạo namespace mẫu: `platform`, `demo-dev`, `demo-prod`
-- [ ] Cấu hình RBAC: role Dev vs DevOps
-- [ ] Test xem pod log từ Rancher UI
+- [ ] `RANCHER_CHART_VERSION` trong `config/env.sh`
+- [ ] `./bootstrap/run.sh 09`
+- [ ] Mở `https://rancher.{domain}` — đăng nhập bootstrap password (xem log bước 09)
+- [ ] Đặt admin password + tạo **API Key** → dán vào `config/rancher.env`
+- [ ] `FORCE_BUILD=1 ./bootstrap/run.sh 08 --force` (portal-api đọc Rancher token)
+- [ ] Console hiển thị **Cluster (Rancher)** trên dashboard
+- [ ] Import cluster local trong Rancher UI (nếu chưa auto)
 
-**Xong phase 2 khi:** DevOps vào Rancher quản lý namespace/pod được.
+**Xong phase 2 khi:** Rancher UI OK + Console hiện cluster summary (hoặc message chờ token).
 
 ---
 

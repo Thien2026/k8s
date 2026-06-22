@@ -1,6 +1,7 @@
 config/env.sh
 config/env.yaml
 config/postgres.env
+config/rancher.env
 bootstrap/state/*.done
 bootstrap/logs/*
 !bootstrap/state/.gitkeep

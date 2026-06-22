@@ -12,6 +12,7 @@ import (
 	"github.com/Thien2026/k8s/services/portal-api/internal/config"
 	"github.com/Thien2026/k8s/services/portal-api/internal/database"
 	"github.com/Thien2026/k8s/services/portal-api/internal/handler"
+	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 )
 
 func main() {
@@ -27,7 +28,8 @@ func main() {
 		log.Fatalf("migrate: %v", err)
 	}
 
-	router := handler.NewRouter(db, cfg)
+	rancherClient := rancher.NewClient(cfg.RancherURL, cfg.RancherToken)
+	router := handler.NewRouter(db, cfg, rancherClient)
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,

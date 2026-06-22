@@ -53,10 +53,19 @@ import_image "${WEB_IMAGE}" "${ROOT_DIR}/services/portal-web"
 
 CORS_ORIGIN="https://${PLATFORM_HOST}"
 
+RANCHER_URL="${RANCHER_URL:-https://${RANCHER_HOST}}"
+RANCHER_TOKEN=""
+if [[ -f "${ROOT_DIR}/config/rancher.env" ]]; then
+  # shellcheck source=/dev/null
+  source "${ROOT_DIR}/config/rancher.env"
+fi
+
 kubectl -n "${NS}" create secret generic portal-api-env \
   --from-literal=DATABASE_URL="${DATABASE_URL}" \
   --from-literal=PORT="8080" \
   --from-literal=CORS_ORIGIN="${CORS_ORIGIN}" \
+  --from-literal=RANCHER_URL="${RANCHER_URL}" \
+  --from-literal=RANCHER_TOKEN="${RANCHER_TOKEN}" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 cat <<EOF | kubectl apply -f -

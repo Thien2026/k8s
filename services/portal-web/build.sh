@@ -25,6 +25,10 @@ ${CSS}
         <p id="health-status" class="muted">Đang kiểm tra…</p>
       </section>
       <section class="card">
+        <h2>Cluster (Rancher)</h2>
+        <p id="cluster-status" class="muted">Đang kiểm tra…</p>
+      </section>
+      <section class="card">
         <h2>Projects</h2>
         <p id="projects-status" class="muted">Đang tải…</p>
         <ul id="projects-list" hidden></ul>
@@ -33,6 +37,7 @@ ${CSS}
     <script>
 (async () => {
   const healthEl = document.getElementById("health-status");
+  const clusterEl = document.getElementById("cluster-status");
   const projectsStatusEl = document.getElementById("projects-status");
   const projectsListEl = document.getElementById("projects-list");
   try {
@@ -46,6 +51,18 @@ ${CSS}
     } else {
       healthEl.className = "error";
       healthEl.textContent = "API lỗi: " + (h.error || h.status);
+    }
+    const c = data.cluster || {};
+    if (c.connected && c.total !== undefined) {
+      clusterEl.className = "ok";
+      clusterEl.innerHTML = "Clusters: <strong>" + c.ready + "/" + c.total + " ready</strong>" +
+        (c.nodes ? " · Nodes: <strong>" + c.nodes + "</strong>" : "");
+    } else if (c.error) {
+      clusterEl.className = "error";
+      clusterEl.textContent = "Rancher: " + c.error;
+    } else {
+      clusterEl.className = "muted";
+      clusterEl.textContent = c.message || "Rancher chưa kết nối — thêm API token sau bước 09.";
     }
     const projects = data.projects || [];
     if (!projects.length) {
