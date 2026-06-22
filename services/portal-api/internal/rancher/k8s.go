@@ -372,6 +372,10 @@ func parseCPU(s string) float64 {
 		return 0
 	}
 	var v float64
+	if strings.HasSuffix(s, "n") {
+		fmt.Sscanf(s, "%f", &v)
+		return v / 1e9
+	}
 	if strings.HasSuffix(s, "m") {
 		fmt.Sscanf(s, "%f", &v)
 		return v / 1000
