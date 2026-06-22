@@ -38,6 +38,19 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ---
 
+## Phase 1b — PostgreSQL (Platform Console)
+
+- [ ] Đặt `POSTGRES_PASSWORD` trong `config/env.sh`
+- [ ] `./bootstrap/run.sh 07` — cài Postgres namespace `platform`
+- [ ] Kiểm tra `config/postgres.env` sinh ra (connection cho portal-api)
+- [ ] Document backup PVC (Velero hoặc pg_dump định kỳ)
+
+**Lưu ý:** DB này chỉ lưu user/project của Console — **không** thay DB app khách.
+
+**Xong phase 1b khi:** `platform-postgresql` pod Running, portal-api connect được.
+
+---
+
 ## Phase 2 — Rancher
 
 - [ ] Cài Rancher (Helm) trên cluster

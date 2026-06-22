@@ -37,8 +37,10 @@ chmod +x bootstrap/run.sh bootstrap/steps/*.sh
 | `04-ingress-nginx.sh` | Ingress | VPS (kubectl) |
 | `05-cert-manager.sh` | TLS tự động | VPS |
 | `06-hello-world.sh` | App test HTTPS | VPS |
+| `07-postgresql.sh` | PostgreSQL (metadata Console) | VPS |
+| `08+` | Rancher, Harbor, ArgoCD, Console... | VPS |
 
-Bước 07+ (Rancher, Harbor, ArgoCD...) thêm dần vào `bootstrap/steps/` theo TASKS.md.
+Bước 08+ thêm dần vào `bootstrap/steps/` theo TASKS.md.
 
 ## SSH disconnect — làm sao?
 

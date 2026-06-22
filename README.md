@@ -2,7 +2,7 @@
 
 Source tái sử dụng: K8s + Rancher + ArgoCD + Harbor + Monitoring + Logging + GitOps.
 
-> Chi tiết từng bước: xem [TASKS.md](./TASKS.md)
+> Chi tiết từng bước: [TASKS.md](./TASKS.md) · Công nghệ & vì sao chọn: [docs/STACK.md](./docs/STACK.md)
 
 ## Bắt đầu từ đâu?
 
@@ -33,6 +33,7 @@ Ghi lựa chọn vào `config/env.yaml` (tạo ở Phase 0).
 ```
 Phase 0  Chuẩn bị (domain, GitHub, server)
 Phase 1  Cluster + Ingress + cert-manager + Storage
+Phase 1b PostgreSQL (Console metadata)
 Phase 2  Rancher
 Phase 3  Harbor
 Phase 4  Argo CD + 1 app mẫu GitOps
@@ -47,6 +48,8 @@ Phase 7  Hardening + backup + handover
 k8s/
 ├── README.md
 ├── TASKS.md              ← checklist, tick dần
+├── docs/
+│   └── STACK.md          ← công nghệ & quyết định kiến trúc
 ├── config/
 │   └── env.yaml          ← biến môi trường khách
 ├── bootstrap/            ← script cài cluster
@@ -96,5 +99,6 @@ Chi tiết: [bootstrap/README.md](./bootstrap/README.md)
 ## Liên kết nhanh
 
 - [TASKS.md](./TASKS.md) — checklist đầy đủ, tick khi xong
+- [docs/STACK.md](./docs/STACK.md) — công nghệ đã chọn & lý do
 - [bootstrap/README.md](./bootstrap/README.md) — script từng bước + tmux
 - `config/env.sh.example` — biến cho script (copy → `config/env.sh`)

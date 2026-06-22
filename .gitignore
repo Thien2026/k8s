@@ -1,5 +1,6 @@
 config/env.sh
 config/env.yaml
+config/postgres.env
 bootstrap/state/*.done
 bootstrap/logs/*
 !bootstrap/state/.gitkeep
