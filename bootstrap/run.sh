@@ -66,6 +66,10 @@ run_step() {
     return 0
   fi
 
+  if [[ "${force}" == "true" ]]; then
+    export FORCE_BUILD=1
+  fi
+
   echo "Chạy: ${base}"
   echo "Log:  ${logfile}"
   echo "---"
@@ -109,7 +113,7 @@ case "${cmd}" in
     ;;
   *)
     force=false
-    if [[ "${2:-}" == "--force" ]]; then
+    if [[ "${1:-}" == "--force" || "${2:-}" == "--force" ]]; then
       force=true
     fi
     run_step "$(resolve_step "$cmd")" "$force"

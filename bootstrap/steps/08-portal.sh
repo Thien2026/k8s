@@ -37,8 +37,10 @@ ensure_docker() {
 import_image() {
   local tag="$1"
   local dir="$2"
+  local extra_args=""
+  [[ "${FORCE_BUILD:-}" == "1" ]] && extra_args="--no-cache"
   log "Build image ${tag} từ ${dir}..."
-  docker build -t "${tag}" "${dir}"
+  docker build ${extra_args} -t "${tag}" "${dir}"
   log "Import ${tag} vào RKE2 containerd..."
   docker save "${tag}" | ctr --address "${CTR_SOCK}" -n k8s.io images import -
 }
@@ -146,6 +148,8 @@ metadata:
   namespace: ${NS}
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/enable-gzip: "true"
+    nginx.ingress.kubernetes.io/gzip-types: "text/css application/javascript application/json text/plain"
 spec:
   ingressClassName: nginx
   tls:

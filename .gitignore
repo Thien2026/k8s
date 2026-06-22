@@ -7,3 +7,5 @@ bootstrap/logs/*
 !bootstrap/logs/.gitkeep
 kubeconfig/
 *.pem
+**/node_modules/
+services/portal-web/dist/

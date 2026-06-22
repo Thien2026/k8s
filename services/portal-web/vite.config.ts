@@ -1,19 +1,20 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 
 export default defineConfig({
-  plugins: [react()],
+  build: {
+    target: "es2020",
+    cssCodeSplit: false,
+    rollupOptions: {
+      output: {
+        inlineDynamicImports: true,
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {
-      "/api": {
-        target: process.env.VITE_API_PROXY || "http://localhost:8080",
-        changeOrigin: true,
-      },
-      "/health": {
-        target: process.env.VITE_API_PROXY || "http://localhost:8080",
-        changeOrigin: true,
-      },
+      "/api": { target: "http://localhost:8080", changeOrigin: true },
+      "/health": { target: "http://localhost:8080", changeOrigin: true },
     },
   },
 });

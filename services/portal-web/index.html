@@ -4,9 +4,26 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Platform Console</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <div class="page">
+      <header>
+        <h1>Platform Console</h1>
+        <p class="muted">Quản lý tập trung — K8s, deploy, image</p>
+      </header>
+
+      <section class="card">
+        <h2>Trạng thái hệ thống</h2>
+        <p id="health-status" class="muted">Đang kiểm tra…</p>
+      </section>
+
+      <section class="card">
+        <h2>Projects</h2>
+        <p id="projects-status" class="muted">Đang tải…</p>
+        <ul id="projects-list" hidden></ul>
+      </section>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

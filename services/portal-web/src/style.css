@@ -1,0 +1,48 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #0f1419;
+  color: #e7e9ea;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+header {
+  margin-bottom: 32px;
+}
+
+h1 {
+  margin: 0;
+}
+
+.muted {
+  color: #8b98a5;
+}
+
+.card {
+  background: #1a2332;
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.card h2 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.error {
+  color: #f87171;
+}
+
+.ok strong {
+  color: #4ade80;
+}

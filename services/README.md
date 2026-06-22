@@ -3,7 +3,7 @@
 | Service | Stack | Port dev |
 |---------|-------|----------|
 | `portal-api` | Go + chi + pgx | 8080 |
-| `portal-web` | React + Vite + TS | 5173 |
+| `portal-web` | Vanilla TS + Vite (nhẹ, tải nhanh) | 5173 |
 
 ## Chạy local (sau khi có Postgres)
 
