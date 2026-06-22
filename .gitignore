@@ -1,0 +1,8 @@
+config/env.sh
+config/env.yaml
+bootstrap/state/*.done
+bootstrap/logs/*
+!bootstrap/state/.gitkeep
+!bootstrap/logs/.gitkeep
+kubeconfig/
+*.pem
