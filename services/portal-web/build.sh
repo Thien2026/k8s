@@ -22,7 +22,7 @@ ${CSS}
           <h1>Platform Console</h1>
           <p>K8s Explorer</p>
         </div>
-        <nav id="sidebar-nav" class="loading">Đang tải menu…</nav>
+        <nav id="sidebar-nav" class="sidebar-nav loading">Đang tải menu…</nav>
       </aside>
       <main id="main" class="main">
         <p class="loading">Đang tải…</p>
