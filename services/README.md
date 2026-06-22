@@ -20,4 +20,4 @@ npm install && npm run dev
 
 ## Deploy lên K8s
 
-Sẽ thêm `bootstrap/steps/08-portal.sh` và manifest trong `platform/console/`.
+Sẽ thêm `bootstrap/steps/08-portal.sh` (đã có) và manifest trong `platform/console/`.

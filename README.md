@@ -34,6 +34,7 @@ Ghi lựa chọn vào `config/env.yaml` (tạo ở Phase 0).
 Phase 0  Chuẩn bị (domain, GitHub, server)
 Phase 1  Cluster + Ingress + cert-manager + Storage
 Phase 1b PostgreSQL (Console metadata)
+Phase 1c Portal Console (api + web)
 Phase 2  Rancher
 Phase 3  Harbor
 Phase 4  Argo CD + 1 app mẫu GitOps

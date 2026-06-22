@@ -51,6 +51,16 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ---
 
+## Phase 1c — Platform Console (portal-api + portal-web)
+
+- [ ] Bước 07 PostgreSQL đã xong
+- [ ] `./bootstrap/run.sh 08` — build Docker image + deploy K8s
+- [ ] Mở `https://platform.{domain}` — thấy Console, DB connected
+
+**Xong phase 1c khi:** HTTPS Console chạy, `/health` và `/api/v1/health/db` OK.
+
+---
+
 ## Phase 2 — Rancher
 
 - [ ] Cài Rancher (Helm) trên cluster
