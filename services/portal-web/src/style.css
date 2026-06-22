@@ -7,36 +7,85 @@ body {
   background: #0f1419;
   color: #e7e9ea;
   font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
 }
 
-.page {
-  max-width: 960px;
-  margin: 0 auto;
+.layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 240px;
+  flex-shrink: 0;
+  background: #161d26;
+  border-right: 1px solid #2f3943;
+  overflow-y: auto;
+  padding: 16px 0;
+}
+
+.sidebar-brand {
+  padding: 0 16px 16px;
+  border-bottom: 1px solid #2f3943;
+  margin-bottom: 8px;
+}
+
+.sidebar-brand h1 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.sidebar-brand p {
+  margin: 4px 0 0;
+  color: #8b98a5;
+  font-size: 12px;
+}
+
+.nav-group {
+  margin-bottom: 8px;
+}
+
+.nav-group-title {
+  padding: 8px 16px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #6e7a86;
+}
+
+.nav-link {
+  display: block;
+  padding: 8px 16px;
+  color: #c8d0d8;
+  text-decoration: none;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+}
+
+.nav-link:hover {
+  background: #1e2730;
+  color: #fff;
+}
+
+.nav-link.active {
+  background: #1a2a3a;
+  color: #5eb3f6;
+  border-left-color: #5eb3f6;
+}
+
+.main {
+  flex: 1;
+  overflow: auto;
   padding: 24px;
 }
 
-header {
-  margin-bottom: 32px;
-}
-
-h1 {
-  margin: 0;
+.page-title {
+  margin: 0 0 16px;
+  font-size: 22px;
 }
 
 .muted {
   color: #8b98a5;
-}
-
-.card {
-  background: #1a2332;
-  border-radius: 12px;
-  padding: 20px;
-  margin-bottom: 24px;
-}
-
-.card h2 {
-  margin-top: 0;
-  font-size: 18px;
 }
 
 .error {
@@ -45,4 +94,66 @@ h1 {
 
 .ok strong {
   color: #4ade80;
+}
+
+.card {
+  background: #1a2332;
+  border-radius: 12px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 10px 12px;
+  border-bottom: 1px solid #2f3943;
+}
+
+th {
+  color: #8b98a5;
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+tr:hover td {
+  background: #1e2a38;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: #243044;
+}
+
+.badge-ok {
+  color: #4ade80;
+}
+
+.loading {
+  padding: 24px;
+  color: #8b98a5;
+}
+
+@media (max-width: 768px) {
+  .layout {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    max-height: 40vh;
+  }
 }

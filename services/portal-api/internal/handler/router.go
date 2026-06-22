@@ -32,6 +32,10 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Get("/dashboard", h.Dashboard)
 		r.Get("/cluster", h.ClusterSummary)
 		r.Get("/projects", h.ListProjects)
+		r.Get("/explorer/menu", h.ExplorerMenu)
+		r.Get("/rancher/clusters", h.ListRancherClusters)
+		r.Get("/rancher/projects", h.ListRancherProjects)
+		r.Get("/k8s/{resource}", h.ListK8sResource)
 	})
 
 	return r
