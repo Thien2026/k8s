@@ -47,6 +47,8 @@ import_image() {
 
 ensure_docker
 import_image "${API_IMAGE}" "${ROOT_DIR}/services/portal-api"
+log "Build single-file HTML (1 request)..."
+"${ROOT_DIR}/services/portal-web/build.sh"
 import_image "${WEB_IMAGE}" "${ROOT_DIR}/services/portal-web"
 
 CORS_ORIGIN="https://${PLATFORM_HOST}"
@@ -149,7 +151,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/enable-gzip: "true"
-    nginx.ingress.kubernetes.io/gzip-types: "text/css application/javascript application/json text/plain"
+    nginx.ingress.kubernetes.io/gzip-types: "text/css application/javascript application/json text/plain text/html"
+    nginx.ingress.kubernetes.io/ssl-session-cache: "true"
+    nginx.ingress.kubernetes.io/ssl-session-cache-size: "10m"
 spec:
   ingressClassName: nginx
   tls:
@@ -185,6 +189,14 @@ EOF
 
 kubectl -n "${NS}" rollout status deploy/portal-api --timeout=300s
 kubectl -n "${NS}" rollout status deploy/portal-web --timeout=300s
+
+# Image tag :local không đổi → buộc restart pod sau rebuild
+if [[ "${FORCE_BUILD:-}" == "1" ]]; then
+  log "Restart portal pods sau rebuild image..."
+  kubectl -n "${NS}" rollout restart deploy/portal-api deploy/portal-web
+  kubectl -n "${NS}" rollout status deploy/portal-api --timeout=300s
+  kubectl -n "${NS}" rollout status deploy/portal-web --timeout=300s
+fi
 
 log "Platform Console: https://${PLATFORM_HOST}"
 log "API health: https://${PLATFORM_HOST}/health"

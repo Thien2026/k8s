@@ -28,6 +28,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) http.Handler {
 	r.Get("/api/v1/health/db", h.HealthDB)
 
 	r.Route("/api/v1", func(r chi.Router) {
+		r.Get("/dashboard", h.Dashboard)
 		r.Get("/projects", h.ListProjects)
 	})
 
@@ -51,6 +52,47 @@ func (h *Handler) HealthDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "database": "connected"})
+}
+
+func (h *Handler) Dashboard(w http.ResponseWriter, r *http.Request) {
+	health := map[string]string{"status": "ok"}
+	if err := h.db.Ping(r.Context()); err != nil {
+		health = map[string]string{"status": "error", "error": err.Error()}
+	} else {
+		health["database"] = "connected"
+	}
+
+	rows, err := h.db.Query(r.Context(),
+		`SELECT id, name, namespace_dev, namespace_prod FROM projects ORDER BY id`)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	type project struct {
+		ID            int64  `json:"id"`
+		Name          string `json:"name"`
+		NamespaceDev  string `json:"namespace_dev"`
+		NamespaceProd string `json:"namespace_prod"`
+	}
+	var projects []project
+	for rows.Next() {
+		var p project
+		if err := rows.Scan(&p.ID, &p.Name, &p.NamespaceDev, &p.NamespaceProd); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		projects = append(projects, p)
+	}
+	if projects == nil {
+		projects = []project{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"health":   health,
+		"projects": projects,
+	})
 }
 
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
