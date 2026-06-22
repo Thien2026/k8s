@@ -93,25 +93,48 @@ async function pageRancherList(main, title, path, columns) {
 async function pageK8s(main, resource, label) {
   main.innerHTML = '<p class="loading">Đang tải ' + esc(label) + "…</p>";
   const data = await api("/api/v1/k8s/" + resource);
-  const cols = [
-    { key: "name", label: "Name" },
-    { key: "namespace", label: "Namespace" },
-    {
-      key: "status",
-      label: "Status",
-      render: (r) =>
-        r.status
-          ? '<span class="badge badge-ok">' + esc(r.status) + "</span>"
-          : "—",
-    },
-    {
-      key: "created",
-      label: "Age",
-      render: (r) => esc(fmtTime(r.created)),
-    },
-  ];
-  if (!data.items || !data.items.some((i) => i.namespace)) {
-    cols.splice(1, 1);
+  let cols;
+  if (resource === "events") {
+    cols = [
+      {
+        key: "status",
+        label: "Type",
+        render: (r) =>
+          r.status === "Warning"
+            ? '<span class="badge" style="color:#fbbf24">' + esc(r.status) + "</span>"
+            : '<span class="badge badge-ok">' + esc(r.status || "Normal") + "</span>",
+      },
+      { key: "reason", label: "Reason" },
+      { key: "object", label: "Object" },
+      { key: "namespace", label: "Namespace" },
+      { key: "message", label: "Message" },
+      {
+        key: "created",
+        label: "Last Seen",
+        render: (r) => esc(fmtTime(r.created)),
+      },
+    ];
+  } else {
+    cols = [
+      { key: "name", label: "Name" },
+      { key: "namespace", label: "Namespace" },
+      {
+        key: "status",
+        label: "Status",
+        render: (r) =>
+          r.status
+            ? '<span class="badge badge-ok">' + esc(r.status) + "</span>"
+            : "—",
+      },
+      {
+        key: "created",
+        label: "Age",
+        render: (r) => esc(fmtTime(r.created)),
+      },
+    ];
+    if (!data.items || !data.items.some((i) => i.namespace)) {
+      cols.splice(1, 1);
+    }
   }
   main.innerHTML =
     '<h2 class="page-title">' +

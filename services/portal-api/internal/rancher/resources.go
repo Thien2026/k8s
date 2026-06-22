@@ -12,7 +12,7 @@ type K8sResource struct {
 var K8sResources = []K8sResource{
 	{Key: "namespaces", Label: "Namespaces", Group: "Cluster", APIPath: "/v1/namespaces", Namespaced: false},
 	{Key: "nodes", Label: "Nodes", Group: "Cluster", APIPath: "/v1/nodes", Namespaced: false},
-	{Key: "events", Label: "Events", Group: "Cluster", APIPath: "/v1/events", Namespaced: false},
+	{Key: "events", Label: "Events", Group: "Cluster", APIPath: "/apis/events.k8s.io/v1/events", Namespaced: false},
 	{Key: "deployments", Label: "Deployments", Group: "Workloads", APIPath: "/apis/apps/v1/deployments", Namespaced: true},
 	{Key: "statefulsets", Label: "StatefulSets", Group: "Workloads", APIPath: "/apis/apps/v1/statefulsets", Namespaced: true},
 	{Key: "daemonsets", Label: "DaemonSets", Group: "Workloads", APIPath: "/apis/apps/v1/daemonsets", Namespaced: true},

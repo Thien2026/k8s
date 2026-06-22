@@ -13,6 +13,9 @@ type ResourceRow struct {
 	Created   string `json:"created,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Kind      string `json:"kind,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	Message   string `json:"message,omitempty"`
+	Object    string `json:"object,omitempty"`
 }
 
 type ResourceList struct {
@@ -104,6 +107,9 @@ func (c *Client) ListK8s(ctx context.Context, key, namespace string) (ResourceLi
 	}
 
 	path := res.APIPath
+	if key == "events" {
+		path += "?limit=500"
+	}
 	if res.Namespaced && namespace != "" {
 		// .../apis/apps/v1/namespaces/{ns}/deployments
 		if strings.HasPrefix(path, "/apis/") {
@@ -193,27 +199,85 @@ func parseK8sItems(body []byte) ([]ResourceRow, error) {
 
 	rows := make([]ResourceRow, 0, len(list.Items))
 	for _, raw := range list.Items {
-		var obj struct {
-			Kind     string `json:"kind"`
-			Metadata struct {
-				Name              string `json:"name"`
-				Namespace         string `json:"namespace"`
-				CreationTimestamp string `json:"creationTimestamp"`
-			} `json:"metadata"`
-			Status json.RawMessage `json:"status"`
+		if row, ok := parseK8sItem(raw); ok {
+			rows = append(rows, row)
 		}
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			continue
-		}
-		rows = append(rows, ResourceRow{
-			Name:      obj.Metadata.Name,
-			Namespace: obj.Metadata.Namespace,
-			Created:   obj.Metadata.CreationTimestamp,
-			Status:    extractStatus(obj.Kind, obj.Status),
-			Kind:      obj.Kind,
-		})
 	}
 	return rows, nil
+}
+
+func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
+	var obj struct {
+		Kind     string `json:"kind"`
+		Type     string `json:"type"`
+		Reason   string `json:"reason"`
+		Note     string `json:"note"`
+		Message  string `json:"message"`
+		EventTime string `json:"eventTime"`
+		ReportingController string `json:"reportingController"`
+		Metadata struct {
+			Name              string `json:"name"`
+			Namespace         string `json:"namespace"`
+			CreationTimestamp string `json:"creationTimestamp"`
+		} `json:"metadata"`
+		Regarding struct {
+			Kind      string `json:"kind"`
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
+		} `json:"regarding"`
+		InvolvedObject struct {
+			Kind      string `json:"kind"`
+			Namespace string `json:"namespace"`
+			Name      string `json:"name"`
+		} `json:"involvedObject"`
+		LastTimestamp string `json:"lastTimestamp"`
+		Status        json.RawMessage `json:"status"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return ResourceRow{}, false
+	}
+
+	created := obj.EventTime
+	if created == "" {
+		created = obj.LastTimestamp
+	}
+	if created == "" {
+		created = obj.Metadata.CreationTimestamp
+	}
+
+	row := ResourceRow{
+		Name:      obj.Metadata.Name,
+		Namespace: obj.Metadata.Namespace,
+		Created:   created,
+		Kind:      obj.Kind,
+		Status:    extractStatus(obj.Kind, obj.Status),
+	}
+
+	// events.k8s.io/v1 (K8s 1.35+) hoặc core/v1 Event
+	if obj.Type != "" || obj.Reason != "" || obj.Note != "" || obj.Regarding.Name != "" {
+		row.Status = obj.Type
+		row.Reason = obj.Reason
+		row.Message = obj.Note
+		if row.Message == "" {
+			row.Message = obj.Message
+		}
+		ref := obj.Regarding
+		if ref.Name == "" {
+			ref = obj.InvolvedObject
+		}
+		if ref.Name != "" {
+			row.Object = ref.Kind + "/" + ref.Name
+			if row.Namespace == "" {
+				row.Namespace = ref.Namespace
+			}
+		}
+		if row.Status == "" && obj.ReportingController != "" {
+			row.Status = "Normal"
+		}
+		return row, true
+	}
+
+	return row, true
 }
 
 func extractStatus(kind string, status json.RawMessage) string {
