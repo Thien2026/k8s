@@ -99,6 +99,17 @@ func (c *Client) clusterID(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("no rancher clusters found")
 }
 
+func namespacedAPIPath(basePath, namespace string) string {
+	if strings.HasPrefix(basePath, "/apis/") {
+		i := strings.LastIndex(basePath, "/")
+		if i > 0 {
+			return basePath[:i] + "/namespaces/" + namespace + basePath[i:]
+		}
+	}
+	rest := strings.TrimPrefix(basePath, "/v1/")
+	return "/v1/namespaces/" + namespace + "/" + rest
+}
+
 func (c *Client) ListK8s(ctx context.Context, key, namespace string, page, limit int) (ResourceList, error) {
 	res, ok := K8sResourceByKey(key)
 	if !ok {
@@ -124,14 +135,7 @@ func (c *Client) ListK8s(ctx context.Context, key, namespace string, page, limit
 		path += "?limit=500"
 	}
 	if res.Namespaced && namespace != "" {
-		if strings.HasPrefix(path, "/apis/") {
-			parts := strings.SplitN(path, "/", 4)
-			if len(parts) >= 4 {
-				path = fmt.Sprintf("/apis/%s/namespaces/%s/%s", parts[2], namespace, parts[3])
-			}
-		} else {
-			path = fmt.Sprintf("/v1/namespaces/%s/%s", namespace, strings.TrimPrefix(path, "/v1/"))
-		}
+		path = namespacedAPIPath(path, namespace)
 	}
 
 	body, err := c.get(ctx, fmt.Sprintf("/k8s/clusters/%s%s", clusterID, path))
