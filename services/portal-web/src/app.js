@@ -115,6 +115,9 @@ async function pageOverview(main) {
   const d = await api("/api/v1/rancher/cluster/dashboard");
   const c = d.counts || {};
   const cap = d.capacity || {};
+  const pods = cap.pods || {};
+  const cpu = cap.cpu || {};
+  const mem = cap.memory || {};
 
   let eventsHtml = "";
   if (d.recent_events && d.recent_events.length) {
@@ -132,8 +135,17 @@ async function pageOverview(main) {
     eventsHtml = '<p class="muted">Không có events gần đây.</p>';
   }
 
+  const barItems = [
+    { label: "Pods", value: c.pods || 0 },
+    { label: "Deploy", value: c.deployments || 0 },
+    { label: "Svc", value: c.services || 0 },
+    { label: "NS", value: c.namespaces || 0 },
+    { label: "Ing", value: c.ingresses || 0 },
+    { label: "Nodes", value: c.nodes || 0 },
+  ];
+
   const comps = (d.components || [])
-    .map((x) => '<span class="comp ok">' + esc(x.name) + "</span>")
+    .map((x) => compCard(x))
     .join("");
 
   main.innerHTML =
@@ -142,31 +154,115 @@ async function pageOverview(main) {
     '<p class="page-subtitle">' +
     esc(d.name || d.cluster_id) +
     ' · <span class="pill">' +
-    esc(d.state || "—") +
-    "</span></p>" +
-    "</div>" +
+    esc(d.state || "active") +
+    "</span></p></div>" +
     '<div class="meta-chips">' +
     chip("Provider", d.provider || "RKE2") +
     chip("Kubernetes", d.k8s_version || "—") +
-    chip("Cluster ID", d.cluster_id) +
+    chip("Cluster", d.cluster_id) +
     "</div>" +
     '<div class="stat-grid">' +
-    statBox(c.resources || 0, "Resources", "📦") +
-    statBox(c.nodes || 0, "Nodes", "🖥") +
-    statBox(c.deployments || 0, "Deployments", "🚀") +
-    statBox(c.pods || 0, "Pods", "⬡") +
-    statBox(c.namespaces || 0, "Namespaces", "📁") +
-    statBox(c.services || 0, "Services", "🔗") +
+    statBox(c.resources || 0, "Total Resources", "g1") +
+    statBox(c.nodes || 0, "Nodes", "g2") +
+    statBox(c.deployments || 0, "Deployments", "g3") +
+    statBox(c.pods || 0, "Pods", "g4") +
+    statBox(c.namespaces || 0, "Namespaces", "g5") +
+    statBox(c.services || 0, "Services", "g6") +
     "</div>" +
-    '<div class="card card-glass"><h3>Capacity</h3>' +
-    renderCapacity(cap) +
+    '<div class="dash-grid">' +
+    '<div class="card"><h3>Capacity Overview</h3>' +
+    '<div class="cap-donuts">' +
+    svgDonut(pods.used_pct || 0, 110, "#8b5cf6", "Pods", (pods.used || 0) + "/" + (pods.total || 0)) +
+    svgDonut(cpu.used_pct || 0, 110, "#22d3ee", "CPU Used", (cpu.used || 0) + " / " + (cpu.total || 0) + " cores") +
+    svgDonut(mem.used_pct || 0, 110, "#ec4899", "Memory", (mem.used || 0) + " / " + (mem.total || 0) + " GiB") +
     "</div>" +
-    '<div class="card card-glass"><h3>Components</h3><div class="components">' +
-    comps +
+    '<div class="cap-sub">' +
+    meterRow("CPU Reserved", cpu.reserved, cpu.total, cpu.reserved_pct, "reserved") +
+    meterRow("Memory Reserved", mem.reserved, mem.total, mem.reserved_pct, "reserved") +
     "</div></div>" +
-    '<div class="card card-glass"><h3>Recent Events <a href="#/events" class="link-muted">Xem tất cả →</a></h3>' +
+    '<div class="card"><h3>Component Status</h3>' +
+    '<div class="comp-grid">' +
+    comps +
+    "</div></div></div>" +
+    '<div class="dash-grid-bottom">' +
+    '<div class="card"><h3>Resource Distribution</h3>' +
+    svgBarChart(barItems, 180, 420) +
+    "</div>" +
+    '<div class="card"><h3>Recent Events <a href="#/events" class="link-muted">Xem tất cả →</a></h3>' +
     eventsHtml +
-    "</div>";
+    "</div></div>";
+}
+
+function svgDonut(pct, size, color, title, sub) {
+  const stroke = 10;
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(Math.max(Number(pct) || 0, 0), 100);
+  const off = c * (1 - p / 100);
+  return (
+    '<div class="cap-donut-item">' +
+    '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + " " + size + '">' +
+    '<circle cx="' + cx + '" cy="' + cx + '" r="' + r + '" fill="none" stroke="rgba(255,255,255,0.07)" stroke-width="' + stroke + '"/>' +
+    '<circle cx="' + cx + '" cy="' + cx + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '"' +
+    ' stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"' +
+    ' stroke-linecap="round" transform="rotate(-90 ' + cx + " " + cx + ')"/>' +
+    '<text x="' + cx + '" y="' + (cx - 2) + '" text-anchor="middle" fill="#fff" font-size="18" font-weight="700">' + Math.round(p) + "%</text>" +
+    "</svg>" +
+    "<h4>" + esc(title) + "</h4>" +
+    (sub ? "<p>" + esc(String(sub)) + "</p>" : "") +
+    "</div>"
+  );
+}
+
+function svgDonutSmall(pct, size, color) {
+  const stroke = 6;
+  const r = (size - stroke) / 2;
+  const cx = size / 2;
+  const c = 2 * Math.PI * r;
+  const p = Math.min(Math.max(Number(pct) || 0, 0), 100);
+  const off = c * (1 - p / 100);
+  return (
+    '<svg width="' + size + '" height="' + size + '" viewBox="0 0 ' + size + " " + size + '">' +
+    '<circle cx="' + cx + '" cy="' + cx + '" r="' + r + '" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="' + stroke + '"/>' +
+    '<circle cx="' + cx + '" cy="' + cx + '" r="' + r + '" fill="none" stroke="' + color + '" stroke-width="' + stroke + '"' +
+    ' stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"' +
+    ' stroke-linecap="round" transform="rotate(-90 ' + cx + " " + cx + ')"/>' +
+    "</svg>"
+  );
+}
+
+function svgBarChart(items, h, w) {
+  const max = Math.max.apply(null, items.map(function (i) { return i.value; }).concat([1]));
+  const n = items.length;
+  const barW = Math.max(24, (w - 50) / n - 10);
+  let rects = "";
+  items.forEach(function (it, i) {
+    const bh = Math.max(4, (it.value / max) * (h - 50));
+    const x = 28 + i * (barW + 10);
+    const y = h - 28 - bh;
+    rects +=
+      '<rect x="' + x + '" y="' + y + '" width="' + barW + '" height="' + bh + '" rx="5" fill="url(#barGrad)" opacity="0.9"/>' +
+      '<text x="' + (x + barW / 2) + '" y="' + (h - 8) + '" text-anchor="middle" fill="#94a3b8" font-size="10">' + esc(it.label) + "</text>" +
+      '<text x="' + (x + barW / 2) + '" y="' + (y - 4) + '" text-anchor="middle" fill="#eef2ff" font-size="10">' + it.value + "</text>";
+  });
+  return (
+    '<div class="bar-chart"><svg viewBox="0 0 ' + w + " " + h + '" preserveAspectRatio="xMidYMid meet">' +
+    "<defs><linearGradient id=\"barGrad\" x1=\"0\" y1=\"1\" x2=\"0\" y2=\"0\">" +
+    '<stop offset="0%" stop-color="#6d28d9"/><stop offset="100%" stop-color="#22d3ee"/>' +
+    "</linearGradient></defs>" + rects + "</svg></div>"
+  );
+}
+
+function compCard(comp) {
+  const ok = comp.status === "ok";
+  const color = ok ? "#34d399" : "#f87171";
+  return (
+    '<div class="comp-card ' + esc(comp.status) + '">' +
+    svgDonutSmall(ok ? 100 : 40, 56, color) +
+    '<div class="comp-name">' + esc(comp.name) + "</div>" +
+    '<div class="comp-msg">' + esc(comp.message || comp.status) + "</div></div>"
+  );
 }
 
 function chip(label, value) {
@@ -183,56 +279,17 @@ function meterRow(label, used, total, pct, tone) {
   const p = pct != null ? pct : total ? Math.round((used / total) * 100) : 0;
   return (
     '<div class="meter">' +
-    '<div class="meter-head"><span>' +
-    esc(label) +
-    "</span><span>" +
-    esc(used) +
-    " / " +
-    esc(total) +
-    " <strong>(" +
-    p +
-    "%)</strong></span></div>" +
-    '<div class="meter-track"><i class="meter-fill ' +
-  (tone || "used") +
-    '" style="width:' +
-    Math.min(p, 100) +
-    '%"></i></div></div>'
+    '<div class="meter-head"><span>' + esc(label) + "</span><span>" +
+    esc(used) + " / " + esc(total) + " (" + Math.round(p) + "%)</span></div>" +
+    '<div class="meter-track"><i class="meter-fill ' + (tone || "used") +
+    '" style="width:' + Math.min(p, 100) + '%"></i></div></div>'
   );
 }
 
-function renderCapacity(cap) {
-  const pods = cap.pods || {};
-  const cpu = cap.cpu || {};
-  const mem = cap.memory || {};
+function statBox(n, label, grad) {
   return (
-    '<div class="cap-grid">' +
-    '<div class="cap-card"><h4>Pods</h4>' +
-    meterRow("Used", pods.used || 0, pods.total || 0, pods.used_pct) +
-    "</div>" +
-    '<div class="cap-card"><h4>CPU</h4>' +
-    meterRow("Reserved", cpu.reserved || 0, cpu.total || 0, cpu.reserved_pct, "reserved") +
-    meterRow("Used", cpu.used || 0, cpu.total || 0, cpu.used_pct, "used") +
-    '<div class="cap-unit">' +
-    esc(cpu.total || 0) +
-    " cores</div></div>" +
-    '<div class="cap-card"><h4>Memory</h4>' +
-    meterRow("Reserved", mem.reserved || 0, mem.total || 0, mem.reserved_pct, "reserved") +
-    meterRow("Used", mem.used || 0, mem.total || 0, mem.used_pct, "used") +
-    '<div class="cap-unit">' +
-    esc(mem.total || 0) +
-    " GiB</div></div></div>"
-  );
-}
-
-function statBox(n, label, icon) {
-  return (
-    '<div class="stat-box"><div class="stat-icon">' +
-    (icon || "") +
-    '</div><div class="num">' +
-    n +
-    '</div><div class="lbl">' +
-    esc(label) +
-    "</div></div>"
+    '<div class="stat-box ' + (grad || "g1") + '">' +
+    '<div class="lbl">' + esc(label) + '</div><div class="num">' + n + "</div></div>"
   );
 }
 
@@ -367,6 +424,15 @@ function setGroupCollapsed(group, collapsed) {
   localStorage.setItem("nav-collapsed-" + group, collapsed ? "1" : "0");
 }
 
+const NAV_ICONS = {
+  overview: "◉", clusters: "◎", projects: "▣", namespaces: "▤", nodes: "⬡",
+  events: "⚡", deployments: "▶", statefulsets: "▧", daemonsets: "▨",
+  jobs: "⏱", cronjobs: "↻", pods: "●", services: "🔗", ingresses: "🌐",
+  horizontalpodautoscalers: "📈", persistentvolumeclaims: "💾",
+  persistentvolumes: "🗄", storageclasses: "📂", configmaps: "⚙",
+  secrets: "🔒",
+};
+
 async function buildSidebar() {
   const nav = $("#sidebar-nav");
   const menu = await api("/api/v1/explorer/menu");
@@ -382,29 +448,16 @@ async function buildSidebar() {
     if (!groups[group]) continue;
     const collapsed = groupCollapsed(group);
     html +=
-      '<div class="nav-group" data-group="' +
-      esc(group) +
-      '">' +
-      '<button type="button" class="nav-group-toggle" data-group="' +
-      esc(group) +
-      '">' +
-      '<span class="chev">' +
-      (collapsed ? "▸" : "▾") +
-      "</span>" +
-      esc(group) +
+      '<div class="nav-group">' +
+      '<button type="button" class="nav-group-toggle" data-group="' + esc(group) + '">' +
+      '<span class="chev">' + (collapsed ? "▸" : "▾") + "</span>" + esc(group) +
       "</button>" +
-      '<div class="nav-group-items' +
-      (collapsed ? " collapsed" : "") +
-      '">';
+      '<div class="nav-group-items' + (collapsed ? " collapsed" : "") + '">';
     groups[group].forEach((item) => {
+      const ico = NAV_ICONS[item.key] || "·";
       html +=
-        '<a class="nav-link" data-route="' +
-        esc(item.key) +
-        '" href="#/' +
-        esc(item.key) +
-        '">' +
-        esc(item.label) +
-        "</a>";
+        '<a class="nav-link" data-route="' + esc(item.key) + '" href="#/' + esc(item.key) + '">' +
+        '<span class="ico">' + ico + "</span>" + esc(item.label) + "</a>";
     });
     html += "</div></div>";
   }

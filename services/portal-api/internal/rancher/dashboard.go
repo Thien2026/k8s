@@ -20,8 +20,9 @@ type ClusterDashboard struct {
 }
 
 type Component struct {
-	Name   string `json:"name"`
-	Status string `json:"status"`
+	Name    string `json:"name"`
+	Status  string `json:"status"` // ok | degraded | unknown
+	Message string `json:"message,omitempty"`
 }
 
 type clusterDetailV3 struct {
@@ -47,12 +48,6 @@ func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error)
 	dash := ClusterDashboard{
 		ClusterID: clusterID,
 		Counts:    map[string]int{},
-		Components: []Component{
-			{Name: "Etcd", Status: "ok"},
-			{Name: "Scheduler", Status: "ok"},
-			{Name: "Controller Manager", Status: "ok"},
-			{Name: "Fleet", Status: "ok"},
-		},
 	}
 
 	if body, err := c.get(ctx, "/v3/clusters/"+clusterID); err == nil {
@@ -78,6 +73,7 @@ func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error)
 	}
 
 	dash.Capacity = c.buildCapacity(ctx, clusterID)
+	dash.Components = c.fetchComponents(ctx, clusterID)
 
 	if events, err := c.ListK8s(ctx, "events", "", 1, 8); err == nil {
 		dash.RecentEvents = events.Items
