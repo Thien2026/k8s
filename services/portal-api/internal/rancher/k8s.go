@@ -9,18 +9,22 @@ import (
 )
 
 type ResourceRow struct {
-	Name      string  `json:"name"`
-	Namespace string  `json:"namespace,omitempty"`
-	Created   string  `json:"created,omitempty"`
-	Status    string  `json:"status,omitempty"`
-	Kind      string  `json:"kind,omitempty"`
-	Reason    string  `json:"reason,omitempty"`
-	Message   string  `json:"message,omitempty"`
-	Object    string  `json:"object,omitempty"`
-	PodsMax   int     `json:"pods_max,omitempty"`
-	PodsUsed  int     `json:"pods_used,omitempty"`
-	CPUCores  float64 `json:"cpu_cores,omitempty"`
-	MemGiB    float64 `json:"mem_gib,omitempty"`
+	Name           string  `json:"name"`
+	Namespace      string  `json:"namespace,omitempty"`
+	Created        string  `json:"created,omitempty"`
+	Status         string  `json:"status,omitempty"`
+	Kind           string  `json:"kind,omitempty"`
+	Reason         string  `json:"reason,omitempty"`
+	Message        string  `json:"message,omitempty"`
+	Object         string  `json:"object,omitempty"`
+	Restarts       int     `json:"restarts,omitempty"`
+	Replicas       string  `json:"replicas,omitempty"`
+	Scale          string  `json:"scale,omitempty"`
+	RestartPolicy  string  `json:"restart_policy,omitempty"`
+	PodsMax        int     `json:"pods_max,omitempty"`
+	PodsUsed       int     `json:"pods_used,omitempty"`
+	CPUCores       float64 `json:"cpu_cores,omitempty"`
+	MemGiB         float64 `json:"mem_gib,omitempty"`
 }
 
 type ResourceList struct {
@@ -325,8 +329,77 @@ func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 	if kind == "Node" {
 		enrichNodeRow(&row, obj.Status)
 	}
+	enrichWorkloadRow(&row, kind, obj.Status, obj.Spec)
 
 	return row, name != ""
+}
+
+func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessage) {
+	switch kind {
+	case "Pod":
+		var st struct {
+			ContainerStatuses []struct {
+				RestartCount int `json:"restartCount"`
+			} `json:"containerStatuses"`
+		}
+		var sp struct {
+			RestartPolicy string `json:"restartPolicy"`
+		}
+		if json.Unmarshal(status, &st) == nil {
+			for _, c := range st.ContainerStatuses {
+				row.Restarts += c.RestartCount
+			}
+		}
+		if json.Unmarshal(spec, &sp) == nil && sp.RestartPolicy != "" {
+			row.RestartPolicy = sp.RestartPolicy
+		}
+	case "Deployment", "StatefulSet", "DaemonSet":
+		var st struct {
+			Replicas        *int `json:"replicas"`
+			ReadyReplicas   int  `json:"readyReplicas"`
+			AvailableReplicas int `json:"availableReplicas"`
+		}
+		var sp struct {
+			Replicas *int `json:"replicas"`
+		}
+		if json.Unmarshal(status, &st) == nil {
+			want := st.Replicas
+			if want == nil && json.Unmarshal(spec, &sp) == nil {
+				want = sp.Replicas
+			}
+			if want != nil {
+				row.Replicas = fmt.Sprintf("%d/%d ready", st.ReadyReplicas, *want)
+			} else if st.ReadyReplicas > 0 {
+				row.Replicas = fmt.Sprintf("%d ready", st.ReadyReplicas)
+			}
+		}
+	case "HorizontalPodAutoscaler":
+		var sp struct {
+			MinReplicas *int `json:"minReplicas"`
+			MaxReplicas int  `json:"maxReplicas"`
+		}
+		var st struct {
+			CurrentReplicas int `json:"currentReplicas"`
+		}
+		if json.Unmarshal(spec, &sp) == nil {
+			min := 1
+			if sp.MinReplicas != nil {
+				min = *sp.MinReplicas
+			}
+			cur := 0
+			if json.Unmarshal(status, &st) == nil {
+				cur = st.CurrentReplicas
+			}
+			row.Scale = fmt.Sprintf("%d–%d → %d", min, sp.MaxReplicas, cur)
+		}
+	case "CronJob":
+		var st struct {
+			Active []any `json:"active"`
+		}
+		if json.Unmarshal(status, &st) == nil && len(st.Active) > 0 {
+			row.Status = fmt.Sprintf("active=%d", len(st.Active))
+		}
+	}
 }
 
 func isEventObject(kind, reason, note, eventTime, regarding, involved string) bool {

@@ -15,8 +15,15 @@ type ClusterDashboard struct {
 	Created      string         `json:"created,omitempty"`
 	Counts       map[string]int `json:"counts"`
 	Capacity     NodeCapacity   `json:"capacity"`
+	Scaling      ScalingSummary `json:"scaling"`
 	Components   []Component    `json:"components"`
 	RecentEvents []ResourceRow  `json:"recent_events"`
+}
+
+type ScalingSummary struct {
+	HPACount       int `json:"hpa_count"`
+	PodsWithRestart int `json:"pods_with_restart"`
+	TotalRestarts  int `json:"total_restarts"`
 }
 
 type Component struct {
@@ -73,6 +80,7 @@ func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error)
 	}
 
 	dash.Capacity = c.buildCapacity(ctx, clusterID)
+	dash.Scaling = c.buildScalingSummary(ctx)
 	dash.Components = c.fetchComponents(ctx, clusterID)
 
 	if events, err := c.ListK8s(ctx, "events", "", 1, 8); err == nil {

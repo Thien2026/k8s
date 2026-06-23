@@ -418,6 +418,76 @@ body {
   height: auto;
 }
 
+/* ── List pages (Namespaces, Pods, …) ── */
+.list-page {
+  max-width: 100%;
+}
+
+.list-header {
+  margin-bottom: 18px;
+}
+
+.list-header .page-title {
+  margin: 0 0 6px;
+}
+
+.list-card {
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+.list-card .table-wrap {
+  border: none;
+  border-radius: 0;
+}
+
+.list-card table {
+  min-width: 100%;
+}
+
+.list-card th,
+.list-card td {
+  padding: 14px 20px;
+}
+
+.list-card th:first-child,
+.list-card td:first-child {
+  padding-left: 24px;
+}
+
+.list-card th:last-child,
+.list-card td:last-child {
+  padding-right: 24px;
+}
+
+.list-card .pagination {
+  padding: 14px 24px 18px;
+  margin: 0;
+  border-top: 1px solid var(--border);
+}
+
+.scale-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.scale-chip {
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-size: 12px;
+}
+
+.scale-chip strong {
+  display: block;
+  font-size: 18px;
+  margin-top: 4px;
+  color: var(--purple);
+}
+
 /* ── Table ── */
 .table-wrap {
   overflow-x: auto;

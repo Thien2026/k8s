@@ -135,6 +135,7 @@ async function pageOverview(main) {
     eventsHtml = '<p class="muted">Không có events gần đây.</p>';
   }
 
+  const sc = d.scaling || {};
   const barItems = [
     { label: "Pods", value: c.pods || 0 },
     { label: "Deploy", value: c.deployments || 0 },
@@ -168,6 +169,13 @@ async function pageOverview(main) {
     statBox(c.pods || 0, "Pods", "g4") +
     statBox(c.namespaces || 0, "Namespaces", "g5") +
     statBox(c.services || 0, "Services", "g6") +
+    "</div>" +
+    '<div class="scale-chips">' +
+    '<div class="scale-chip">HPA (Auto Scale)<strong>' + (sc.hpa_count || 0) + '</strong></div>' +
+    '<div class="scale-chip">Pods đã restart<strong>' + (sc.pods_with_restart || 0) + '</strong></div>' +
+    '<div class="scale-chip">Tổng lần restart<strong>' + (sc.total_restarts || 0) + '</strong></div>' +
+    '<a href="#/horizontalpodautoscalers" class="scale-chip" style="text-decoration:none;color:inherit">→ Xem HPA</a>' +
+    '<a href="#/pods" class="scale-chip" style="text-decoration:none;color:inherit">→ Xem Pods</a>' +
     "</div>" +
     '<div class="dash-grid">' +
     '<div class="card"><h3>Capacity Overview</h3>' +
@@ -293,17 +301,21 @@ function statBox(n, label, grad) {
   );
 }
 
+function listPage(title, total, body) {
+  return (
+    '<div class="list-page">' +
+    '<div class="list-header"><h2 class="page-title">' + esc(title) +
+    ' <span class="muted">(' + total + ")</span></h2></div>" +
+    '<div class="card list-card">' + body + "</div></div>"
+  );
+}
+
 async function pageRancherList(main, title, path, columns) {
   main.innerHTML = '<p class="loading">Đang tải ' + esc(title) + "…</p>";
   const data = await api(path);
   const rows = data.items || data;
-  main.innerHTML =
-    '<h2 class="page-title">' +
-    esc(title) +
-    ' <span class="muted">(' +
-    (data.total != null ? data.total : rows.length) +
-    ")</span></h2>" +
-    renderTable(columns, Array.isArray(rows) ? rows : []);
+  const total = data.total != null ? data.total : rows.length;
+  main.innerHTML = listPage(title, total, renderTable(columns, Array.isArray(rows) ? rows : []));
 }
 
 function k8sColumns(resource, data) {
@@ -322,6 +334,49 @@ function k8sColumns(resource, data) {
       { key: "namespace", label: "Namespace" },
       { key: "message", label: "Message" },
       { key: "created", label: "Last Seen", render: (r) => esc(fmtTime(r.created)) },
+    ];
+  }
+  if (resource === "pods") {
+    return [
+      { key: "name", label: "Name" },
+      { key: "namespace", label: "Namespace" },
+      {
+        key: "status",
+        label: "Phase",
+        render: (r) => '<span class="badge badge-ok">' + esc(r.status || "—") + "</span>",
+      },
+      {
+        key: "restarts",
+        label: "Restarts",
+        render: (r) =>
+          r.restarts > 0
+            ? '<span class="badge badge-warn">' + r.restarts + "</span>"
+            : esc(r.restarts || 0),
+      },
+      { key: "restart_policy", label: "Restart Policy" },
+      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+    ];
+  }
+  if (resource === "deployments" || resource === "statefulsets" || resource === "daemonsets") {
+    return [
+      { key: "name", label: "Name" },
+      { key: "namespace", label: "Namespace" },
+      { key: "replicas", label: "Replicas" },
+      {
+        key: "status",
+        label: "Status",
+        render: (r) =>
+          r.status ? '<span class="badge badge-ok">' + esc(r.status) + "</span>" : "—",
+      },
+      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+    ];
+  }
+  if (resource === "horizontalpodautoscalers") {
+    return [
+      { key: "name", label: "Name" },
+      { key: "namespace", label: "Namespace" },
+      { key: "scale", label: "Min–Max → Current" },
+      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
     ];
   }
   const cols = [
@@ -357,14 +412,12 @@ async function pageK8s(main, resource, label, page, limit) {
   const cols = k8sColumns(resource, data);
   const onPage = (p, l) => pageK8s(main, resource, label, p, l);
 
-  main.innerHTML =
-    '<h2 class="page-title">' +
-    esc(label) +
-    ' <span class="muted">(' +
-    data.total +
-    ")</span></h2>" +
+  main.innerHTML = listPage(
+    label,
+    data.total,
     renderTable(cols, data.items || []) +
-    renderPagination(route, data.total, data.page, data.limit, onPage);
+      renderPagination(route, data.total, data.page, data.limit, onPage)
+  );
 }
 
 const routes = {
