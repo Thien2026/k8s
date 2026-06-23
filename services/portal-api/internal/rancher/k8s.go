@@ -25,6 +25,23 @@ type ResourceRow struct {
 	PodsUsed       int     `json:"pods_used,omitempty"`
 	CPUCores       float64 `json:"cpu_cores,omitempty"`
 	MemGiB         float64 `json:"mem_gib,omitempty"`
+	NodeIP         string  `json:"node_ip,omitempty"`
+	PodIP          string  `json:"pod_ip,omitempty"`
+	HostIP         string  `json:"host_ip,omitempty"`
+	Node           string  `json:"node,omitempty"`
+	Images         string  `json:"images,omitempty"`
+	ServiceType    string  `json:"service_type,omitempty"`
+	ClusterIP      string  `json:"cluster_ip,omitempty"`
+	Ports          string  `json:"ports,omitempty"`
+	Host           string  `json:"host,omitempty"`
+	StorageClass   string  `json:"storage_class,omitempty"`
+	Capacity       string  `json:"capacity,omitempty"`
+	AccessModes    string  `json:"access_modes,omitempty"`
+	Schedule       string  `json:"schedule,omitempty"`
+	Suspend        string  `json:"suspend,omitempty"`
+	Completions    string  `json:"completions,omitempty"`
+	Selector       string  `json:"selector,omitempty"`
+	Project        string  `json:"project,omitempty"`
 }
 
 type ResourceList struct {
@@ -39,9 +56,18 @@ type ResourceList struct {
 
 type clusterListV3 struct {
 	Data []struct {
-		ID    string `json:"id"`
-		Name  string `json:"name"`
-		State string `json:"state"`
+		ID       string `json:"id"`
+		Name     string `json:"name"`
+		State    string `json:"state"`
+		Provider string `json:"provider"`
+		Driver   string `json:"driver"`
+		Created  string `json:"created"`
+		Version  *struct {
+			GitVersion string `json:"gitVersion"`
+		} `json:"version"`
+		Nodes *struct {
+			NodeCount int `json:"nodeCount"`
+		} `json:"nodes"`
 	} `json:"data"`
 }
 
@@ -56,9 +82,14 @@ type projectListV3 struct {
 }
 
 type ClusterRow struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-	State string `json:"state"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	State      string `json:"state"`
+	Provider   string `json:"provider,omitempty"`
+	Driver     string `json:"driver,omitempty"`
+	K8sVersion string `json:"k8s_version,omitempty"`
+	Nodes      int    `json:"nodes,omitempty"`
+	Created    string `json:"created,omitempty"`
 }
 
 type ProjectRow struct {
@@ -189,7 +220,21 @@ func (c *Client) ListClusters(ctx context.Context) ([]ClusterRow, error) {
 	}
 	out := make([]ClusterRow, 0, len(list.Data))
 	for _, cl := range list.Data {
-		out = append(out, ClusterRow{ID: cl.ID, Name: cl.Name, State: cl.State})
+		row := ClusterRow{
+			ID:       cl.ID,
+			Name:     cl.Name,
+			State:    cl.State,
+			Provider: cl.Provider,
+			Driver:   cl.Driver,
+			Created:  cl.Created,
+		}
+		if cl.Version != nil {
+			row.K8sVersion = cl.Version.GitVersion
+		}
+		if cl.Nodes != nil {
+			row.Nodes = cl.Nodes.NodeCount
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -338,20 +383,43 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 	switch kind {
 	case "Pod":
 		var st struct {
+			PodIP     string `json:"podIP"`
+			HostIP    string `json:"hostIP"`
+			Phase     string `json:"phase"`
 			ContainerStatuses []struct {
-				RestartCount int `json:"restartCount"`
+				RestartCount int    `json:"restartCount"`
+				Image        string `json:"image"`
 			} `json:"containerStatuses"`
 		}
 		var sp struct {
 			RestartPolicy string `json:"restartPolicy"`
+			NodeName      string `json:"nodeName"`
 		}
 		if json.Unmarshal(status, &st) == nil {
+			row.PodIP = st.PodIP
+			row.HostIP = st.HostIP
+			if st.Phase != "" {
+				row.Status = st.Phase
+			}
+			var imgs []string
 			for _, c := range st.ContainerStatuses {
 				row.Restarts += c.RestartCount
+				if c.Image != "" {
+					imgs = append(imgs, c.Image)
+				}
+			}
+			if len(imgs) > 0 {
+				row.Images = strings.Join(imgs, ", ")
+				if len(imgs) > 1 {
+					row.Images = imgs[0] + " (+" + fmt.Sprintf("%d", len(imgs)-1) + ")"
+				}
 			}
 		}
-		if json.Unmarshal(spec, &sp) == nil && sp.RestartPolicy != "" {
-			row.RestartPolicy = sp.RestartPolicy
+		if json.Unmarshal(spec, &sp) == nil {
+			if sp.RestartPolicy != "" {
+				row.RestartPolicy = sp.RestartPolicy
+			}
+			row.Node = sp.NodeName
 		}
 	case "Deployment", "StatefulSet", "DaemonSet":
 		var st struct {
@@ -372,6 +440,40 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 			} else if st.ReadyReplicas > 0 {
 				row.Replicas = fmt.Sprintf("%d ready", st.ReadyReplicas)
 			}
+			if st.AvailableReplicas > 0 && want != nil && st.AvailableReplicas != st.ReadyReplicas {
+				row.Status = fmt.Sprintf("%d available", st.AvailableReplicas)
+			}
+		}
+		var selWrap struct {
+			Selector struct {
+				MatchLabels map[string]string `json:"matchLabels"`
+			} `json:"selector"`
+		}
+		if json.Unmarshal(spec, &selWrap) == nil && len(selWrap.Selector.MatchLabels) > 0 {
+			parts := make([]string, 0, len(selWrap.Selector.MatchLabels))
+			for k, v := range selWrap.Selector.MatchLabels {
+				parts = append(parts, k+"="+v)
+			}
+			row.Selector = strings.Join(parts, ", ")
+		}
+	case "Job":
+		var st struct {
+			Succeeded int `json:"succeeded"`
+			Failed    int `json:"failed"`
+			Active    int `json:"active"`
+		}
+		var sp struct {
+			Completions *int `json:"completions"`
+		}
+		json.Unmarshal(spec, &sp)
+		if json.Unmarshal(status, &st) == nil {
+			row.Status = fmt.Sprintf("active=%d succeeded=%d", st.Active, st.Succeeded)
+			if sp.Completions != nil {
+				row.Completions = fmt.Sprintf("%d/%d", st.Succeeded, *sp.Completions)
+			}
+		}
+		if sp.Completions != nil && row.Completions == "" {
+			row.Completions = fmt.Sprintf("0/%d", *sp.Completions)
 		}
 	case "HorizontalPodAutoscaler":
 		var sp struct {
@@ -393,12 +495,96 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 			row.Scale = fmt.Sprintf("%d–%d → %d", min, sp.MaxReplicas, cur)
 		}
 	case "CronJob":
+		var sp struct {
+			Schedule string `json:"schedule"`
+			Suspend  *bool  `json:"suspend"`
+		}
 		var st struct {
 			Active []any `json:"active"`
 		}
-		if json.Unmarshal(status, &st) == nil && len(st.Active) > 0 {
-			row.Status = fmt.Sprintf("active=%d", len(st.Active))
+		if json.Unmarshal(spec, &sp) == nil {
+			row.Schedule = sp.Schedule
+			if sp.Suspend != nil && *sp.Suspend {
+				row.Suspend = "yes"
+			} else {
+				row.Suspend = "no"
+			}
 		}
+		if json.Unmarshal(status, &st) == nil {
+			if len(st.Active) > 0 {
+				row.Status = fmt.Sprintf("active=%d", len(st.Active))
+			}
+		}
+	case "Service":
+		var sp struct {
+			Type      string `json:"type"`
+			ClusterIP string `json:"clusterIP"`
+			Ports     []struct {
+				Port       int    `json:"port"`
+				TargetPort any    `json:"targetPort"`
+				Protocol   string `json:"protocol"`
+			} `json:"ports"`
+		}
+		if json.Unmarshal(spec, &sp) == nil {
+			row.ServiceType = sp.Type
+			row.ClusterIP = sp.ClusterIP
+			var ports []string
+			for _, p := range sp.Ports {
+				ports = append(ports, fmt.Sprintf("%d/%s", p.Port, p.Protocol))
+			}
+			row.Ports = strings.Join(ports, ", ")
+		}
+	case "Ingress":
+		var sp struct {
+			IngressClassName *string `json:"ingressClassName"`
+			Rules            []struct {
+				Host string `json:"host"`
+			} `json:"rules"`
+		}
+		if json.Unmarshal(spec, &sp) == nil {
+			var hosts []string
+			for _, r := range sp.Rules {
+				if r.Host != "" {
+					hosts = append(hosts, r.Host)
+				}
+			}
+			row.Host = strings.Join(hosts, ", ")
+			if sp.IngressClassName != nil {
+				row.Status = *sp.IngressClassName
+			}
+		}
+	case "PersistentVolumeClaim":
+		var sp struct {
+			StorageClassName *string `json:"storageClassName"`
+			AccessModes      []string `json:"accessModes"`
+			Resources        struct {
+				Requests map[string]string `json:"requests"`
+			} `json:"resources"`
+		}
+		if json.Unmarshal(spec, &sp) == nil {
+			if sp.StorageClassName != nil {
+				row.StorageClass = *sp.StorageClassName
+			}
+			row.AccessModes = strings.Join(sp.AccessModes, ", ")
+			if s, ok := sp.Resources.Requests["storage"]; ok {
+				row.Capacity = s
+			}
+		}
+	case "PersistentVolume":
+		var sp struct {
+			StorageClassName string `json:"storageClassName"`
+			AccessModes      []string `json:"accessModes"`
+			Capacity         map[string]string `json:"capacity"`
+		}
+		if json.Unmarshal(spec, &sp) == nil {
+			row.StorageClass = sp.StorageClassName
+			row.AccessModes = strings.Join(sp.AccessModes, ", ")
+			if s, ok := sp.Capacity["storage"]; ok {
+				row.Capacity = s
+			}
+		}
+	case "Secret", "ConfigMap":
+		// keys count handled via status phase only
 	}
 }
 
@@ -431,11 +617,21 @@ func eventTypeFromRaw(raw json.RawMessage) string {
 
 func enrichNodeRow(row *ResourceRow, status json.RawMessage) {
 	var st struct {
+		Addresses   []struct {
+			Type    string `json:"type"`
+			Address string `json:"address"`
+		} `json:"addresses"`
 		Allocatable map[string]string `json:"allocatable"`
 		Capacity    map[string]string `json:"capacity"`
 	}
 	if json.Unmarshal(status, &st) != nil {
 		return
+	}
+	for _, a := range st.Addresses {
+		if a.Type == "InternalIP" || a.Type == "ExternalIP" {
+			row.NodeIP = a.Address
+			break
+		}
 	}
 	if p, ok := st.Capacity["pods"]; ok {
 		fmt.Sscanf(p, "%d", &row.PodsMax)

@@ -10,18 +10,23 @@ import (
 
 func (h *Handler) ExplorerMenu(w http.ResponseWriter, _ *http.Request) {
 	type item struct {
-		Key   string `json:"key"`
-		Label string `json:"label"`
-		Group string `json:"group"`
-		Type  string `json:"type"`
+		Key     string `json:"key"`
+		Label   string `json:"label"`
+		Section string `json:"section"`
+		Group   string `json:"group"`
+		Type    string `json:"type"`
 	}
 	menu := []item{
-		{Key: "overview", Label: "Cluster Dashboard", Group: "Platform", Type: "page"},
-		{Key: "clusters", Label: "Clusters", Group: "Cluster", Type: "rancher"},
-		{Key: "projects", Label: "Projects", Group: "Cluster", Type: "rancher"},
+		{Key: "overview", Label: "Cluster Dashboard", Section: "platform", Group: "Platform", Type: "page"},
+		{Key: "clusters", Label: "Clusters", Section: "infra", Group: "Cluster", Type: "rancher"},
+		{Key: "projects", Label: "Projects", Section: "infra", Group: "Cluster", Type: "rancher"},
 	}
 	for _, r := range rancher.K8sResources {
-		menu = append(menu, item{Key: r.Key, Label: r.Label, Group: r.Group, Type: "k8s"})
+		sec := r.Section
+		if sec == "" {
+			sec = "infra"
+		}
+		menu = append(menu, item{Key: r.Key, Label: r.Label, Section: sec, Group: r.Group, Type: "k8s"})
 	}
 	writeJSON(w, http.StatusOK, menu)
 }

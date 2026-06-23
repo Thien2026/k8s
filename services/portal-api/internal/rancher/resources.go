@@ -2,11 +2,12 @@ package rancher
 
 // K8sResource mô tả đường dẫn proxy Rancher → Kubernetes API.
 type K8sResource struct {
-	Key         string
-	Label       string
-	Group       string
-	APIPath     string // sau /k8s/clusters/{id}
-	Namespaced  bool
+	Key        string
+	Label      string
+	Section    string // platform | infra
+	Group      string
+	APIPath    string // sau /k8s/clusters/{id}
+	Namespaced bool
 }
 
 var K8sResources = []K8sResource{

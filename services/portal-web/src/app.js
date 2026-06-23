@@ -318,79 +318,125 @@ async function pageRancherList(main, title, path, columns) {
   main.innerHTML = listPage(title, total, renderTable(columns, Array.isArray(rows) ? rows : []));
 }
 
+function badgeStatus(val) {
+  if (!val) return "—";
+  const v = String(val).toLowerCase();
+  const ok = v.includes("active") || v.includes("running") || v.includes("ready=true") || v === "bound" || v === "succeeded";
+  const warn = v.includes("pending") || v.includes("warning") || v.includes("progress");
+  const cls = warn ? "badge-warn" : ok ? "badge-ok" : "badge-neutral";
+  return '<span class="badge ' + cls + '">' + esc(val) + "</span>";
+}
+
 function k8sColumns(resource, data) {
+  const age = { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) };
+  const ns = { key: "namespace", label: "Namespace" };
+
   if (resource === "events") {
     return [
-      {
-        key: "status",
-        label: "Type",
-        render: (r) =>
-          r.status === "Warning"
-            ? '<span class="badge badge-warn">' + esc(r.status) + "</span>"
-            : '<span class="badge badge-ok">' + esc(r.status || "Normal") + "</span>",
-      },
+      { key: "status", label: "Type", render: (r) => badgeStatus(r.status) },
       { key: "reason", label: "Reason" },
       { key: "object", label: "Object" },
-      { key: "namespace", label: "Namespace" },
+      ns,
       { key: "message", label: "Message" },
-      { key: "created", label: "Last Seen", render: (r) => esc(fmtTime(r.created)) },
+      age,
+    ];
+  }
+  if (resource === "nodes") {
+    return [
+      { key: "name", label: "Name" },
+      { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+      { key: "node_ip", label: "Internal IP" },
+      { key: "cpu_cores", label: "CPU", render: (r) => esc(r.cpu_cores ? r.cpu_cores + " cores" : "—") },
+      { key: "mem_gib", label: "Memory", render: (r) => esc(r.mem_gib ? r.mem_gib.toFixed(1) + " GiB" : "—") },
+      { key: "pods_max", label: "Pod Capacity" },
+      age,
     ];
   }
   if (resource === "pods") {
     return [
       { key: "name", label: "Name" },
-      { key: "namespace", label: "Namespace" },
-      {
-        key: "status",
-        label: "Phase",
-        render: (r) => '<span class="badge badge-ok">' + esc(r.status || "—") + "</span>",
-      },
-      {
-        key: "restarts",
-        label: "Restarts",
-        render: (r) =>
-          r.restarts > 0
-            ? '<span class="badge badge-warn">' + r.restarts + "</span>"
-            : esc(r.restarts || 0),
-      },
+      ns,
+      { key: "status", label: "Phase", render: (r) => badgeStatus(r.status) },
+      { key: "node", label: "Node" },
+      { key: "pod_ip", label: "Pod IP" },
+      { key: "restarts", label: "Restarts", render: (r) => r.restarts > 0 ? '<span class="badge badge-warn">' + r.restarts + "</span>" : esc(r.restarts || 0) },
       { key: "restart_policy", label: "Restart Policy" },
-      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+      { key: "images", label: "Image" },
+      age,
     ];
   }
   if (resource === "deployments" || resource === "statefulsets" || resource === "daemonsets") {
     return [
       { key: "name", label: "Name" },
-      { key: "namespace", label: "Namespace" },
+      ns,
       { key: "replicas", label: "Replicas" },
-      {
-        key: "status",
-        label: "Status",
-        render: (r) =>
-          r.status ? '<span class="badge badge-ok">' + esc(r.status) + "</span>" : "—",
-      },
-      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+      { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+      { key: "selector", label: "Selector" },
+      age,
+    ];
+  }
+  if (resource === "jobs") {
+    return [
+      { key: "name", label: "Name" },
+      ns,
+      { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+      { key: "completions", label: "Completions" },
+      age,
+    ];
+  }
+  if (resource === "cronjobs") {
+    return [
+      { key: "name", label: "Name" },
+      ns,
+      { key: "schedule", label: "Schedule" },
+      { key: "suspend", label: "Suspended" },
+      { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+      age,
     ];
   }
   if (resource === "horizontalpodautoscalers") {
     return [
       { key: "name", label: "Name" },
-      { key: "namespace", label: "Namespace" },
+      ns,
       { key: "scale", label: "Min–Max → Current" },
-      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+      age,
     ];
+  }
+  if (resource === "services") {
+    return [
+      { key: "name", label: "Name" },
+      ns,
+      { key: "service_type", label: "Type" },
+      { key: "cluster_ip", label: "Cluster IP" },
+      { key: "ports", label: "Ports" },
+      age,
+    ];
+  }
+  if (resource === "ingresses") {
+    return [
+      { key: "name", label: "Name" },
+      ns,
+      { key: "host", label: "Hosts" },
+      { key: "status", label: "Class" },
+      age,
+    ];
+  }
+  if (resource === "persistentvolumeclaims" || resource === "persistentvolumes") {
+    return [
+      { key: "name", label: "Name" },
+      ns,
+      { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+      { key: "capacity", label: "Capacity" },
+      { key: "access_modes", label: "Access Modes" },
+      { key: "storage_class", label: "Storage Class" },
+      age,
+    ].filter(function (c) { return resource !== "persistentvolumes" || c.key !== "namespace"; });
   }
   const cols = [
     { key: "name", label: "Name" },
-    { key: "namespace", label: "Namespace" },
-    {
-      key: "status",
-      label: "Status",
-      render: (r) =>
-        r.status
-          ? '<span class="badge badge-ok">' + esc(r.status) + "</span>"
-          : "—",
-    },
-    { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
+    ns,
+    { key: "status", label: "Status", render: (r) => badgeStatus(r.status) },
+    age,
   ];
   if (!data.items || !data.items.some((i) => i.namespace)) {
     cols.splice(1, 1);
@@ -426,17 +472,19 @@ const routes = {
     pageRancherList(main, "Clusters", "/api/v1/rancher/clusters", [
       { key: "name", label: "Name" },
       { key: "id", label: "ID" },
-      {
-        key: "state",
-        label: "State",
-        render: (r) => '<span class="badge badge-ok">' + esc(r.state) + "</span>",
-      },
+      { key: "state", label: "State", render: (r) => badgeStatus(r.state) },
+      { key: "provider", label: "Provider" },
+      { key: "k8s_version", label: "Kubernetes" },
+      { key: "nodes", label: "Nodes" },
+      { key: "driver", label: "Driver" },
+      { key: "created", label: "Age", render: (r) => esc(fmtTime(r.created)) },
     ]),
   projects: (main) =>
     pageRancherList(main, "Projects", "/api/v1/rancher/projects", [
       { key: "name", label: "Name" },
       { key: "id", label: "ID" },
-      { key: "state", label: "State" },
+      { key: "cluster_id", label: "Cluster" },
+      { key: "state", label: "State", render: (r) => badgeStatus(r.state) },
       { key: "description", label: "Description" },
     ]),
 };
@@ -486,27 +534,58 @@ const NAV_ICONS = {
   secrets: "🔒",
 };
 
+function sectionCollapsed(section) {
+  return localStorage.getItem("nav-section-" + section) === "1";
+}
+
+function setSectionCollapsed(section, collapsed) {
+  localStorage.setItem("nav-section-" + section, collapsed ? "1" : "0");
+}
+
+const SECTION_LABELS = { platform: "Platform", infra: "Hạ tầng" };
+
 async function buildSidebar() {
   const nav = $("#sidebar-nav");
   const menu = await api("/api/v1/explorer/menu");
-  const groups = {};
+
+  const sections = { platform: [], infra: [] };
   menu.forEach((item) => {
-    if (!groups[item.group]) groups[item.group] = [];
-    groups[item.group].push(item);
+    const sec = item.section || (item.group === "Platform" ? "platform" : "infra");
+    if (!sections[sec]) sections[sec] = [];
+    sections[sec].push(item);
   });
 
-  const order = ["Platform", "Cluster", "Workloads", "Networking", "Storage", "Config"];
+  const infraGroupOrder = ["Cluster", "Workloads", "Networking", "Storage", "Config"];
   let html = "";
-  for (const group of order) {
-    if (!groups[group]) continue;
+
+  function renderGroup(group, items) {
     const collapsed = groupCollapsed(group);
-    html +=
+    let g =
       '<div class="nav-group">' +
       '<button type="button" class="nav-group-toggle" data-group="' + esc(group) + '">' +
       '<span class="chev">' + (collapsed ? "▸" : "▾") + "</span>" + esc(group) +
       "</button>" +
       '<div class="nav-group-items' + (collapsed ? " collapsed" : "") + '">';
-    groups[group].forEach((item) => {
+    items.forEach((item) => {
+      const ico = NAV_ICONS[item.key] || "·";
+      g +=
+        '<a class="nav-link" data-route="' + esc(item.key) + '" href="#/' + esc(item.key) + '">' +
+        '<span class="ico">' + ico + "</span>" + esc(item.label) + "</a>";
+    });
+    return g + "</div></div>";
+  }
+
+  // Platform section
+  if (sections.platform.length) {
+    const secCollapsed = sectionCollapsed("platform");
+    html +=
+      '<div class="nav-section">' +
+      '<button type="button" class="nav-section-toggle" data-section="platform">' +
+      '<span class="chev">' + (secCollapsed ? "▸" : "▾") + "</span>" +
+      esc(SECTION_LABELS.platform) +
+      "</button>" +
+      '<div class="nav-section-body' + (secCollapsed ? " collapsed" : "") + '">';
+    sections.platform.forEach((item) => {
       const ico = NAV_ICONS[item.key] || "·";
       html +=
         '<a class="nav-link" data-route="' + esc(item.key) + '" href="#/' + esc(item.key) + '">' +
@@ -514,6 +593,29 @@ async function buildSidebar() {
     });
     html += "</div></div>";
   }
+
+  // Infrastructure section with nested groups
+  if (sections.infra.length) {
+    const secCollapsed = sectionCollapsed("infra");
+    html +=
+      '<div class="nav-section nav-section-infra">' +
+      '<button type="button" class="nav-section-toggle" data-section="infra">' +
+      '<span class="chev">' + (secCollapsed ? "▸" : "▾") + "</span>" +
+      esc(SECTION_LABELS.infra) +
+      "</button>" +
+      '<div class="nav-section-body' + (secCollapsed ? " collapsed" : "") + '">';
+
+    const groups = {};
+    sections.infra.forEach((item) => {
+      if (!groups[item.group]) groups[item.group] = [];
+      groups[item.group].push(item);
+    });
+    for (const group of infraGroupOrder) {
+      if (groups[group]) html += renderGroup(group, groups[group]);
+    }
+    html += "</div></div>";
+  }
+
   nav.innerHTML = html;
 
   nav.querySelectorAll(".nav-group-toggle").forEach((btn) => {
@@ -524,6 +626,17 @@ async function buildSidebar() {
       items.classList.toggle("collapsed", nowCollapsed);
       btn.querySelector(".chev").textContent = nowCollapsed ? "▸" : "▾";
       setGroupCollapsed(g, nowCollapsed);
+    };
+  });
+
+  nav.querySelectorAll(".nav-section-toggle").forEach((btn) => {
+    btn.onclick = () => {
+      const sec = btn.dataset.section;
+      const body = btn.nextElementSibling;
+      const nowCollapsed = !body.classList.contains("collapsed");
+      body.classList.toggle("collapsed", nowCollapsed);
+      btn.querySelector(".chev").textContent = nowCollapsed ? "▸" : "▾";
+      setSectionCollapsed(sec, nowCollapsed);
     };
   });
 }
