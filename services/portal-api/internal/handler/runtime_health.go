@@ -96,9 +96,12 @@ func evaluateDeploymentRollout(ds rancher.DeploymentRolloutStatus) (status, deta
 	return "running", ds.Summary(), ""
 }
 
-func deployPodLabelSelector(imageTag string) string {
+func deployPodLabelSelector(serviceName, imageTag string) string {
+	if strings.TrimSpace(serviceName) == "" {
+		serviceName = "app"
+	}
 	tag := deploy.ImageTagLabelValue(imageTag)
-	return "app=app," + deploy.LabelImageTag + "=" + tag
+	return "app=" + serviceName + "," + deploy.LabelImageTag + "=" + tag
 }
 
 func pickFirstPodName(pods []rancher.ResourceRow) string {
@@ -246,6 +249,18 @@ func mergeRuntimeHealth(k8sSt, k8sDetail, podName, k8sErr, smokeSt, smokeDetail,
 	return v
 }
 
+func (h *Handler) runtimeWorkload(ctx context.Context, p projectRow, env, tag string) (deployName, wantImage string) {
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	params := h.buildDeployParams(ctx, p, repo, env, tag, false)
+	primary := params.PrimaryService()
+	h.enrichProjectRegistry(ctx, &p)
+	if strings.TrimSpace(tag) == "" {
+		tag = "latest"
+	}
+	wantImage = strings.TrimSpace(p.Registry.ImagePrefix) + "/" + primary.Name + ":" + tag
+	return primary.Name, wantImage
+}
+
 func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *deploymentRow) runtimeHealthVerdict {
 	if d == nil {
 		return runtimeHealthVerdict{Status: "pending"}
@@ -258,14 +273,13 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	if tag == "" {
 		tag = "latest"
 	}
-	h.enrichProjectRegistry(ctx, &p)
-	wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/app:" + tag
+	deployName, wantImage := h.runtimeWorkload(ctx, p, d.Environment, tag)
 
 	var k8sSt, k8sDetail, k8sErr string
 	var depDetail rancher.DeploymentDetail
 	var depErr error
 	if h.rancher != nil && h.rancher.Enabled() {
-		depDetail, depErr = h.rancher.GetDeploymentDetail(ctx, "", ns, "app")
+		depDetail, depErr = h.rancher.GetDeploymentDetail(ctx, "", ns, deployName)
 		if depErr != nil {
 			k8sSt = "running"
 			k8sDetail = "Rancher deployment: " + depErr.Error()
@@ -282,7 +296,7 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 		k8sDetail = "Rancher chưa sẵn sàng"
 	}
 
-	pods := h.matchedDeployPods(ctx, p, d.Environment, d.ImageTag)
+	pods := h.matchedDeployPods(ctx, p, d.Environment, d.ImageTag, deployName)
 	podName := pickFirstPodName(pods)
 	if podName != "" {
 		d.PodName = podName
@@ -363,9 +377,12 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	return mergeRuntimeHealth(k8sSt, k8sDetail, podName, k8sErr, smokeSt, smokeDetail, logHint, tiers)
 }
 
-func (h *Handler) matchedDeployPods(ctx context.Context, p projectRow, env, imageTag string) []rancher.ResourceRow {
+func (h *Handler) matchedDeployPods(ctx context.Context, p projectRow, env, imageTag, serviceName string) []rancher.ResourceRow {
 	if h.rancher == nil || !h.rancher.Enabled() {
 		return nil
+	}
+	if strings.TrimSpace(serviceName) == "" {
+		serviceName = "app"
 	}
 	ns := h.projectNamespace(p, env)
 	tag := strings.TrimSpace(imageTag)
@@ -373,11 +390,11 @@ func (h *Handler) matchedDeployPods(ctx context.Context, p projectRow, env, imag
 		tag = "latest"
 	}
 	h.enrichProjectRegistry(ctx, &p)
-	wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/app:" + tag
+	wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/" + serviceName + ":" + tag
 
-	pods, err := h.rancher.ListPods(ctx, "", ns, deployPodLabelSelector(tag), 20)
+	pods, err := h.rancher.ListPods(ctx, "", ns, deployPodLabelSelector(serviceName, tag), 20)
 	if err != nil || len(pods) == 0 {
-		pods, _ = h.rancher.ListPods(ctx, "", ns, "app=app", 20)
+		pods, _ = h.rancher.ListPods(ctx, "", ns, "app="+serviceName, 20)
 	}
 	if len(pods) == 0 {
 		list, listErr := h.rancher.ListK8s(ctx, "", "pods", ns, 1, 100)

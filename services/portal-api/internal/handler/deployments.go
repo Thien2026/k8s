@@ -441,15 +441,14 @@ func (h *Handler) runtimeStatusForDeploy(ctx context.Context, p projectRow, env,
 		return "pending", "Rancher chưa sẵn sàng", "", ""
 	}
 	ns := h.projectNamespace(p, env)
-	dep, err := h.rancher.GetDeploymentDetail(ctx, "", ns, "app")
-	pods := h.matchedDeployPods(ctx, p, env, imageTag)
+	deployName, wantImage := h.runtimeWorkload(ctx, p, env, imageTag)
+	dep, err := h.rancher.GetDeploymentDetail(ctx, "", ns, deployName)
+	pods := h.matchedDeployPods(ctx, p, env, imageTag, deployName)
 	podName = pickFirstPodName(pods)
 	if err != nil {
 		return "running", "Rancher deployment: " + err.Error(), podName, ""
 	}
 	st, detail, errMsg := evaluateDeploymentRollout(dep.DeploymentRolloutStatus)
-	h.enrichProjectRegistry(ctx, &p)
-	wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/app:" + strings.TrimSpace(imageTag)
 	imgSt, imgDetail := evaluateDeploymentImage(dep.ContainerImage, imageTag, wantImage, dep.DeploymentRolloutStatus)
 	st, detail, errMsg = mergeImageIntoRollout(st, detail, errMsg, imgSt, imgDetail)
 	if podName != "" && st == "success" {
@@ -494,8 +493,7 @@ func (h *Handler) pickRuntimePodForDeploy(ctx context.Context, p projectRow, env
 		return ""
 	}
 	tag := strings.TrimSpace(imageTag)
-	h.enrichProjectRegistry(ctx, &p)
-	wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/app:" + tag
+	_, wantImage := h.runtimeWorkload(ctx, p, env, tag)
 
 	var best string
 	bestScore := -1
@@ -812,7 +810,9 @@ func (h *Handler) attachGitHubRunForDeployment(ctx context.Context, userID int64
 func (h *Handler) deploymentRowFromRun(ctx context.Context, p projectRow, deployEnv string, run gh.WorkflowRun, withRuntime bool) deploymentRow {
 	bs := mapGitHubRunStatus(run.Status, run.Conclusion)
 	h.enrichProjectRegistry(ctx, &p)
-	image := strings.TrimSpace(p.Registry.ImagePrefix) + "/app:" + run.HeadSHA
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	params := h.buildDeployParams(ctx, p, repo, deployEnv, run.HeadSHA, false)
+	image := deployImageRef(params)
 	d := deploymentRow{
 		Environment: deployEnv,
 		ImageTag:    run.HeadSHA,
@@ -1159,7 +1159,10 @@ func (h *Handler) enrichHarborScan(ctx context.Context, p projectRow, d *deploym
 		projectName = p.Slug
 	}
 	_ = h.harbor.EnableAutoScan(ctx, projectName)
-	ov, err := h.harbor.ArtifactScanOverview(ctx, projectName, "app", tag)
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	params := h.buildDeployParams(ctx, p, repo, d.Environment, tag, false)
+	artifactRepo := params.PrimaryService().Name
+	ov, err := h.harbor.ArtifactScanOverview(ctx, projectName, artifactRepo, tag)
 	if err != nil || ov == nil {
 		return
 	}
@@ -1169,10 +1172,10 @@ func (h *Handler) enrichHarborScan(ctx context.Context, p projectRow, d *deploym
 		Fixable:  ov.Fixable,
 		Severity: ov.Severity,
 		Detail:   ov.Detail,
-		URL:      h.harbor.ArtifactUIURL(projectName, "app", tag),
+		URL:      h.harbor.ArtifactUIURL(projectName, artifactRepo, tag),
 	}
 	if withDetails && ov.Status == "success" && ov.Total > 0 {
-		vulns, err := h.harbor.ArtifactVulnerabilities(ctx, projectName, "app", tag, 50)
+		vulns, err := h.harbor.ArtifactVulnerabilities(ctx, projectName, artifactRepo, tag, 50)
 		if err == nil && len(vulns) > 0 {
 			scan.ItemsTotal = ov.Total
 			for _, v := range vulns {
@@ -1204,8 +1207,16 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 	if env == "" {
 		env = "dev"
 	}
+	scope := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("scope")))
+	if scope == "" {
+		scope = "current"
+	}
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
-	items, err := h.listProjectDeployments(r.Context(), p.ID, env, deployHistoryLimit)
+	listLimit := deployHistoryLimit
+	if scope == "current" {
+		listLimit = 8
+	}
+	items, err := h.listProjectDeployments(r.Context(), p.ID, env, listLimit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -1216,48 +1227,58 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 	var current *deploymentRow
 	pollSec := 5
 	if currentIdx >= 0 {
-		if items[currentIdx].GitHubRunID == 0 {
-			h.attachGitHubRunForDeployment(r.Context(), u.ID, p, repo, &items[currentIdx])
+		if scope == "current" {
+			if items[currentIdx].GitHubRunID == 0 {
+				h.attachGitHubRunForDeployment(r.Context(), u.ID, p, repo, &items[currentIdx])
+			}
+			if items[currentIdx].GitHubRunID > 0 {
+				h.enrichBuildLive(r.Context(), u.ID, repo.GitHubOwner, repo.GitHubRepo, &items[currentIdx])
+			} else if deploymentIsTrulyActive(items[currentIdx]) {
+				items[currentIdx].Live = true
+				pollSec = 2
+			}
+			cur := &items[currentIdx]
+			if stageStatus(cur.BuildStatus) == "success" || allBuildStepsSuccess(cur.BuildSteps) ||
+				stageStatus(cur.DeployStatus) != "pending" || deploymentIsTerminal(*cur) {
+				h.refreshDeploymentRuntime(r.Context(), p, cur)
+			}
+			h.enrichHarborScan(r.Context(), p, &items[currentIdx], true)
+			if deploymentNeedsFastPoll(items[currentIdx]) {
+				pollSec = 2
+			} else if deploymentIsTerminal(items[currentIdx]) {
+				items[currentIdx].Live = false
+				pollSec = 0
+			}
 		}
-		if items[currentIdx].GitHubRunID > 0 {
-			h.enrichBuildLive(r.Context(), u.ID, repo.GitHubOwner, repo.GitHubRepo, &items[currentIdx])
-		} else if deploymentIsTrulyActive(items[currentIdx]) {
-			items[currentIdx].Live = true
-			pollSec = 2
-		}
-		cur := &items[currentIdx]
-		if stageStatus(cur.BuildStatus) == "success" || allBuildStepsSuccess(cur.BuildSteps) ||
-			stageStatus(cur.DeployStatus) != "pending" || deploymentIsTerminal(*cur) {
-			h.refreshDeploymentRuntime(r.Context(), p, cur)
-		}
-		h.enrichHarborScan(r.Context(), p, &items[currentIdx], true)
 		items[currentIdx].Stages = h.deploymentStages(&items[currentIdx])
 		current = &items[currentIdx]
-		if deploymentNeedsFastPoll(items[currentIdx]) {
-			pollSec = 2
-		} else if deploymentIsTerminal(items[currentIdx]) {
-			items[currentIdx].Live = false
-			pollSec = 0
-		}
 	}
 	for i := range items {
 		if i != currentIdx {
-			h.enrichHarborScan(r.Context(), p, &items[i], false)
+			if scope == "history" && i < 5 {
+				h.enrichHarborScan(r.Context(), p, &items[i], false)
+			}
 			items[i].Stages = h.deploymentStages(&items[i])
 		}
 	}
 	var filtered []deploymentRow
-	filtered = append(filtered, items...)
-	if current != nil {
-		found := false
-		for _, d := range filtered {
-			if d.ID == current.ID || (d.ImageTag != "" && d.ImageTag == current.ImageTag && d.Environment == current.Environment) {
-				found = true
-				break
-			}
+	if scope == "current" {
+		if current != nil {
+			filtered = []deploymentRow{*current}
 		}
-		if !found {
-			filtered = append([]deploymentRow{*current}, filtered...)
+	} else {
+		filtered = append(filtered, items...)
+		if current != nil {
+			found := false
+			for _, d := range filtered {
+				if d.ID == current.ID || (d.ImageTag != "" && d.ImageTag == current.ImageTag && d.Environment == current.Environment) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				filtered = append([]deploymentRow{*current}, filtered...)
+			}
 		}
 	}
 	markServing := func(d *deploymentRow) {
@@ -1273,6 +1294,7 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"environment":       env,
+		"scope":             scope,
 		"current":           current,
 		"items":             filtered,
 		"serving_image_tag": servingTag,
@@ -1282,7 +1304,12 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 			}
 			return ""
 		}(),
-		"poll_interval_sec": pollSec,
+		"poll_interval_sec": func() int {
+			if scope == "history" {
+				return 0
+			}
+			return pollSec
+		}(),
 	})
 }
 

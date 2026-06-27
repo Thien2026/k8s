@@ -248,6 +248,9 @@ func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo proj
 		ImageTag:         imageTag,
 		HarborHost:       harborHost,
 	}
+	services, layout := h.loadDeployServices(ctx, p.ID, repo)
+	params.Layout = layout
+	params.Services = services
 	if includeHook {
 		params.DeployHookURL = h.platformDeployHookURL()
 		params.DeployEnvironment = deployEnv

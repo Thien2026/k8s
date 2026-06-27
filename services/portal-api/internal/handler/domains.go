@@ -77,12 +77,14 @@ func (h *Handler) syncProjectDomain(ctx context.Context, p projectRow, d *projec
 		return
 	}
 	ns := h.projectNamespace(p, d.Environment)
+	repo, _ := h.getProjectRepo(ctx, p.ID)
 	in := domains.DomainInput{
 		ID:          d.ID,
 		Hostname:    d.Hostname,
 		Environment: d.Environment,
 		TLSEnabled:  d.TLSEnabled,
 		Namespace:   ns,
+		Routes:      h.ingressRoutesForProject(ctx, p.ID, repo),
 	}
 	if err := syncer.SyncIngress(ctx, clusterID, in); err != nil {
 		d.SyncStatus = "error"

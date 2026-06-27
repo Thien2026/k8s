@@ -12,6 +12,7 @@ import (
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 	"github.com/Thien2026/k8s/services/portal-api/internal/platformcontract"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
+	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -171,18 +172,24 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	if len(vars) > 0 {
 		params.AppEnvFromSecret = deploy.AppEnvSecretName
 	}
-	manifest, err := deploy.K8sManifest(params)
+	manifests, err := deploy.K8sManifests(params)
 	if err != nil {
 		if deployID > 0 {
 			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
 		}
 		return nil, err
 	}
-	if err := h.rancher.ApplyDeploymentAndService(ctx, clusterID, params.Namespace, manifest.Deployment, manifest.Service); err != nil {
-		if deployID > 0 {
-			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+	deployedNames := make([]string, 0, len(manifests))
+	for _, manifest := range manifests {
+		if err := h.rancher.ApplyDeploymentAndService(ctx, clusterID, params.Namespace, manifest.Deployment, manifest.Service); err != nil {
+			if deployID > 0 {
+				h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+			}
+			return nil, err
 		}
-		return nil, err
+		if manifest.ServiceName != "" {
+			deployedNames = append(deployedNames, manifest.ServiceName)
+		}
 	}
 	if deployID > 0 {
 		_, _ = h.db.Exec(ctx, `UPDATE project_deployments SET deploy_status='success', runtime_status='running', updated_at=now() WHERE id=$1`, deployID)
@@ -200,7 +207,12 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		"environment": params.Environment,
 		"namespace":   params.Namespace,
 		"image":       deployImageRef(params),
-		"deployment":  "app",
+		"deployments": deployedNames,
+	}
+	if len(deployedNames) == 1 {
+		result["deployment"] = deployedNames[0]
+	} else if len(deployedNames) == 0 {
+		result["deployment"] = params.PrimaryService().Name
 	}
 	if deployID > 0 {
 		result["deployment_id"] = deployID
@@ -225,10 +237,23 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 	if deployID <= 0 || h.rancher == nil || !h.rancher.Enabled() {
 		return
 	}
-	rollout, waitErr := h.rancher.WaitDeploymentReady(ctx, clusterID, params.Namespace, "app", 120*time.Second)
-	pods := h.matchedDeployPods(ctx, p, params.Environment, imageTag)
+	svcs := params.EffectiveServices()
+	var lastRollout rancher.DeploymentRolloutStatus
+	var waitErr error
+	for _, svc := range svcs {
+		rollout, err := h.rancher.WaitDeploymentReady(ctx, clusterID, params.Namespace, svc.Name, 120*time.Second)
+		lastRollout = rollout
+		if err != nil {
+			waitErr = err
+		}
+		if rollout.IsFailed() {
+			break
+		}
+	}
+	primary := params.PrimaryService()
+	pods := h.matchedDeployPods(ctx, p, params.Environment, imageTag, primary.Name)
 	podName := pickFirstPodName(pods)
-	st, detail, errMsg := evaluateDeploymentRollout(rollout)
+	st, detail, errMsg := evaluateDeploymentRollout(lastRollout)
 	if waitErr != nil {
 		if st == "failed" {
 			if errMsg == "" {
@@ -279,15 +304,7 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 }
 
 func deployImageRef(p deploy.Params) string {
-	tag := strings.TrimSpace(p.ImageTag)
-	if tag == "" {
-		tag = "latest"
-	}
-	prefix := strings.TrimSpace(p.Registry.ImagePrefix)
-	if prefix == "" {
-		prefix = "YOUR_REGISTRY/" + p.ProjectSlug
-	}
-	return prefix + "/app:" + tag
+	return p.ImageRef()
 }
 
 func (h *Handler) PromoteProjectDeploy(w http.ResponseWriter, r *http.Request) {

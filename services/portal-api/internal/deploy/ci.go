@@ -15,9 +15,9 @@ type Workflow struct {
 }
 
 func GitHubWorkflow(p Params) Workflow {
-	image := p.imageRef()
 	filename := ".github/workflows/platform-deploy-" + p.ProjectSlug + ".yml"
 	var b strings.Builder
+	svcs := p.EffectiveServices()
 
 	b.WriteString("name: Build and push (" + p.ProjectSlug + ")\n\n")
 	b.WriteString("on:\n")
@@ -25,7 +25,15 @@ func GitHubWorkflow(p Params) Workflow {
 	b.WriteString("    branches: [" + quoteYAML(p.branch()) + "]\n")
 	b.WriteString("  workflow_dispatch:\n\n")
 	b.WriteString("env:\n")
-	b.WriteString("  IMAGE: " + image + "\n\n")
+	if len(svcs) == 1 {
+		b.WriteString("  IMAGE: " + p.imageRefFor(svcs[0]) + "\n\n")
+	} else {
+		for _, svc := range svcs {
+			key := strings.ToUpper(svc.Name) + "_IMAGE"
+			b.WriteString("  " + key + ": " + p.imageRefFor(svc) + "\n")
+		}
+		b.WriteString("\n")
+	}
 	b.WriteString("jobs:\n")
 	b.WriteString("  build:\n")
 	b.WriteString("    runs-on: ubuntu-latest\n")
@@ -86,11 +94,35 @@ func GitHubWorkflow(p Params) Workflow {
 		b.WriteString("          password: ${{ secrets.GITHUB_TOKEN }}\n\n")
 	}
 
-	if p.usesBuildpack() {
-		writeBuildpackBuild(&b, p, image)
-	} else {
-		b.WriteString("      - name: Build and push\n")
-		writeDockerfileBuild(&b, p, image)
+	needsPackSetup := false
+	for _, svc := range svcs {
+		sp := serviceParams(p, svc)
+		if sp.usesBuildpack() {
+			needsPackSetup = true
+			break
+		}
+	}
+	if needsPackSetup {
+		b.WriteString("      - name: Setup pack (Buildpack)\n")
+		b.WriteString("        uses: buildpacks/github-actions/setup-pack@v5.12.5\n\n")
+	}
+
+	for _, svc := range svcs {
+		sp := serviceParams(p, svc)
+		image := p.imageRefFor(svc)
+		stepName := svc.Name
+		if svc.DisplayName != "" {
+			stepName = svc.DisplayName
+		}
+		b.WriteString("      - name: Build and push " + stepName + "\n")
+		if sp.usesBuildpack() {
+			writeBuildpackBuildStep(&b, sp, image)
+		} else {
+			b.WriteString("        uses: docker/build-push-action@v6\n")
+			b.WriteString("        with:\n")
+			writeDockerfileBuildWith(&b, sp, image)
+		}
+		b.WriteString("\n")
 	}
 
 	secrets := []string{}
@@ -110,7 +142,7 @@ func GitHubWorkflow(p Params) Workflow {
 		if env == "" {
 			env = "dev"
 		}
-		b.WriteString("\n      - name: Deploy to Platform\n")
+		b.WriteString("      - name: Deploy to Platform\n")
 		b.WriteString("        run: |\n")
 		b.WriteString("          curl -fsS -X POST \"" + p.DeployHookURL + "\" \\\n")
 		b.WriteString("            -H \"Content-Type: application/json\" \\\n")
@@ -126,6 +158,14 @@ func GitHubWorkflow(p Params) Workflow {
 	}
 }
 
+func serviceParams(p Params, svc ServiceDef) Params {
+	sp := p
+	sp.BuildMode = svc.BuildMode
+	sp.BuildContext = svc.BuildContext
+	sp.DockerfilePath = svc.DockerfilePath
+	return sp
+}
+
 func quoteYAML(s string) string {
 	if strings.ContainsAny(s, " \t#:[]{},") {
 		return fmt.Sprintf("%q", s)
@@ -133,9 +173,7 @@ func quoteYAML(s string) string {
 	return s
 }
 
-func writeDockerfileBuild(b *strings.Builder, p Params, image string) {
-	b.WriteString("        uses: docker/build-push-action@v6\n")
-	b.WriteString("        with:\n")
+func writeDockerfileBuildWith(b *strings.Builder, p Params, image string) {
 	b.WriteString("          context: " + p.buildContext() + "\n")
 	b.WriteString("          file: " + p.dockerfile() + "\n")
 	b.WriteString("          push: true\n")
@@ -156,10 +194,7 @@ func writeDockerfileBuild(b *strings.Builder, p Params, image string) {
 
 const buildpackBuilderImage = "paketobuildpacks/builder-jammy-full"
 
-func writeBuildpackBuild(b *strings.Builder, p Params, image string) {
-	b.WriteString("      - name: Setup pack (Buildpack)\n")
-	b.WriteString("        uses: buildpacks/github-actions/setup-pack@v5.12.5\n\n")
-	b.WriteString("      - name: Build and push (Buildpack)\n")
+func writeBuildpackBuildStep(b *strings.Builder, p Params, image string) {
 	b.WriteString("        run: |\n")
 	imageBase := image
 	if i := strings.LastIndex(image, ":"); i > 0 {
@@ -174,7 +209,6 @@ func writeBuildpackBuild(b *strings.Builder, p Params, image string) {
 	b.WriteString("            --env \"GIT_SHA=${{ github.sha }}\" \\\n")
 	b.WriteString("            --env \"GIT_REF=${{ github.ref_name }}\" \\\n")
 	b.WriteString("            --env \"PORT=8080\" \\\n")
-	// Node 25+ cần libatomic — jammy-base thiếu; pin LTS 20 tránh crash runtime (exit 127).
 	b.WriteString("            --env \"BP_NODE_VERSION=20\"")
 	for _, arg := range p.BuildArgs {
 		key := strings.TrimSpace(arg.Key)

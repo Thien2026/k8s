@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 )
 
@@ -18,6 +19,7 @@ type DomainInput struct {
 	Environment string
 	TLSEnabled  bool
 	Namespace   string
+	Routes      []deploy.IngressRoute
 }
 
 func (s *Syncer) Ready() bool {
@@ -31,7 +33,7 @@ func (s *Syncer) SyncIngress(ctx context.Context, clusterID string, d DomainInpu
 	if err := s.Rancher.EnsureNamespace(ctx, clusterID, d.Namespace); err != nil {
 		return err
 	}
-	payload, err := IngressManifest(d.Hostname, d.Namespace, d.ID, d.TLSEnabled)
+	payload, err := IngressManifest(d.Hostname, d.Namespace, d.ID, d.TLSEnabled, d.Routes)
 	if err != nil {
 		return err
 	}

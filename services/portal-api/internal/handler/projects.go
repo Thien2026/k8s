@@ -20,6 +20,7 @@ type projectRow struct {
 	ID            int64  `json:"id"`
 	Name          string `json:"name"`
 	Slug          string `json:"slug"`
+	Layout        string `json:"layout"`
 	Description   string `json:"description,omitempty"`
 	NamespaceDev  string `json:"namespace_dev"`
 	NamespaceProd string `json:"namespace_prod"`
@@ -82,10 +83,10 @@ func slugify(s string) string {
 func (h *Handler) getProjectBySlug(ctx context.Context, slug string) (projectRow, error) {
 	var p projectRow
 	err := h.db.QueryRow(ctx, `
-		SELECT id, name, slug, COALESCE(description,''), namespace_dev, namespace_prod,
+		SELECT id, name, slug, COALESCE(layout,'single'), COALESCE(description,''), namespace_dev, namespace_prod,
 		       COALESCE(harbor_project,''), COALESCE(registry_provider,'ghcr')
 		FROM projects WHERE slug = $1`, slug).Scan(
-		&p.ID, &p.Name, &p.Slug, &p.Description, &p.NamespaceDev, &p.NamespaceProd,
+		&p.ID, &p.Name, &p.Slug, &p.Layout, &p.Description, &p.NamespaceDev, &p.NamespaceProd,
 		&p.HarborProject, &p.RegistryProvider,
 	)
 	return p, err
@@ -156,16 +157,21 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 	members, _ := h.listProjectMembers(r.Context(), p.ID)
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	services, _ := h.listProjectServices(r.Context(), p.ID)
+	if p.Layout == "" {
+		p.Layout = h.getProjectLayout(r.Context(), p.ID)
+	}
 	u, _ := auth.UserFromContext(r.Context())
 	_ = h.resolveBuildMode(r.Context(), u.ID, p.ID, &repo)
 	_ = h.ensureAutoDomains(r.Context(), p)
 	domainsList, _ := h.listProjectDomainsEnriched(r.Context(), p, r.URL.Query().Get("cluster_id"))
 	h.enrichProjectRegistry(r.Context(), &p)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"project": p,
-		"members": members,
-		"repo":    repo,
-		"domains": domainsList,
+		"project":  p,
+		"members":  members,
+		"repo":     repo,
+		"domains":  domainsList,
+		"services": map[string]any{"layout": p.Layout, "items": services},
 	})
 }
 

@@ -292,6 +292,63 @@ func (c *Client) GetFileContent(ctx context.Context, token, owner, repo, path, r
 	return string(dec), true, nil
 }
 
+// ContentEntry — mục trong thư mục GitHub (file hoặc dir).
+type ContentEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+	Type string `json:"type"`
+}
+
+// ListRepoContents liệt kê file/thư mục con (path rỗng = root repo).
+func (c *Client) ListRepoContents(ctx context.Context, token, owner, repo, path, ref string) ([]ContentEntry, error) {
+	p := c.contentsAPI(owner, repo, strings.Trim(path, "/"))
+	if ref = strings.TrimSpace(ref); ref != "" {
+		p += "?ref=" + url.QueryEscape(ref)
+	}
+	raw, code, err := c.api(ctx, token, http.MethodGet, p, nil)
+	if code == 404 {
+		return nil, fmt.Errorf("không tìm thấy path %q trên branch", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if code >= 400 {
+		return nil, fmt.Errorf("list contents %d: %s", code, string(raw))
+	}
+	var list []ContentEntry
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return list, nil
+	}
+	var one ContentEntry
+	if err := json.Unmarshal(raw, &one); err == nil && one.Path != "" {
+		return []ContentEntry{one}, nil
+	}
+	return nil, fmt.Errorf("phản hồi GitHub không hợp lệ")
+}
+
+// RepoPathExists kiểm tra path tồn tại trên ref (branch/commit).
+func (c *Client) RepoPathExists(ctx context.Context, token, owner, repo, path, ref string) (bool, error) {
+	path = strings.Trim(path, "/")
+	if path == "" || path == "." {
+		return true, nil
+	}
+	p := c.contentsAPI(owner, repo, path)
+	if ref = strings.TrimSpace(ref); ref != "" {
+		p += "?ref=" + url.QueryEscape(ref)
+	}
+	_, code, err := c.api(ctx, token, http.MethodGet, p, nil)
+	if code == 404 {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if code >= 400 {
+		return false, fmt.Errorf("check path %d", code)
+	}
+	return true, nil
+}
+
 func (c *Client) PutWorkflowFile(ctx context.Context, token, owner, repo, path, message, content, branch string) error {
 	branch = strings.TrimSpace(branch)
 	sha, _ := c.fileSHA(ctx, token, owner, repo, path, branch)

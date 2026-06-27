@@ -3027,3 +3027,104 @@ tr.dns-row td {
   width: auto;
 }
 
+/* Kiểu dự án — layout picker */
+.layout-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+@media (max-width: 640px) {
+  .layout-picker {
+    grid-template-columns: 1fr;
+  }
+}
+.layout-option {
+  display: block;
+  cursor: pointer;
+  margin: 0;
+}
+.layout-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.layout-option-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(15, 20, 35, 0.6);
+  transition: border-color 0.15s, background 0.15s;
+  min-height: 100%;
+}
+.layout-option input:checked + .layout-option-body {
+  border-color: var(--purple);
+  background: var(--purple-dim);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.35);
+}
+.layout-option-body strong {
+  font-size: 15px;
+}
+.layout-option-body span {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.layout-hint-panel {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(34, 211, 238, 0.06);
+  border: 1px solid rgba(34, 211, 238, 0.15);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+.service-preview-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+@media (max-width: 560px) {
+  .service-preview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.service-preview-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(15, 20, 35, 0.5);
+}
+.service-preview-card h4 {
+  margin: 0 0 6px;
+  font-size: 14px;
+}
+.service-preview-card p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.layout-advanced-details {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.layout-advanced-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.svc-ctx-cell select {
+  min-width: 120px;
+  margin-bottom: 4px;
+}
+.svc-ctx-custom {
+  width: 100%;
+  max-width: 140px;
+  margin-top: 4px;
+}
+

@@ -3,15 +3,17 @@ package deploy
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
 // Manifest gồm Deployment + Service JSON (apply qua Rancher).
 type Manifest struct {
-	Filename   string          `json:"filename"`
-	Deployment json.RawMessage `json:"deployment"`
-	Service    json.RawMessage `json:"service"`
-	YAML       string          `json:"yaml"`
+	ServiceName string          `json:"service_name,omitempty"`
+	Filename    string          `json:"filename"`
+	Deployment  json.RawMessage `json:"deployment"`
+	Service     json.RawMessage `json:"service"`
+	YAML        string          `json:"yaml"`
 }
 
 // deploymentReplicas — prod 2 bản để rolling không mất traffic; dev giữ 1.
@@ -32,11 +34,36 @@ func rollingUpdateStrategy() map[string]any {
 	}
 }
 
+func K8sManifests(p Params) ([]Manifest, error) {
+	svcs := p.EffectiveServices()
+	out := make([]Manifest, 0, len(svcs))
+	for _, svc := range svcs {
+		m, err := K8sManifestForService(p, svc)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// K8sManifest — backward compat: manifest service đầu tiên.
 func K8sManifest(p Params) (Manifest, error) {
-	image := p.imageRef()
+	svcs := p.EffectiveServices()
+	if len(svcs) == 0 {
+		return Manifest{}, fmt.Errorf("không có service để deploy")
+	}
+	return K8sManifestForService(p, svcs[0])
+}
+
+func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
+	svc = normalizeServiceDef(svc)
+	image := p.imageRefFor(svc)
 	ns := p.Namespace
-	name := p.deploymentName()
+	name := svc.Name
 	replicas := deploymentReplicas(p)
+	port := svc.ContainerPort
+	health := svc.HealthPath
 
 	dep := map[string]any{
 		"apiVersion": "apps/v1",
@@ -47,12 +74,13 @@ func K8sManifest(p Params) (Manifest, error) {
 			"labels": map[string]string{
 				"app.kubernetes.io/name":       name,
 				"app.kubernetes.io/part-of":    p.ProjectSlug,
+				"app.kubernetes.io/component":  name,
 				"platform/environment":         p.Environment,
 			},
 		},
 		"spec": map[string]any{
-			"replicas": replicas,
-			"strategy": rollingUpdateStrategy(),
+			"replicas":        replicas,
+			"strategy":        rollingUpdateStrategy(),
 			"minReadySeconds": 5,
 			"selector": map[string]any{
 				"matchLabels": map[string]string{
@@ -74,16 +102,15 @@ func K8sManifest(p Params) (Manifest, error) {
 									"name":  name,
 									"image": image,
 									"ports": []map[string]any{
-										{"containerPort": 8080, "name": "http"},
+										{"containerPort": port, "name": "http"},
 									},
-									// PORT cố định — tránh envFrom ghi đè bằng chuỗi rỗng (buildpack Node/Python crash).
 									"env": []map[string]any{
-										{"name": "PORT", "value": "8080"},
+										{"name": "PORT", "value": fmt.Sprintf("%d", port)},
 									},
 									"readinessProbe": map[string]any{
 										"httpGet": map[string]any{
-											"path": "/health",
-											"port": 8080,
+											"path": health,
+											"port": port,
 										},
 										"initialDelaySeconds": 3,
 										"periodSeconds":       5,
@@ -91,8 +118,8 @@ func K8sManifest(p Params) (Manifest, error) {
 									},
 									"livenessProbe": map[string]any{
 										"httpGet": map[string]any{
-											"path": "/health",
-											"port": 8080,
+											"path": health,
+											"port": port,
 										},
 										"initialDelaySeconds": 20,
 										"periodSeconds":       10,
@@ -117,7 +144,7 @@ func K8sManifest(p Params) (Manifest, error) {
 		},
 	}
 
-	svc := map[string]any{
+	svcObj := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Service",
 		"metadata": map[string]any{
@@ -136,7 +163,7 @@ func K8sManifest(p Params) (Manifest, error) {
 				{
 					"name":       "http",
 					"port":       80,
-					"targetPort": 8080,
+					"targetPort": port,
 					"protocol":   "TCP",
 				},
 			},
@@ -147,14 +174,13 @@ func K8sManifest(p Params) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	svcJSON, err := json.Marshal(svc)
+	svcJSON, err := json.Marshal(svcObj)
 	if err != nil {
 		return Manifest{}, err
 	}
 
-	yaml := fmt.Sprintf(`# Deployment + Service cho %s (%s)
+	yaml := fmt.Sprintf(`# Deployment + Service cho %s / %s (%s)
 # Image: %s
-# Strategy: RollingUpdate (maxUnavailable=0, maxSurge=1) — pod mới ready trước khi tắt pod cũ
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -168,7 +194,6 @@ spec:
     rollingUpdate:
       maxUnavailable: 0
       maxSurge: 1
-  minReadySeconds: 5
   selector:
     matchLabels:
       app: %s
@@ -181,8 +206,7 @@ spec:
         - name: %s
           image: %s
           ports:
-            - containerPort: 8080
-              name: http
+            - containerPort: %d
 ---
 apiVersion: v1
 kind: Service
@@ -193,15 +217,40 @@ spec:
   selector:
     app: %s
   ports:
-    - name: http
-      port: 80
-      targetPort: 8080
-`, p.ProjectName, p.Environment, image, name, ns, replicas, name, name, name, image, name, ns, name)
+    - port: 80
+      targetPort: %d
+`, p.ProjectName, name, p.Environment, image, name, ns, replicas, name, name, name, image, port, name, ns, name, port)
 
 	return Manifest{
-		Filename:   "k8s/" + p.ProjectSlug + "-" + p.Environment + ".yaml",
-		Deployment: depJSON,
-		Service:    svcJSON,
-		YAML:       yaml,
+		ServiceName: name,
+		Filename:    fmt.Sprintf("k8s/%s-%s-%s.yaml", p.ProjectSlug, name, p.Environment),
+		Deployment:  depJSON,
+		Service:     svcJSON,
+		YAML:        yaml,
 	}, nil
+}
+
+// IngressRoutesFromServices sinh route Ingress — path dài hơn (/api) trước /.
+func IngressRoutesFromServices(svcs []ServiceDef) []IngressRoute {
+	type pair struct {
+		svc  ServiceDef
+		path string
+	}
+	pairs := make([]pair, 0, len(svcs))
+	for _, s := range svcs {
+		pairs = append(pairs, pair{svc: normalizeServiceDef(s), path: normalizeServiceDef(s).IngressPath})
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return len(pairs[i].path) > len(pairs[j].path)
+	})
+	routes := make([]IngressRoute, 0, len(pairs))
+	for _, p := range pairs {
+		routes = append(routes, IngressRoute{
+			Path:        p.path,
+			PathType:    "Prefix",
+			ServiceName: p.svc.Name,
+			ServicePort: 80,
+		})
+	}
+	return routes
 }

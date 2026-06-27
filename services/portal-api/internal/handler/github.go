@@ -208,6 +208,29 @@ func (h *Handler) GitHubListBranches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": list})
 }
 
+func (h *Handler) GitHubListRepoContents(w http.ResponseWriter, r *http.Request) {
+	u, _ := auth.UserFromContext(r.Context())
+	token, _, err := h.getGitHubToken(r.Context(), u.ID)
+	if err != nil || token == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Chưa kết nối GitHub — bấm Kết nối GitHub trước"})
+		return
+	}
+	owner := strings.TrimSpace(chi.URLParam(r, "owner"))
+	repo := strings.TrimSpace(chi.URLParam(r, "repo"))
+	if owner == "" || repo == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "owner và repo bắt buộc"})
+		return
+	}
+	ref := strings.TrimSpace(r.URL.Query().Get("ref"))
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	list, err := h.githubClient().ListRepoContents(r.Context(), token, owner, repo, path, ref)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": list, "path": path, "ref": ref})
+}
+
 func (h *Handler) GitHubDisconnect(w http.ResponseWriter, r *http.Request) {
 	u, _ := auth.UserFromContext(r.Context())
 	_, _ = h.db.Exec(r.Context(), `DELETE FROM user_github_tokens WHERE user_id=$1`, u.ID)

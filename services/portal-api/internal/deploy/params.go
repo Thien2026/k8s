@@ -12,13 +12,15 @@ type Params struct {
 	ProjectName      string
 	Namespace        string
 	Environment      string
+	Layout           string // single | multi
 	RegistryProvider string
 	Registry         registry.ProjectRegistry
 	GitURL           string
 	Branch           string
-	BuildMode        string // dockerfile | buildpack
+	BuildMode        string // dockerfile | buildpack (single-service fallback)
 	DockerfilePath   string
 	BuildContext     string
+	Services         []ServiceDef
 	ImageTag         string
 	HarborHost       string
 	ImagePullSecret  string
@@ -31,20 +33,28 @@ type Params struct {
 	BuildArgs           []BuildArg
 }
 
+func (p Params) ImageRef() string {
+	return p.imageRef()
+}
+
 func (p Params) imageRef() string {
-	tag := strings.TrimSpace(p.ImageTag)
-	if tag == "" {
-		tag = "latest"
+	svcs := p.EffectiveServices()
+	if len(svcs) == 1 {
+		return p.imageRefFor(svcs[0])
 	}
-	prefix := strings.TrimSpace(p.Registry.ImagePrefix)
-	if prefix == "" {
-		prefix = "YOUR_REGISTRY/" + p.ProjectSlug
+	refs := make([]string, 0, len(svcs))
+	for _, s := range svcs {
+		refs = append(refs, p.imageRefFor(s))
 	}
-	return prefix + "/app:" + tag
+	return strings.Join(refs, ", ")
 }
 
 func (p Params) appName() string {
-	return "app"
+	svcs := p.EffectiveServices()
+	if len(svcs) == 0 {
+		return "app"
+	}
+	return svcs[0].Name
 }
 
 func (p Params) deploymentName() string {
