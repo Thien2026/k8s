@@ -48,7 +48,7 @@ func (c *Client) fetchComponents(ctx context.Context, clusterID string) []Compon
 	}
 
 	fleet := Component{Name: "Fleet", Status: "unknown", Message: "not checked"}
-	if deps, err := c.ListK8s(ctx, "deployments", "", 1, 100); err == nil {
+	if deps, err := c.ListK8s(ctx, clusterID, "deployments", "", 1, 100); err == nil {
 		for _, d := range deps.Items {
 			if d.Namespace == "cattle-fleet-system" && strings.Contains(d.Name, "fleet-controller") {
 				fleet.Status = "ok"

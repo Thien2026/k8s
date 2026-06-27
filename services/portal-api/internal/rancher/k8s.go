@@ -42,6 +42,7 @@ type ResourceRow struct {
 	Completions    string  `json:"completions,omitempty"`
 	Selector       string  `json:"selector,omitempty"`
 	Project        string  `json:"project,omitempty"`
+	Ready          bool    `json:"ready,omitempty"`
 }
 
 type ResourceList struct {
@@ -141,11 +142,15 @@ func namespacedAPIPath(basePath, namespace string) string {
 			return basePath[:i] + "/namespaces/" + namespace + basePath[i:]
 		}
 	}
+	if strings.HasPrefix(basePath, "/api/v1/") {
+		rest := strings.TrimPrefix(basePath, "/api/v1/")
+		return "/api/v1/namespaces/" + namespace + "/" + rest
+	}
 	rest := strings.TrimPrefix(basePath, "/v1/")
 	return "/v1/namespaces/" + namespace + "/" + rest
 }
 
-func (c *Client) ListK8s(ctx context.Context, key, namespace string, page, limit int) (ResourceList, error) {
+func (c *Client) ListK8s(ctx context.Context, clusterOverride, key, namespace string, page, limit int) (ResourceList, error) {
 	res, ok := K8sResourceByKey(key)
 	if !ok {
 		return ResourceList{}, fmt.Errorf("unknown resource: %s", key)
@@ -160,7 +165,7 @@ func (c *Client) ListK8s(ctx context.Context, key, namespace string, page, limit
 		limit = 50
 	}
 
-	clusterID, err := c.clusterID(ctx)
+	clusterID, err := c.ClusterID(ctx, clusterOverride)
 	if err != nil {
 		return ResourceList{}, err
 	}
@@ -380,20 +385,44 @@ func parseK8sItem(raw json.RawMessage) (ResourceRow, bool) {
 }
 
 func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessage) {
+	if kind == "" && len(status) > 0 {
+		var probe struct {
+			Phase string `json:"phase"`
+		}
+		if json.Unmarshal(status, &probe) == nil && probe.Phase != "" {
+			kind = "Pod"
+		}
+	}
 	switch kind {
 	case "Pod":
 		var st struct {
 			PodIP     string `json:"podIP"`
 			HostIP    string `json:"hostIP"`
 			Phase     string `json:"phase"`
+			Conditions []struct {
+				Type   string `json:"type"`
+				Status string `json:"status"`
+			} `json:"conditions"`
 			ContainerStatuses []struct {
-				RestartCount int    `json:"restartCount"`
+				RestartCount int  `json:"restartCount"`
+				Ready        bool `json:"ready"`
 				Image        string `json:"image"`
+				State        struct {
+					Waiting *struct {
+						Reason string `json:"reason"`
+					} `json:"waiting"`
+					Terminated *struct {
+						Reason string `json:"reason"`
+					} `json:"terminated"`
+				} `json:"state"`
 			} `json:"containerStatuses"`
 		}
 		var sp struct {
 			RestartPolicy string `json:"restartPolicy"`
 			NodeName      string `json:"nodeName"`
+			Containers    []struct {
+				Image string `json:"image"`
+			} `json:"containers"`
 		}
 		if json.Unmarshal(status, &st) == nil {
 			row.PodIP = st.PodIP
@@ -407,6 +436,23 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 				if c.Image != "" {
 					imgs = append(imgs, c.Image)
 				}
+				if c.State.Waiting != nil && c.State.Waiting.Reason != "" {
+					row.Status = c.State.Waiting.Reason
+				} else if c.State.Terminated != nil && c.State.Terminated.Reason == "Error" {
+					row.Status = "Error"
+				}
+			}
+			if len(st.ContainerStatuses) > 0 {
+				allReady := true
+				for _, c := range st.ContainerStatuses {
+					if !c.Ready {
+						allReady = false
+						break
+					}
+				}
+				row.Ready = allReady
+			} else {
+				row.Ready = podReadyFromConditions(st.Conditions)
 			}
 			if len(imgs) > 0 {
 				row.Images = strings.Join(imgs, ", ")
@@ -420,6 +466,9 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 				row.RestartPolicy = sp.RestartPolicy
 			}
 			row.Node = sp.NodeName
+			if row.Images == "" && len(sp.Containers) > 0 && sp.Containers[0].Image != "" {
+				row.Images = sp.Containers[0].Image
+			}
 		}
 	case "Deployment", "StatefulSet", "DaemonSet":
 		var st struct {
@@ -676,6 +725,18 @@ func parseMemGiB(s string) float64 {
 	}
 	fmt.Sscanf(s, "%f", &v)
 	return v / (1024 * 1024 * 1024)
+}
+
+func podReadyFromConditions(conditions []struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}) bool {
+	for _, c := range conditions {
+		if c.Type == "Ready" && strings.EqualFold(strings.TrimSpace(c.Status), "True") {
+			return true
+		}
+	}
+	return false
 }
 
 func extractStatus(kind string, status json.RawMessage) string {

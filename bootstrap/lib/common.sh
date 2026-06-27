@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BOOTSTRAP_DIR="${ROOT_DIR}/bootstrap"
+CORE_STEPS_DIR="${BOOTSTRAP_DIR}/core/steps"
+ADDONS_DIR="${BOOTSTRAP_DIR}/addons"
 STATE_DIR="${BOOTSTRAP_DIR}/state"
 LOG_DIR="${BOOTSTRAP_DIR}/logs"
 
@@ -41,6 +43,46 @@ is_step_done() {
 mark_step_done() {
   date -Iseconds > "$(step_done_file "$1")"
   log "✓ Đánh dấu xong: $(step_id "$1")"
+}
+
+core_step() {
+  echo "${CORE_STEPS_DIR}/${1}.sh"
+}
+
+addon_script() {
+  echo "${ADDONS_DIR}/${1}/${2}.sh"
+}
+
+addon_done_file() {
+  echo "${STATE_DIR}/addon-${1}.done"
+}
+
+addon_legacy_done() {
+  case "$1" in
+    rancher) echo "${STATE_DIR}/09-rancher.done" ;;
+    harbor)  echo "${STATE_DIR}/10-harbor.done" ;;
+    *)       echo "" ;;
+  esac
+}
+
+is_addon_done() {
+  local name="$1"
+  [[ -f "$(addon_done_file "$name")" ]] && return 0
+  local leg
+  leg="$(addon_legacy_done "$name")"
+  [[ -n "${leg}" && -f "${leg}" ]]
+}
+
+mark_addon_done() {
+  local name="$1"
+  date -Iseconds > "$(addon_done_file "$name")"
+  # Giữ legacy state để VPS cũ không chạy lại nhầm
+  local leg
+  leg="$(addon_legacy_done "$name")"
+  if [[ -n "${leg}" && ! -f "${leg}" ]]; then
+    date -Iseconds > "${leg}"
+  fi
+  log "✓ Addon xong: ${name}"
 }
 
 require_cmd() {

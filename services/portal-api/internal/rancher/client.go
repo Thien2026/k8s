@@ -29,12 +29,17 @@ func NewClient(baseURL, token string) *Client {
 }
 
 func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
+	body, _, err := c.do(ctx, http.MethodGet, path, nil, "application/json")
+	return body, err
+}
+
+func (c *Client) getPlain(ctx context.Context, path string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept", "text/plain, */*")
 
 	res, err := c.http.Do(req)
 	if err != nil {
@@ -43,10 +48,51 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 	defer res.Body.Close()
 
 	body, _ := io.ReadAll(res.Body)
-	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("rancher api %d: %s", res.StatusCode, string(body))
+	if res.StatusCode >= 400 {
+		return body, fmt.Errorf("rancher api %d: %s", res.StatusCode, string(body))
 	}
 	return body, nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, payload []byte, contentType string) ([]byte, int, error) {
+	var bodyReader io.Reader
+	if len(payload) > 0 {
+		bodyReader = strings.NewReader(string(payload))
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	req.Header.Set("Accept", "application/json")
+
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer res.Body.Close()
+
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode >= 400 {
+		return body, res.StatusCode, fmt.Errorf("rancher api %d: %s", res.StatusCode, string(body))
+	}
+	return body, res.StatusCode, nil
+}
+
+func (c *Client) SetClusterID(id string) {
+	c.mu.Lock()
+	c.cachedClusterID = id
+	c.mu.Unlock()
+}
+
+func (c *Client) ClusterID(ctx context.Context, override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	return c.clusterID(ctx)
 }
 
 func (c *Client) Enabled() bool {

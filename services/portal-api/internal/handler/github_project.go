@@ -1,0 +1,272 @@
+package handler
+
+import (
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
+	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
+	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
+	"github.com/go-chi/chi/v5"
+)
+
+// DeployHook nhận webhook từ GitHub Actions sau khi build image.
+func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
+	token := strings.TrimSpace(r.Header.Get("X-Platform-Deploy-Token"))
+	if token == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "thiếu deploy token"})
+		return
+	}
+	var body struct {
+		ImageTag    string `json:"image_tag"`
+		Environment string `json:"environment"`
+		ClusterID   string `json:"cluster_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
+		return
+	}
+	tag := strings.TrimSpace(body.ImageTag)
+	if tag == "" {
+		tag = "latest"
+	}
+	env := strings.ToLower(strings.TrimSpace(body.Environment))
+	if env == "" {
+		env = "dev"
+	}
+
+	p, err := h.getProjectByDeployToken(r.Context(), token)
+	if err != nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token không hợp lệ"})
+		return
+	}
+
+	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	if !repo.AutoDeployEnabled {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "skipped",
+			"reason":      "auto_deploy tắt — image đã build, không deploy lên cluster",
+			"image_tag":   tag,
+			"environment": env,
+			"project":     p.Slug,
+		})
+		return
+	}
+
+	rancherOn, _ := h.plugins.Enabled(r.Context(), plugins.Rancher)
+	if !rancherOn || h.rancher == nil || !h.rancher.Enabled() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Rancher chưa sẵn sàng"})
+		return
+	}
+
+	h.enrichProjectRegistry(r.Context(), &p)
+	if err := h.requireDeployEnvReady(r.Context(), p, env); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
+	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, body.ClusterID, true)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusAccepted, result)
+}
+
+func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	p, ok := h.requireProjectAccess(w, r, slug)
+	if !ok {
+		return
+	}
+	u, _ := auth.UserFromContext(r.Context())
+	if !auth.CanWriteK8s(u.Role) {
+		writeAccessDenied(w)
+		return
+	}
+	ghToken, _, err := h.getGitHubToken(r.Context(), u.ID)
+	if err != nil || ghToken == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Chưa kết nối GitHub"})
+		return
+	}
+
+	var body struct {
+		Owner       string `json:"owner"`
+		Repo        string `json:"repo"`
+		Branch      string `json:"branch"`
+		Environment string `json:"environment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
+		return
+	}
+	owner := strings.TrimSpace(body.Owner)
+	repo := strings.TrimSpace(body.Repo)
+	if owner == "" || repo == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "owner và repo bắt buộc"})
+		return
+	}
+	branch := strings.TrimSpace(body.Branch)
+	if branch == "" {
+		branch = "main"
+	}
+	env := strings.ToLower(strings.TrimSpace(body.Environment))
+	if env == "" {
+		env = "dev"
+	}
+	if env != "dev" && env != "prod" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
+		return
+	}
+
+	deployToken, err := h.ensureDeployHookToken(r.Context(), p.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	gitURL := "https://github.com/" + owner + "/" + repo
+	_, err = h.db.Exec(r.Context(), `
+		UPDATE project_repos SET
+			git_url=$1, branch=$2, github_owner=$3, github_repo=$4,
+			deploy_environment=$5, updated_at=now()
+		WHERE project_id=$6`,
+		gitURL, branch, owner, repo, env, p.ID)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+
+	h.enrichProjectRegistry(r.Context(), &p)
+	repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
+	if err := h.resolveBuildMode(r.Context(), u.ID, p.ID, &repoRow); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không quét được repo: " + err.Error()})
+		return
+	}
+	params := h.buildDeployParams(r.Context(), p, repoRow, env, "", true)
+	wf := deploy.GitHubWorkflow(params)
+
+	client := h.githubClient()
+	if err := client.PutWorkflowFile(r.Context(), ghToken, owner, repo, wf.Filename,
+		"chore(platform): sync deploy workflow for "+p.Slug, wf.Content, branch); err != nil {
+		log.Printf("github setup workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không push workflow: " + err.Error()})
+		return
+	}
+	if err := client.DispatchWorkflow(r.Context(), ghToken, owner, repo, wf.Filename, branch); err != nil {
+		log.Printf("github dispatch workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không chạy workflow: " + err.Error()})
+		return
+	}
+	deploySecret := deploy.DeployTokenSecretName(p.Slug)
+	if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, deploySecret, deployToken); err != nil {
+		log.Printf("github setup secret failed project=%s repo=%s/%s err=%v", p.Slug, owner, repo, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo secret: " + err.Error()})
+		return
+	}
+
+	secretsProvisioned := []string{deploySecret}
+	if p.RegistryProvider == "harbor" {
+		harborUser, harborPass, err := h.ensureHarborCIRobot(r.Context(), p)
+		if err != nil {
+			log.Printf("harbor ci robot failed project=%s err=%v", p.Slug, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo Harbor CI robot: " + err.Error()})
+			return
+		}
+		harborUserSecret := deploy.HarborUsernameSecretName(p.Slug)
+		harborPassSecret := deploy.HarborPasswordSecretName(p.Slug)
+		if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, harborUserSecret, harborUser); err != nil {
+			log.Printf("github harbor username secret failed project=%s err=%v", p.Slug, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo " + harborUserSecret + ": " + err.Error()})
+			return
+		}
+		if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, harborPassSecret, harborPass); err != nil {
+			log.Printf("github harbor password secret failed project=%s err=%v", p.Slug, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo " + harborPassSecret + ": " + err.Error()})
+			return
+		}
+		secretsProvisioned = append(secretsProvisioned, harborUserSecret, harborPassSecret)
+	} else {
+		if _, _, err := h.ensureGHCRCredentials(r.Context(), p); err != nil {
+			log.Printf("ghcr pull creds failed project=%s err=%v", p.Slug, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+			return
+		}
+	}
+
+	_, _ = h.db.Exec(r.Context(),
+		`UPDATE project_repos SET workflow_synced_at=now(), auto_deploy_enabled=true WHERE project_id=$1`, p.ID)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":               "ok",
+		"git_url":              gitURL,
+		"build_mode":           repoRow.BuildMode,
+		"build_mode_detected_path": repoRow.BuildModeDetectedPath,
+		"workflow_file":        wf.Filename,
+		"workflow_url":         "https://github.com/" + owner + "/" + repo + "/actions",
+		"auto_deploy":          true,
+		"deploy_environment":   env,
+		"secrets_provisioned":  secretsProvisioned,
+		"dev_action_required":  false,
+	})
+}
+
+func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo projectRepoRow, env, imageTag string, includeHook bool) deploy.Params {
+	harborHost := ""
+	if p.RegistryProvider == "harbor" && h.cfg.HarborURL != "" {
+		harborHost = harborHostFromURL(h.cfg.HarborURL)
+	}
+	deployEnv := strings.ToLower(strings.TrimSpace(env))
+	if deployEnv != "dev" && deployEnv != "prod" {
+		deployEnv = ""
+	}
+	if deployEnv == "" {
+		deployEnv = strings.ToLower(strings.TrimSpace(repo.DeployEnvironment))
+	}
+	if deployEnv == "" {
+		deployEnv = "dev"
+	}
+	ns := p.NamespaceDev
+	if deployEnv == "prod" {
+		ns = p.NamespaceProd
+	}
+	params := deploy.Params{
+		ProjectSlug:      p.Slug,
+		ProjectName:      p.Name,
+		Namespace:        ns,
+		Environment:      deployEnv,
+		RegistryProvider: p.RegistryProvider,
+		Registry:         p.Registry,
+		GitURL:           repo.GitURL,
+		Branch:           repo.Branch,
+		BuildMode:        repo.BuildMode,
+		DockerfilePath:   repo.DockerfilePath,
+		BuildContext:     repo.BuildContext,
+		ImageTag:         imageTag,
+		HarborHost:       harborHost,
+	}
+	if includeHook {
+		params.DeployHookURL = h.platformDeployHookURL()
+		params.DeployEnvironment = deployEnv
+	}
+	params.DeployTokenSecret = deploy.DeployTokenSecretName(p.Slug)
+	params.HarborUserSecret = deploy.HarborUsernameSecretName(p.Slug)
+	params.HarborPassSecret = deploy.HarborPasswordSecretName(p.Slug)
+	if includeHook && ctx != nil {
+		if args, err := h.loadBuildArgs(ctx, p.ID, deployEnv, p.Slug); err == nil {
+			params.BuildArgs = args
+		}
+	}
+	return params
+}
+
+func harborHostFromURL(raw string) string {
+	u, err := url.Parse(strings.TrimRight(raw, "/"))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return u.Host
+}

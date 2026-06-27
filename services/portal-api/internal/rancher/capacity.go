@@ -7,18 +7,20 @@ import (
 )
 
 type CapacityMetric struct {
-	Used        float64 `json:"used"`
-	Total       float64 `json:"total"`
-	UsedPct     float64 `json:"used_pct"`
-	Reserved    float64 `json:"reserved,omitempty"`
-	ReservedPct float64 `json:"reserved_pct,omitempty"`
-	Unit        string  `json:"unit,omitempty"`
+	Used          float64 `json:"used"`
+	Total         float64 `json:"total"`
+	UsedPct       float64 `json:"used_pct"`
+	Reserved      float64 `json:"reserved"`
+	ReservedTotal float64 `json:"reserved_total"`
+	ReservedPct   float64 `json:"reserved_pct"`
+	Unit          string  `json:"unit,omitempty"`
 }
 
 type NodeCapacity struct {
 	Pods   CapacityMetric `json:"pods"`
 	CPU    CapacityMetric `json:"cpu"`
 	Memory CapacityMetric `json:"memory"`
+	Disk   CapacityMetric `json:"disk"`
 }
 
 func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapacity {
@@ -26,7 +28,10 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 		Pods:   CapacityMetric{Unit: "pods"},
 		CPU:    CapacityMetric{Unit: "cores"},
 		Memory: CapacityMetric{Unit: "GiB"},
+		Disk:   CapacityMetric{Unit: "GiB"},
 	}
+
+	var nodeNames []string
 
 	nodesBody, err := c.get(ctx, fmt.Sprintf("/k8s/clusters/%s/v1/nodes", clusterID))
 	if err == nil {
@@ -41,6 +46,9 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 			}
 			for _, n := range raw {
 				var node struct {
+					Metadata struct {
+						Name string `json:"name"`
+					} `json:"metadata"`
 					Status struct {
 						Allocatable map[string]string `json:"allocatable"`
 						Capacity    map[string]string `json:"capacity"`
@@ -49,6 +57,9 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 				if json.Unmarshal(n, &node) != nil {
 					continue
 				}
+				if node.Metadata.Name != "" {
+					nodeNames = append(nodeNames, node.Metadata.Name)
+				}
 				src := node.Status.Allocatable
 				if len(src) == 0 {
 					src = node.Status.Capacity
@@ -56,7 +67,34 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 				cap.Pods.Total += float64(parseQuantityInt(src["pods"]))
 				cap.CPU.Total += parseCPU(src["cpu"])
 				cap.Memory.Total += parseMemGiB(src["memory"])
+				cap.Disk.ReservedTotal += parseStorageGiB(src["ephemeral-storage"])
 			}
+		}
+	}
+
+	for _, nodeName := range nodeNames {
+		summaryBody, err := c.get(ctx, fmt.Sprintf(
+			"/k8s/clusters/%s/api/v1/nodes/%s/proxy/stats/summary",
+			clusterID, nodeName,
+		))
+		if err != nil {
+			continue
+		}
+		var summary struct {
+			Node struct {
+				Fs struct {
+					UsedBytes     uint64 `json:"usedBytes"`
+					CapacityBytes uint64 `json:"capacityBytes"`
+				} `json:"fs"`
+			} `json:"node"`
+		}
+		if json.Unmarshal(summaryBody, &summary) != nil {
+			continue
+		}
+		if summary.Node.Fs.CapacityBytes > 0 {
+			cap.Disk.Used += bytesToGiB(float64(summary.Node.Fs.UsedBytes))
+			// Ưu tiên số thật từ kubelet hơn ephemeral-storage allocatable
+			cap.Disk.Total += bytesToGiB(float64(summary.Node.Fs.CapacityBytes))
 		}
 	}
 
@@ -95,6 +133,7 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 					req := ctr.Resources.Requests
 					cap.CPU.Reserved += parseCPU(req["cpu"])
 					cap.Memory.Reserved += parseMemGiB(req["memory"])
+					cap.Disk.Reserved += parseStorageGiB(req["ephemeral-storage"])
 				}
 			}
 		}
@@ -123,6 +162,8 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 	cap.CPU.ReservedPct = pct(cap.CPU.Reserved, cap.CPU.Total)
 	cap.Memory.UsedPct = pct(cap.Memory.Used, cap.Memory.Total)
 	cap.Memory.ReservedPct = pct(cap.Memory.Reserved, cap.Memory.Total)
+	cap.Disk.UsedPct = pct(cap.Disk.Used, cap.Disk.Total)
+	cap.Disk.ReservedPct = pct(cap.Disk.Reserved, cap.Disk.ReservedTotal)
 
 	cap.Pods.Total = float64(int(cap.Pods.Total))
 	cap.Pods.Used = float64(int(cap.Pods.Used))
@@ -132,8 +173,42 @@ func (c *Client) buildCapacity(ctx context.Context, clusterID string) NodeCapaci
 	cap.Memory.Total = round1(cap.Memory.Total)
 	cap.Memory.Used = round2(cap.Memory.Used)
 	cap.Memory.Reserved = round2(cap.Memory.Reserved)
+	cap.Disk.Total = round1(cap.Disk.Total)
+	cap.Disk.Used = round1(cap.Disk.Used)
+	cap.Disk.Reserved = round1(cap.Disk.Reserved)
+	cap.Disk.ReservedTotal = round1(cap.Disk.ReservedTotal)
 
 	return cap
+}
+
+func bytesToGiB(b float64) float64 {
+	return b / (1024 * 1024 * 1024)
+}
+
+func parseStorageGiB(s string) float64 {
+	if s == "" {
+		return 0
+	}
+	var v float64
+	if len(s) > 2 && s[len(s)-2:] == "Ki" {
+		fmt.Sscanf(s, "%fKi", &v)
+		return v / (1024 * 1024)
+	}
+	if len(s) > 2 && s[len(s)-2:] == "Mi" {
+		fmt.Sscanf(s, "%fMi", &v)
+		return v / 1024
+	}
+	if len(s) > 2 && s[len(s)-2:] == "Gi" {
+		fmt.Sscanf(s, "%fGi", &v)
+		return v
+	}
+	if len(s) > 1 && s[len(s)-1:] == "G" {
+		fmt.Sscanf(s, "%fG", &v)
+		return v * 1000 / 1024
+	}
+	// Số không suffix = bytes (Kubernetes resource.Quantity)
+	fmt.Sscanf(s, "%f", &v)
+	return v / (1024 * 1024 * 1024)
 }
 
 func pct(used, total float64) float64 {

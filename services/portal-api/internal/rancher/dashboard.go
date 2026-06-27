@@ -43,11 +43,11 @@ type clusterDetailV3 struct {
 	} `json:"version"`
 }
 
-func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error) {
+func (c *Client) ClusterDashboard(ctx context.Context, clusterOverride string) (ClusterDashboard, error) {
 	if !c.Enabled() {
 		return ClusterDashboard{}, errNotConfigured()
 	}
-	clusterID, err := c.clusterID(ctx)
+	clusterID, err := c.ClusterID(ctx, clusterOverride)
 	if err != nil {
 		return ClusterDashboard{}, err
 	}
@@ -74,16 +74,16 @@ func (c *Client) ClusterDashboard(ctx context.Context) (ClusterDashboard, error)
 	}
 
 	for _, key := range []string{"nodes", "deployments", "pods", "namespaces", "services", "ingresses"} {
-		if list, err := c.ListK8s(ctx, key, "", 1, 1); err == nil {
+		if list, err := c.ListK8s(ctx, clusterOverride, key, "", 1, 1); err == nil {
 			dash.Counts[key] = list.Total
 		}
 	}
 
 	dash.Capacity = c.buildCapacity(ctx, clusterID)
-	dash.Scaling = c.buildScalingSummary(ctx)
+	dash.Scaling = c.buildScalingSummary(ctx, clusterOverride)
 	dash.Components = c.fetchComponents(ctx, clusterID)
 
-	if events, err := c.ListK8s(ctx, "events", "", 1, 8); err == nil {
+	if events, err := c.ListK8s(ctx, clusterOverride, "events", "", 1, 8); err == nil {
 		dash.RecentEvents = events.Items
 	}
 

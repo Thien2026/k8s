@@ -11,3 +11,4 @@ kubeconfig/
 *.pem
 **/node_modules/
 services/portal-web/dist/
+test-k8s/

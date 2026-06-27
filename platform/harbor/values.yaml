@@ -1,0 +1,91 @@
+# Harbor minimal — single-node VPS (profile handover)
+# Chart 1.19.1 → Harbor OSS 2.15.1
+# Hostname / externalURL / password set qua --set trong addons/harbor/install.sh
+
+expose:
+  type: ingress
+  tls:
+    enabled: true
+    certSource: secret
+    secret:
+      secretName: tls-harbor-ingress
+  ingress:
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      nginx.ingress.kubernetes.io/ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+
+# Bật Trivy — quét CVE image sau push (cần thêm ~512Mi RAM)
+trivy:
+  enabled: true
+
+# Helm chart cũ — không cần cho handover đầu
+chartmuseum:
+  enabled: false
+
+persistence:
+  enabled: true
+  resourcePolicy: keep
+  persistentVolumeClaim:
+    registry:
+      storageClass: local-path
+      size: 30Gi
+    database:
+      storageClass: local-path
+      size: 2Gi
+    redis:
+      storageClass: local-path
+      size: 1Gi
+
+database:
+  type: internal
+
+redis:
+  type: internal
+
+core:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+jobservice:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+registry:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+portal:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+nginx:
+  replicas: 1
+
+metrics:
+  enabled: false
