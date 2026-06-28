@@ -20,6 +20,7 @@ type ServiceDef struct {
 	ContainerPort  int    `json:"container_port"`
 	HealthPath     string `json:"health_path"`
 	IngressPath    string `json:"ingress_path"`
+	ExposeIngress  bool   `json:"expose_ingress"`
 	SortOrder      int    `json:"sort_order"`
 }
 
@@ -39,6 +40,7 @@ var DefaultMultiServices = []ServiceDef{
 		ContainerPort:  8080,
 		HealthPath:     "/health",
 		IngressPath:    "/api",
+		ExposeIngress:  true,
 		SortOrder:      0,
 	},
 	{
@@ -50,6 +52,7 @@ var DefaultMultiServices = []ServiceDef{
 		ContainerPort:  8080,
 		HealthPath:     "/",
 		IngressPath:    "/",
+		ExposeIngress:  true,
 		SortOrder:      1,
 	},
 }
@@ -121,6 +124,13 @@ func normalizeServiceDef(s ServiceDef) ServiceDef {
 		s.HealthPath = "/health"
 	}
 	ip := strings.TrimSpace(s.IngressPath)
+	if IsInternalIngressMarker(ip) {
+		s.ExposeIngress = false
+	}
+	if !s.ExposeIngress {
+		s.IngressPath = ip
+		return s
+	}
 	if ip == "" {
 		ip = "/"
 	}
@@ -128,7 +138,52 @@ func normalizeServiceDef(s ServiceDef) ServiceDef {
 		ip = "/" + ip
 	}
 	s.IngressPath = ip
+	s.ExposeIngress = true
 	return s
+}
+
+func IsInternalIngressMarker(path string) bool {
+	switch strings.ToLower(strings.TrimSpace(path)) {
+	case "-", "internal", "none", "(internal)", "cluster", "private":
+		return true
+	default:
+		return false
+	}
+}
+
+// IsServicePublic — workload có route Ingress công khai.
+func IsServicePublic(s ServiceDef) bool {
+	s = normalizeServiceDef(s)
+	return s.ExposeIngress
+}
+
+// ServiceEnvVarName — biến env discovery trong pod (vd. SVC_ENGINE_MATRIX_URL).
+func ServiceEnvVarName(serviceName string) string {
+	name := strings.ToUpper(strings.TrimSpace(serviceName))
+	name = strings.ReplaceAll(name, "-", "_")
+	return "SVC_" + name + "_URL"
+}
+
+// ServiceClusterURL — DNS nội bộ cluster (cùng namespace).
+func ServiceClusterURL(serviceName string) string {
+	return "http://" + strings.TrimSpace(serviceName) + ":80"
+}
+
+// ServiceDiscoveryEnvVars — URL các service khác inject vào pod hiện tại.
+func ServiceDiscoveryEnvVars(all []ServiceDef, currentName string) []map[string]any {
+	currentName = strings.TrimSpace(currentName)
+	var out []map[string]any
+	for _, peer := range all {
+		peer = normalizeServiceDef(peer)
+		if peer.Name == "" || peer.Name == currentName {
+			continue
+		}
+		out = append(out, map[string]any{
+			"name":  ServiceEnvVarName(peer.Name),
+			"value": ServiceClusterURL(peer.Name),
+		})
+	}
+	return out
 }
 
 func (p Params) imageRefFor(svc ServiceDef) string {

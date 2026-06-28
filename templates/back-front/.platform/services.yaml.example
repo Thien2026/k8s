@@ -1,0 +1,13 @@
+# Template: thêm vào monorepo multi-service / N-service
+version: 1
+layout: multi
+services:
+  - name: api
+    path: backend
+    ingress: /api
+  - name: web
+    path: frontend
+    ingress: /
+  # - name: worker
+  #   path: worker
+  #   expose: false

@@ -4,6 +4,7 @@ package platformcontract
 const (
 	BuildContractPath    = ".platform/build.yaml"
 	RuntimeContractPath  = ".platform/runtime.yaml"
+	ServicesContractPath = ".platform/services.yaml"
 	ContractVersion      = 1
 )
 

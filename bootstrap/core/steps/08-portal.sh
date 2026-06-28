@@ -59,6 +59,9 @@ if [[ -f "${ROOT_DIR}/config/rancher.env" ]]; then
   # shellcheck source=/dev/null
   source "${ROOT_DIR}/config/rancher.env"
 fi
+if [[ -z "${RANCHER_TOKEN}" ]] && kubectl -n "${NS}" get secret portal-api-env >/dev/null 2>&1; then
+  RANCHER_TOKEN="$(kubectl -n "${NS}" get secret portal-api-env -o jsonpath='{.data.RANCHER_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+fi
 
 JOIN_GATE_SECRET=""
 if [[ -f "${ROOT_DIR}/config/join-gate.env" ]]; then

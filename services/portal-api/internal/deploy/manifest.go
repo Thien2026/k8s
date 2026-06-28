@@ -64,6 +64,8 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 	replicas := deploymentReplicas(p)
 	port := svc.ContainerPort
 	health := svc.HealthPath
+	allSvcs := p.EffectiveServices()
+	discoveryEnv := ServiceDiscoveryEnvVars(allSvcs, name)
 
 	dep := map[string]any{
 		"apiVersion": "apps/v1",
@@ -104,9 +106,9 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 									"ports": []map[string]any{
 										{"containerPort": port, "name": "http"},
 									},
-									"env": []map[string]any{
+									"env": append([]map[string]any{
 										{"name": "PORT", "value": fmt.Sprintf("%d", port)},
-									},
+									}, discoveryEnv...),
 									"readinessProbe": map[string]any{
 										"httpGet": map[string]any{
 											"path": health,
@@ -230,7 +232,7 @@ spec:
 	}, nil
 }
 
-// IngressRoutesFromServices sinh route Ingress — path dài hơn (/api) trước /.
+// IngressRoutesFromServices sinh route Ingress — path dài hơn (/api) trước /; bỏ qua internal.
 func IngressRoutesFromServices(svcs []ServiceDef) []IngressRoute {
 	type pair struct {
 		svc  ServiceDef
@@ -238,7 +240,11 @@ func IngressRoutesFromServices(svcs []ServiceDef) []IngressRoute {
 	}
 	pairs := make([]pair, 0, len(svcs))
 	for _, s := range svcs {
-		pairs = append(pairs, pair{svc: normalizeServiceDef(s), path: normalizeServiceDef(s).IngressPath})
+		s = normalizeServiceDef(s)
+		if !s.ExposeIngress {
+			continue
+		}
+		pairs = append(pairs, pair{svc: s, path: s.IngressPath})
 	}
 	sort.Slice(pairs, func(i, j int) bool {
 		return len(pairs[i].path) > len(pairs[j].path)

@@ -89,6 +89,9 @@ func SmokeCheckPaths(layout string, services []ServiceDef) []string {
 	seen := map[string]bool{"/": true}
 	for _, s := range services {
 		s = normalizeServiceDef(s)
+		if !s.ExposeIngress {
+			continue
+		}
 		if s.Name != "api" && s.IngressPath != ConventionAPIBasePath {
 			continue
 		}

@@ -1,0 +1,11 @@
+version: 1
+layout: multi
+services:
+  - name: api
+    path: backend
+    ingress: /api
+    health: /health
+  - name: web
+    path: frontend
+    ingress: /
+    health: /

@@ -150,8 +150,9 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.enrichProjectRegistry(r.Context(), &p)
 	repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
+	h.maybeApplyServicesContractOnSetup(r.Context(), u.ID, p, repoRow, branch)
+	h.enrichProjectRegistry(r.Context(), &p)
 	if err := h.resolveBuildMode(r.Context(), u.ID, p.ID, &repoRow); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không quét được repo: " + err.Error()})
 		return

@@ -85,6 +85,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Get("/projects", h.ListProjects)
 		r.Get("/projects/{slug}/services", h.GetProjectServices)
 		r.Put("/projects/{slug}/services", h.PutProjectServices)
+		r.Get("/projects/{slug}/services/detect", h.DetectProjectServicesContract)
+		r.Post("/projects/{slug}/services/sync-from-repo", h.SyncProjectServicesFromRepo)
 		r.Get("/projects/{slug}/conventions", h.GetProjectConventions)
 		r.Post("/projects/{slug}/conventions/apply", h.ApplyProjectConventions)
 		r.Get("/projects/{slug}", h.GetProject)

@@ -21,7 +21,15 @@ type projectServiceRow struct {
 	ContainerPort  int    `json:"container_port"`
 	HealthPath     string `json:"health_path"`
 	IngressPath    string `json:"ingress_path"`
+	ExposeIngress  *bool  `json:"expose_ingress,omitempty"`
 	SortOrder      int    `json:"sort_order"`
+}
+
+func serviceRowExposeIngress(r projectServiceRow) bool {
+	if r.ExposeIngress != nil {
+		return *r.ExposeIngress
+	}
+	return !deploy.IsInternalIngressMarker(r.IngressPath)
 }
 
 func (h *Handler) getProjectLayout(ctx context.Context, projectID int64) string {
@@ -33,7 +41,7 @@ func (h *Handler) getProjectLayout(ctx context.Context, projectID int64) string 
 func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]projectServiceRow, error) {
 	rows, err := h.db.Query(ctx, `
 		SELECT name, COALESCE(display_name,''), build_context, COALESCE(build_mode,'dockerfile'),
-		       dockerfile_path, container_port, health_path, ingress_path, sort_order
+		       dockerfile_path, container_port, health_path, ingress_path, expose_ingress, sort_order
 		FROM project_services
 		WHERE project_id=$1 AND enabled=true
 		ORDER BY sort_order, name`, projectID)
@@ -44,10 +52,12 @@ func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]p
 	var list []projectServiceRow
 	for rows.Next() {
 		var s projectServiceRow
+		var expose bool
 		if err := rows.Scan(&s.Name, &s.DisplayName, &s.BuildContext, &s.BuildMode,
-			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &s.SortOrder); err != nil {
+			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &expose, &s.SortOrder); err != nil {
 			return nil, err
 		}
+		s.ExposeIngress = &expose
 		list = append(list, s)
 	}
 	if list == nil {
@@ -76,6 +86,7 @@ func (h *Handler) loadDeployServices(ctx context.Context, projectID int64, repo 
 			ContainerPort:  r.ContainerPort,
 			HealthPath:     r.HealthPath,
 			IngressPath:    r.IngressPath,
+			ExposeIngress:  serviceRowExposeIngress(r),
 			SortOrder:      r.SortOrder,
 		})
 	}
@@ -115,11 +126,14 @@ func (h *Handler) GetProjectServices(w http.ResponseWriter, r *http.Request) {
 			IngressPath:    "/",
 		}}
 	}
+	u, _ := auth.UserFromContext(r.Context())
+	contract := h.detectServicesContract(r.Context(), u.ID, p, repo, repo.Branch)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"layout":       layout,
-		"items":        items,
-		"template":     deploy.DefaultMultiServices,
-		"conventions":  h.backFrontConventionsPayload(r.Context(), p.ID),
+		"layout":        layout,
+		"items":         items,
+		"template":      deploy.DefaultMultiServices,
+		"conventions":   h.backFrontConventionsPayload(r.Context(), p.ID),
+		"repo_contract": contract,
 	})
 }
 
@@ -150,6 +164,7 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		names := map[string]bool{}
+		publicCount := 0
 		for _, s := range body.Services {
 			name := strings.TrimSpace(s.Name)
 			if name == "" {
@@ -157,10 +172,17 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if names[name] {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Tên service trùng: " + name})
+			 writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Tên service trùng: " + name})
 				return
 			}
 			names[name] = true
+			if serviceRowExposeIngress(s) {
+				publicCount++
+			}
+		}
+		if publicCount == 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Cần ít nhất 1 service public (Ingress) — internal-only dùng expose_ingress=false"})
+			return
 		}
 	}
 
@@ -206,6 +228,7 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 				ContainerPort:  s.ContainerPort,
 				HealthPath:     s.HealthPath,
 				IngressPath:    s.IngressPath,
+				ExposeIngress:  serviceRowExposeIngress(s),
 				SortOrder:      s.SortOrder,
 			})
 			if svc.SortOrder == 0 && i > 0 {
@@ -214,10 +237,10 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO project_services
 				  (project_id, name, display_name, build_context, build_mode, dockerfile_path,
-				   container_port, health_path, ingress_path, sort_order, updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,now())`,
+				   container_port, health_path, ingress_path, expose_ingress, sort_order, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())`,
 				p.ID, svc.Name, svc.DisplayName, svc.BuildContext, svc.BuildMode, svc.DockerfilePath,
-				svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.SortOrder); err != nil {
+				svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, svc.SortOrder); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}

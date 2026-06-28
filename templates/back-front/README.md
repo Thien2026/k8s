@@ -8,8 +8,9 @@ Monorepo chuẩn platform — **1 domain**, web `/`, API `/api`.
 backend/          # API — route dưới /api
 frontend/         # SPA — gọi VITE_API_BASE (/api)
 .platform/
-  build.yaml      # biến build (Console điền value)
-  runtime.yaml    # biến runtime pod
+  build.yaml       # biến build (Console điền value)
+  runtime.yaml     # biến runtime pod
+  services.yaml    # fleet layout (L4A — Console tự nhận api + web)
 ```
 
 ## Dev local

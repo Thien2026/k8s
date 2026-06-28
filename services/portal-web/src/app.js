@@ -15,6 +15,7 @@ const state = {
   deployActivityCache: {},
   deployPromoteReadiness: {},
   deployServingTag: "",
+  promoteFollow: null,
   onLoginPage: false,
 };
 
@@ -1661,6 +1662,55 @@ function rememberPromoteReadiness(slug, readiness) {
   state.deployPromoteReadiness[slug] = readiness || null;
 }
 
+function imageTagMatches(a, b) {
+  a = String(a || "").trim();
+  b = String(b || "").trim();
+  if (!a || !b) return false;
+  return a === b || a.startsWith(b) || b.startsWith(a);
+}
+
+function scrollToDeployProgress(force) {
+  const pf = state.promoteFollow;
+  if (!force && pf && pf.scrolled) return;
+  requestAnimationFrame(function () {
+    const card = document.getElementById("deploy-activity-card");
+    const details = document.getElementById("deploy-current-details");
+    if (details) details.open = true;
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (pf) pf.scrolled = true;
+  });
+}
+
+function promoteFollowActive(slug, env) {
+  const pf = state.promoteFollow;
+  return !!(pf && pf.slug === slug && (env || "dev").toLowerCase() === "prod");
+}
+
+function handlePromoteFollowTerminal(activity, slug) {
+  const pf = state.promoteFollow;
+  if (!pf || pf.slug !== slug) return;
+  const cur = activity && activity.current;
+  if (!cur || !imageTagMatches(cur.image_tag, pf.tag)) return;
+  if (!deployIsTerminal(cur)) return;
+  scrollToDeployProgress(true);
+  if (cur.status === "failed") {
+    const detail = cur.error_message || cur.runtime_detail || "Deploy prod thất bại";
+    toastError("Promote prod thất bại · " + detail);
+  } else if (cur.status === "success") {
+    toastSuccess("Promote prod thành công · tag " + String(pf.tag).slice(0, 7));
+  }
+  state.promoteFollow = null;
+}
+
+function navigateAfterPromote(slug, imageTag) {
+  state.projectEnv = "prod";
+  localStorage.setItem("project-env", "prod");
+  state.promoteFollow = { slug: slug, tag: String(imageTag || "").trim() };
+  toastSuccess("Đã promote — chuyển sang tab Prod, theo dõi tiến trình bên dưới…");
+  const main = document.getElementById("main");
+  if (main) pageProjectHub(main, slug, "deploy");
+}
+
 function bindDeployActivityActions(slug, env, promoteReadiness) {
   if (promoteReadiness !== undefined) {
     rememberPromoteReadiness(slug, promoteReadiness);
@@ -1703,13 +1753,9 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
           method: "POST",
           body: { image_tag: tag },
         });
-        state.projectEnv = "prod";
-        localStorage.setItem("project-env", "prod");
-        toastSuccess("Đã promote lên prod — đang chuyển sang tab Prod…");
-        const main = document.getElementById("main");
-        if (main) pageProjectHub(main, slug, "deploy");
+        navigateAfterPromote(slug, tag);
       } catch (err) {
-        toastError(err.message);
+        toastError(err.message || "Promote prod thất bại");
       } finally {
         setButtonLoading(promoteBtn, false, "Promote lên Prod →");
       }
@@ -1861,6 +1907,10 @@ function bindDeployActivityPoll(slug, env, navToken) {
       state.deployWasLive = !!nowLive;
       pollSec = terminal ? 0 : activity.poll_interval_sec || (deployIsLive(activity.current) ? 2 : 5);
       updateDeployActivityDOM(activity, slug, undefined, env, { showHistory: false, showPromotePrep: false, showPromoteBar: false });
+      if (promoteFollowActive(slug, env)) {
+        scrollToDeployProgress();
+        if (terminal) handlePromoteFollowTerminal(activity, slug);
+      }
       if (terminal) {
         if (hadLive) {
           setTimeout(function () {
@@ -2896,6 +2946,90 @@ function buildModeLabel(mode) {
   return (mode || "").toLowerCase() === "buildpack" ? "Buildpack" : "Docker";
 }
 
+function serviceRowIsPublic(s) {
+  return s.expose_ingress !== false && String(s.ingress_path || "").toLowerCase() !== "internal" && s.ingress_path !== "-";
+}
+
+function serviceCtxCellHtml(idx, s) {
+  const val = s.build_context || ".";
+  return (
+    '<td class="svc-ctx-cell">' +
+    '<select name="svc_ctx_sel_' + idx + '" class="svc-ctx-select" data-idx="' + idx + '">' +
+    '<option value="' + esc(val) + '" selected>' + esc(val) + "</option>" +
+    '<option value="__custom__">Tự nhập…</option></select>' +
+    '<input name="svc_ctx_custom_' + idx + '" class="svc-ctx-custom" value="' + esc(val) + '" placeholder="vd. backend" hidden />' +
+    '<input name="svc_ctx_' + idx + '" type="hidden" value="' + esc(val) + '" />' +
+    "</td>"
+  );
+}
+
+function buildServiceTableRowHtml(s, idx) {
+  const pub = serviceRowIsPublic(s);
+  return (
+    '<tr data-svc-idx="' + idx + '">' +
+    '<td><input name="svc_name_' + idx + '" value="' + esc(s.name || "") + '" /></td>' +
+    '<td><select name="svc_mode_' + idx + '">' +
+    '<option value="dockerfile"' + ((s.build_mode || "dockerfile") !== "buildpack" ? " selected" : "") + ">Docker</option>" +
+    '<option value="buildpack"' + ((s.build_mode || "") === "buildpack" ? " selected" : "") + ">Buildpack</option>" +
+    "</select></td>" +
+    serviceCtxCellHtml(idx, s) +
+    '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
+    '<td><label class="svc-public-label"><input type="checkbox" name="svc_public_' + idx + '"' + (pub ? " checked" : "") + ' /> Public</label></td>' +
+    '<td><input name="svc_ingress_' + idx + '" value="' + esc(pub ? (s.ingress_path || "/") : "-") + '" placeholder="/ hoặc /api" /></td>' +
+    '<td><button type="button" class="btn-ghost btn-sm svc-remove-row" data-idx="' + idx + '">×</button></td>' +
+    "</tr>"
+  );
+}
+
+function renderServicePreviewCard(s) {
+  const mode = buildModeLabel(s.build_mode);
+  const pub = serviceRowIsPublic(s);
+  const access = pub
+    ? "URL công khai: <code>" + esc(s.ingress_path || "/") + "*</code>"
+    : '<span class="badge warn">Internal</span> · cluster <code>http://' + esc(s.name || "?") + ":80</code>";
+  return (
+    '<div class="service-preview-card">' +
+    "<h4>" + esc(s.display_name || s.name || "?") + ' <span class="badge">' + esc(mode) + "</span></h4>" +
+    "<p>Thư mục <code>" + esc(s.build_context || ".") + "</code> → image <code>" + esc(s.name) + "</code><br>" +
+    access + "</p></div>"
+  );
+}
+
+function renderServicesContractBanner(contract, canEdit) {
+  contract = contract || {};
+  if (!contract.found) {
+    return (
+      '<p class="muted" style="font-size:12px;margin:0 0 10px">Tip: thêm <code>.platform/services.yaml</code> trong repo — Console tự nhận layout + fleet (L4A).</p>'
+    );
+  }
+  if (contract.parse_error) {
+    return (
+      '<div class="banner warn" style="margin-bottom:10px"><strong>services.yaml</strong> — ' +
+      esc(contract.parse_error) +
+      "</div>"
+    );
+  }
+  const svcs = contract.services || [];
+  const synced = !!contract.in_sync;
+  let html =
+    '<div class="banner' +
+    (synced ? "" : " warn") +
+    '" style="margin-bottom:8px"><strong>.platform/services.yaml</strong> · ' +
+    svcs.length +
+    " service · branch <code>" +
+    esc(contract.branch || "?") +
+    "</code>";
+  html += synced
+    ? ' — <span style="color:#15803d">đồng bộ Console</span>'
+    : ' — <span style="color:#b45309">khác Console</span>';
+  html += "</div>";
+  if (canEdit && !synced && !contract.parse_error) {
+    html +=
+      '<button type="button" class="btn-ghost btn-sm" id="sync-services-contract" style="margin-bottom:10px">Áp dụng từ repo</button>';
+  }
+  return html;
+}
+
 function renderProjectServicesCard(slug, svcData, repo, canEdit) {
   repo = repo || {};
   const layout = (svcData && svcData.layout) || "single";
@@ -2904,44 +3038,16 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
   const tpl = defaultMultiTemplate(svcData);
   const multiItems = isMulti && items.length >= 2 ? items : tpl;
   const conv = (svcData && svcData.conventions) || null;
+  const repoContract = (svcData && svcData.repo_contract) || null;
   const conventionBanner = isMulti ? renderBackFrontConventionBanner(conv, canEdit) : "";
+  const contractBanner = renderServicesContractBanner(repoContract, canEdit);
 
   function servicePreviewCard(s) {
-    const mode = buildModeLabel(s.build_mode);
-    return (
-      '<div class="service-preview-card">' +
-      "<h4>" + esc(s.display_name || s.name || "?") + ' <span class="badge">' + esc(mode) + "</span></h4>" +
-      "<p>Thư mục <code>" + esc(s.build_context || ".") + "</code> → image <code>" + esc(s.name) + "</code><br>" +
-      "URL công khai: <code>" + esc(s.ingress_path || "/") + "*</code></p></div>"
-    );
-  }
-
-  function ctxCellHtml(idx, s) {
-    const val = s.build_context || ".";
-    return (
-      '<td class="svc-ctx-cell">' +
-      '<select name="svc_ctx_sel_' + idx + '" class="svc-ctx-select" data-idx="' + idx + '">' +
-      '<option value="' + esc(val) + '" selected>' + esc(val) + "</option>" +
-      '<option value="__custom__">Tự nhập…</option></select>' +
-      '<input name="svc_ctx_custom_' + idx + '" class="svc-ctx-custom" value="' + esc(val) + '" placeholder="vd. backend" hidden />' +
-      '<input name="svc_ctx_' + idx + '" type="hidden" value="' + esc(val) + '" />' +
-      "</td>"
-    );
+    return renderServicePreviewCard(s);
   }
 
   function advancedRowHtml(s, idx) {
-    return (
-      '<tr data-svc-idx="' + idx + '">' +
-      '<td><input name="svc_name_' + idx + '" value="' + esc(s.name || "") + '" /></td>' +
-      '<td><select name="svc_mode_' + idx + '">' +
-      '<option value="dockerfile"' + ((s.build_mode || "dockerfile") !== "buildpack" ? " selected" : "") + ">Docker</option>" +
-      '<option value="buildpack"' + ((s.build_mode || "") === "buildpack" ? " selected" : "") + ">Buildpack</option>" +
-      "</select></td>" +
-      ctxCellHtml(idx, s) +
-      '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
-      '<td><input name="svc_ingress_' + idx + '" value="' + esc(s.ingress_path || "/") + '" /></td>' +
-      "</tr>"
-    );
+    return buildServiceTableRowHtml(s, idx);
   }
 
   const singleHint =
@@ -2956,19 +3062,23 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
 
   const multiPanel =
     '<div id="layout-multi-panel"' + (!isMulti ? ' hidden' : "") + ">" +
+    contractBanner +
     conventionBanner +
-    '<p class="muted" style="margin:0 0 10px">Monorepo chuẩn: <code>backend/</code> + <code>frontend/</code> · branch gợi ý <code>multi-service</code><br>' +
-    '<span style="font-size:12px">Lưu kiểu dự án kiểm tra thư mục theo <strong>branch đang chọn</strong> ở card GitHub bên dưới.</span></p>' +
+    '<p class="muted" style="margin:0 0 10px"><strong>Multi-service (micro)</strong> — thêm N service · public (Ingress) hoặc <em>internal</em> (chỉ cluster).<br>' +
+    'Pod nhận env discovery <code>SVC_&lt;TÊN&gt;_URL=http://&lt;service&gt;:80</code> cho mọi service khác.<br>' +
+    '<span style="font-size:12px">Lưu kiểm tra thư mục theo <strong>branch</strong> ở card GitHub bên dưới.</span></p>' +
     '<div class="service-preview-grid" id="service-preview-grid">' +
     multiItems.map(servicePreviewCard).join("") +
     "</div>" +
     '<details class="layout-advanced-details"><summary>Tùy chỉnh nâng cao (dev)</summary>' +
     '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục: chọn từ dropdown GitHub (branch đã cấu hình). Nhập sai → Lưu báo lỗi hoặc CI fail.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
-    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Thư mục</th><th>Dockerfile</th><th>Ingress</th></tr></thead>' +
+    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
     '<tbody id="project-services-tbody">' +
     multiItems.map(advancedRowHtml).join("") +
-    "</tbody></table></details></div>";
+    "</tbody></table>" +
+    '<button type="button" class="btn-ghost btn-sm" id="project-services-add-row" style="margin-top:8px">+ Thêm service</button>' +
+    "</details></div>";
 
   return (
     '<div class="card" style="margin-bottom:16px" id="project-services-card"><h3>Kiểu dự án</h3>' +
@@ -2986,16 +3096,16 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
         '<label class="layout-option">' +
         '<input type="radio" name="layout" value="multi"' + (isMulti ? " checked" : "") + " />" +
         '<div class="layout-option-body">' +
-        "<strong>Backend + Frontend</strong>" +
-        "<span>2 image <code>api</code> + <code>web</code></span>" +
-        "<span>Ingress <code>/api</code> → API · <code>/</code> → web</span>" +
+        "<strong>Multi-service (micro)</strong>" +
+        "<span>N service · api/web hoặc gateway + engines</span>" +
+        "<span>Public Ingress hoặc internal-only (ClusterIP)</span>" +
         "</div></label></div>" +
         singleHint +
         multiPanel +
         '<button type="submit" class="btn-primary" style="margin-top:4px">Lưu kiểu dự án</button>' +
         '<p class="muted" style="margin-top:8px;font-size:12px">Sau khi đổi kiểu → <strong>sync lại workflow GitHub</strong> (card bên dưới).</p></form>'
       : '<div class="meta-chips">' +
-        chip("Layout", isMulti ? "Backend + Frontend" : "Một app") +
+        chip("Layout", isMulti ? "Multi-service" : "Một app") +
         "</div>" +
         (isMulti
           ? '<div class="service-preview-grid" style="margin-top:12px">' + multiItems.map(servicePreviewCard).join("") + "</div>"
@@ -3021,6 +3131,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   const dirHint = document.getElementById("github-dir-hint");
   const refreshDirsBtn = document.getElementById("refresh-github-dirs");
   const template = defaultMultiTemplate(svcData);
+  let nextSvcIdx = Math.max((template.length || 2) - 1, 0);
   repo = repo || {};
   ghStatus = ghStatus || {};
   if (!form) return;
@@ -3142,26 +3253,43 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   function serviceFromRow(idx, defaults) {
     defaults = defaults || {};
     const modeEl = form.querySelector('[name="svc_mode_' + idx + '"]');
+    const pubEl = form.querySelector('[name="svc_public_' + idx + '"]');
+    const expose = pubEl ? pubEl.checked : defaults.expose_ingress !== false;
+    const ingressEl = form.querySelector('[name="svc_ingress_' + idx + '"]');
+    let ingress = ingressEl ? ingressEl.value : defaults.ingress_path || "/";
+    if (!expose) ingress = "-";
     return {
       name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || defaults.name || "",
       build_mode: modeEl ? modeEl.value : defaults.build_mode || "dockerfile",
       build_context: readCtxValue(idx) || defaults.build_context || ".",
       dockerfile_path: (form.querySelector('[name="svc_df_' + idx + '"]') || {}).value || defaults.dockerfile_path || "Dockerfile",
-      ingress_path: (form.querySelector('[name="svc_ingress_' + idx + '"]') || {}).value || defaults.ingress_path || "/",
-      container_port: 8080,
+      ingress_path: ingress,
+      expose_ingress: expose,
+      container_port: defaults.container_port || 8080,
       health_path: defaults.health_path || "/health",
       sort_order: idx,
       display_name: defaults.display_name || "",
     };
   }
 
+  function listServiceRows() {
+    if (!tbody) return [];
+    return Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+  }
+
+  function servicesFromForm() {
+    return listServiceRows().map(function (tr) {
+      const idx = tr.getAttribute("data-svc-idx");
+      return serviceFromRow(idx, {});
+    });
+  }
+
   function refreshPreview() {
     if (!previewGrid || currentLayout() !== "multi") return;
-    const list = template.map(function (t, idx) {
-      return serviceFromRow(idx, t);
-    });
+    const list = servicesFromForm();
     previewGrid.innerHTML = list
       .map(function (s) {
+        const pub = s.expose_ingress !== false && s.ingress_path !== "-";
         return (
           '<div class="service-preview-card"><h4>' +
           esc(s.display_name || s.name) +
@@ -3171,12 +3299,40 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
           esc(s.build_context) +
           "</code> → image <code>" +
           esc(s.name) +
-          "</code><br>URL: <code>" +
-          esc(s.ingress_path) +
-          "*</code></p></div>"
+          "</code><br>" +
+          (pub
+            ? "URL: <code>" + esc(s.ingress_path) + "*</code>"
+            : '<span class="badge warn">Internal</span>') +
+          "</p></div>"
         );
       })
       .join("");
+  }
+
+  function appendServiceRow(s) {
+    if (!tbody) return;
+    nextSvcIdx += 1;
+    const idx = String(nextSvcIdx);
+    tbody.insertAdjacentHTML("beforeend", buildServiceTableRowHtml(s || { name: "worker", build_context: ".", expose_ingress: false, ingress_path: "-" }, idx));
+    bindCtxSelect(idx);
+    syncCtxHidden(idx);
+    bindRemoveRow(idx);
+    refreshPreview();
+  }
+
+  function bindRemoveRow(idx) {
+    const btn = form.querySelector('.svc-remove-row[data-idx="' + idx + '"]');
+    if (!btn) return;
+    btn.onclick = function () {
+      const rows = listServiceRows();
+      if (rows.length <= 2) {
+        toastError("Multi-service cần ít nhất 2 service");
+        return;
+      }
+      const tr = btn.closest("tr");
+      if (tr) tr.remove();
+      refreshPreview();
+    };
   }
 
   function togglePanels() {
@@ -3186,15 +3342,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
     if (multi && tbody && !tbody.querySelector("tr")) {
       tbody.innerHTML = template
         .map(function (s, idx) {
-          return (
-            '<tr data-svc-idx="' + idx + '">' +
-            '<td><input name="svc_name_' + idx + '" value="' + esc(s.name) + '" /></td>' +
-            '<td><select name="svc_mode_' + idx + '"><option value="dockerfile" selected>Docker</option><option value="buildpack">Buildpack</option></select></td>' +
-            '<td class="svc-ctx-cell"><select name="svc_ctx_sel_' + idx + '" class="svc-ctx-select" data-idx="' + idx + '"><option value="' + esc(s.build_context) + '">' + esc(s.build_context) + '</option></select>' +
-            '<input name="svc_ctx_custom_' + idx + '" class="svc-ctx-custom" hidden /><input name="svc_ctx_' + idx + '" type="hidden" value="' + esc(s.build_context) + '" /></td>' +
-            '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path) + '" /></td>' +
-            '<td><input name="svc_ingress_' + idx + '" value="' + esc(s.ingress_path) + '" /></td></tr>'
-          );
+          return buildServiceTableRowHtml(s, idx);
         })
         .join("");
     }
@@ -3218,9 +3366,19 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   if (tbody) {
     tbody.addEventListener("change", refreshPreview);
     tbody.addEventListener("input", refreshPreview);
+    listServiceRows().forEach(function (tr) {
+      bindRemoveRow(tr.getAttribute("data-svc-idx"));
+    });
+  }
+  const addRowBtn = document.getElementById("project-services-add-row");
+  if (addRowBtn) {
+    addRowBtn.onclick = function () {
+      appendServiceRow({ name: "worker", build_context: ".", expose_ingress: false, ingress_path: "-" });
+    };
   }
   template.forEach(function (_s, idx) {
-    bindCtxSelect(idx);
+    bindCtxSelect(String(idx));
+    bindRemoveRow(String(idx));
   });
   if (currentLayout() === "multi") {
     refreshGitHubDirs();
@@ -3229,14 +3387,31 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
     pageProjectHub(main, slug, "deploy");
   });
 
+  const syncContractBtn = document.getElementById("sync-services-contract");
+  if (syncContractBtn) {
+    syncContractBtn.onclick = async function () {
+      try {
+        syncContractBtn.disabled = true;
+        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services/sync-from-repo", {
+          method: "POST",
+          body: { branch: selectedGitHubBranch(repo.branch || "main") },
+        });
+        toastSuccess("Đã áp dụng services.yaml — sync workflow GitHub");
+        pageProjectHub(main, slug, "deploy");
+      } catch (err) {
+        toastError(err.message);
+      } finally {
+        syncContractBtn.disabled = false;
+      }
+    };
+  }
+
   form.onsubmit = async function (e) {
     e.preventDefault();
     const layout = currentLayout();
     const services = [];
     if (layout === "multi" && tbody) {
-      tbody.querySelectorAll("tr").forEach(function (_tr, idx) {
-        services.push(serviceFromRow(idx, template[idx] || {}));
-      });
+      services.push.apply(services, servicesFromForm());
     }
     try {
       const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
@@ -3532,12 +3707,9 @@ async function pageProjectHub(main, slug, tab) {
               method: "POST",
               body: { image_tag: t },
             });
-            state.projectEnv = "prod";
-            localStorage.setItem("project-env", "prod");
-            toastSuccess("Đã promote — chuyển sang Prod");
-            pageProjectHub(main, slug, "deploy");
+            navigateAfterPromote(slug, t);
           } catch (err) {
-            toastError(err.message);
+            toastError(err.message || "Promote prod thất bại");
           } finally {
             setButtonLoading(promoteBtn, false, "Promote lên Prod →");
           }
@@ -3701,6 +3873,10 @@ async function pageProjectHub(main, slug, tab) {
         showPromotePrep: false,
         showPromoteBar: false,
       });
+      if (promoteFollowActive(slug, env)) {
+        scrollToDeployProgress();
+        handlePromoteFollowTerminal(activity, slug);
+      }
       bindDeployActivityPoll(slug, env, navToken);
     });
 
