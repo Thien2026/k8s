@@ -116,9 +116,10 @@ func (h *Handler) GetProjectServices(w http.ResponseWriter, r *http.Request) {
 		}}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"layout":   layout,
-		"items":    items,
-		"template": deploy.DefaultMultiServices,
+		"layout":       layout,
+		"items":        items,
+		"template":     deploy.DefaultMultiServices,
+		"conventions":  h.backFrontConventionsPayload(r.Context(), p.ID),
 	})
 }
 
@@ -136,6 +137,7 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Layout   string              `json:"layout"`
 		Services []projectServiceRow `json:"services"`
+		Branch   string              `json:"branch,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
@@ -164,7 +166,14 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 
 	if layout == deploy.LayoutMulti {
 		repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
-		if err := h.validateMultiServicePaths(r.Context(), u.ID, repoRow, body.Services); err != nil {
+		validateBranch := strings.TrimSpace(body.Branch)
+		if validateBranch == "" {
+			validateBranch = strings.TrimSpace(repoRow.Branch)
+		}
+		if validateBranch == "" {
+			validateBranch = "main"
+		}
+		if err := h.validateMultiServicePaths(r.Context(), u.ID, repoRow.GitHubOwner, repoRow.GitHubRepo, validateBranch, body.Services); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
@@ -219,16 +228,25 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = h.db.Exec(ctx, `UPDATE project_repos SET workflow_synced_at=NULL WHERE project_id=$1`, p.ID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	var conventionSeeds []backFrontConventionSeed
+	if layout == deploy.LayoutMulti {
+		conventionSeeds, _ = h.ensureBackFrontConventions(ctx, p.ID)
+	}
+	resp := map[string]any{
 		"status": "ok",
 		"layout": layout,
 		"hint":   "Sync lại workflow GitHub để áp dụng cấu hình multi-service.",
-	})
+	}
+	if len(conventionSeeds) > 0 {
+		resp["convention_seeds"] = conventionSeeds
+		resp["hint"] = "Đã gợi ý env chuẩn back/front (VITE_API_BASE=/api). Sync workflow GitHub và kiểm tra tab Cấu hình app."
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, repo projectRepoRow, services []projectServiceRow) error {
-	owner := strings.TrimSpace(repo.GitHubOwner)
-	ghRepo := strings.TrimSpace(repo.GitHubRepo)
+func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, owner, ghRepo, branch string, services []projectServiceRow) error {
+	owner = strings.TrimSpace(owner)
+	ghRepo = strings.TrimSpace(ghRepo)
 	if owner == "" || ghRepo == "" {
 		return nil
 	}
@@ -236,7 +254,7 @@ func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, r
 	if err != nil || token == "" {
 		return nil
 	}
-	branch := strings.TrimSpace(repo.Branch)
+	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		branch = "main"
 	}
@@ -251,7 +269,7 @@ func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, r
 			return fmt.Errorf("không kiểm tra được GitHub: %w", err)
 		}
 		if !ok {
-			return fmt.Errorf("thư mục %q không tồn tại trên branch %s — chọn lại từ GitHub hoặc sửa tên", ctxPath, branch)
+			return fmt.Errorf("thư mục %q không có trên branch %q — chọn branch có backend/frontend (vd. multi-service) hoặc sửa thư mục", ctxPath, branch)
 		}
 		df := strings.TrimSpace(s.DockerfilePath)
 		if deploy.NormalizeBuildMode(s.BuildMode) == "dockerfile" && df != "" {
@@ -260,7 +278,7 @@ func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, r
 				return fmt.Errorf("không kiểm tra được Dockerfile: %w", err)
 			}
 			if !ok {
-				return fmt.Errorf("Dockerfile %q không có trên branch %s", df, branch)
+				return fmt.Errorf("Dockerfile %q không có trên branch %q", df, branch)
 			}
 		}
 	}

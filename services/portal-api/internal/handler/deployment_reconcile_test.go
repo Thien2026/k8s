@@ -30,6 +30,31 @@ func TestFinalizeBuildStepsTruth(t *testing.T) {
 	}
 }
 
+func TestReconcileBuildFromStepsClearsGitHubFalseFail(t *testing.T) {
+	d := &deploymentRow{
+		BuildStatus:  "failed",
+		Status:       "failed",
+		ErrorPhase:   "build",
+		ErrorMessage: "GitHub Actions: failure",
+		BuildSteps: []buildStepView{
+			{Name: "checkout", Status: "success"},
+			{Name: "build", Status: "success"},
+			{Name: "Deploy to Platform", Status: "success"},
+		},
+	}
+	reconcileBuildFromSteps(d)
+	if d.BuildStatus != "success" {
+		t.Fatalf("build=%s", d.BuildStatus)
+	}
+	if d.ErrorMessage != "" {
+		t.Fatalf("error should clear, got %q", d.ErrorMessage)
+	}
+	reconcileDeploymentRow(d)
+	if d.Status == "failed" {
+		t.Fatalf("should not stay failed after clear")
+	}
+}
+
 func TestReconcileBuildFailSkipsDownstream(t *testing.T) {
 	d := &deploymentRow{
 		BuildStatus:    "failed",

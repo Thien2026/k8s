@@ -251,7 +251,7 @@ func (h *Handler) CreateProjectEnvVar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	contract := h.contractForSave(r.Context(), u.ID, p, scope)
-	if err := platformcontract.ValidateSaveValue(scope, key, body.Value, contract); err != nil {
+	if err := platformcontract.ValidateSaveValue(scope, env, key, body.Value, contract); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
@@ -332,7 +332,7 @@ func (h *Handler) PatchProjectEnvVar(w http.ResponseWriter, r *http.Request) {
 		newSecret = *body.IsSecret
 	}
 	contract := h.contractForSave(r.Context(), u.ID, p, curScope)
-	if err := platformcontract.ValidateSaveValue(curScope, curKey, newValue, contract); err != nil {
+	if err := platformcontract.ValidateSaveValue(curScope, curEnv, curKey, newValue, contract); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}

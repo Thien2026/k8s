@@ -187,10 +187,13 @@ func fmtMsg(scope, key, detail string) string {
 }
 
 // ValidateSaveValue kiểm tra trước khi lưu biến trên Console.
-func ValidateSaveValue(scope string, key, value string, contract *File) error {
+func ValidateSaveValue(scope, env, key, value string, contract *File) error {
 	key = strings.TrimSpace(key)
 	if scope == "build" && PlatformBuildArgs[key] {
 		return fmt.Errorf("%s do platform tự inject — không thêm thủ công", key)
+	}
+	if err := ValidateProdEnvValue(env, key, value); err != nil {
+		return err
 	}
 	if isEmptyValue(value) {
 		if contract != nil {

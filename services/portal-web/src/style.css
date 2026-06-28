@@ -3082,6 +3082,15 @@ tr.dns-row td {
   line-height: 1.5;
   margin-bottom: 12px;
 }
+.convention-banner {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(56, 139, 253, 0.25);
+  background: rgba(56, 139, 253, 0.06);
+  font-size: 13px;
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
 .service-preview-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

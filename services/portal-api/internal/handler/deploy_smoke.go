@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 )
 
 func (h *Handler) primaryDomainHost(ctx context.Context, projectID int64, env string) string {
@@ -18,11 +20,13 @@ func (h *Handler) primaryDomainHost(ctx context.Context, projectID int64, env st
 	return strings.TrimSpace(hostname)
 }
 
-func (h *Handler) smokeCheckHTTP(ctx context.Context, hostname string) (status, detail string) {
+func (h *Handler) smokeCheckHTTP(ctx context.Context, hostname string, paths []string) (status, detail string) {
 	if hostname == "" {
 		return "skipped", "Không có domain HTTPS — bỏ qua smoke check"
 	}
-	paths := []string{"/health", "/"}
+	if len(paths) == 0 {
+		paths = []string{"/health", "/"}
+	}
 	client := &http.Client{Timeout: 12 * time.Second}
 	var okParts []string
 	var lastErr string
@@ -73,11 +77,32 @@ func (h *Handler) clusterServingImageTag(ctx context.Context, p projectRow, env 
 	if err != nil {
 		return ""
 	}
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	services, layout := h.loadDeployServices(ctx, p.ID, repo)
+	prefixes := []string{"app-"}
+	if layout == deploy.LayoutMulti {
+		prefixes = nil
+		for _, s := range services {
+			if name := strings.TrimSpace(s.Name); name != "" {
+				prefixes = append(prefixes, name+"-")
+			}
+		}
+		if len(prefixes) == 0 {
+			prefixes = []string{"api-", "web-"}
+		}
+	}
 	for _, pod := range list.Items {
-		if !strings.HasPrefix(pod.Name, "app-") {
+		if pod.Status != "Running" || !pod.Ready {
 			continue
 		}
-		if pod.Status != "Running" || !pod.Ready {
+		okPrefix := false
+		for _, pfx := range prefixes {
+			if strings.HasPrefix(pod.Name, pfx) {
+				okPrefix = true
+				break
+			}
+		}
+		if !okPrefix {
 			continue
 		}
 		img := strings.TrimSpace(pod.Images)
@@ -99,7 +124,9 @@ func (h *Handler) applySmokeGate(ctx context.Context, p projectRow, env string, 
 		return true
 	}
 	host := h.primaryDomainHost(ctx, p.ID, env)
-	st, detail := h.smokeCheckHTTP(ctx, host)
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	paths := h.smokePathsForProject(ctx, p.ID, repo)
+	st, detail := h.smokeCheckHTTP(ctx, host, paths)
 	d.SmokeStatus = st
 	d.SmokeDetail = detail
 	return st != "failed"

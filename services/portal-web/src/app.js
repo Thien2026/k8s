@@ -2845,6 +2845,44 @@ function buildModeAutoHintHtml(repo) {
   );
 }
 
+function renderBackFrontConventionBanner(conv, canEdit) {
+  if (!conv || !conv.enabled) return "";
+  const apiBase = (conv.recommended_build && conv.recommended_build.VITE_API_BASE) || "/api";
+  return (
+    '<div class="convention-banner">' +
+    "<strong>Chuẩn Backend + Frontend</strong>" +
+    '<p class="muted" style="margin:6px 0">Prod: 1 domain · web <code>/</code> · API <code>/api</code> · frontend gọi <code>' +
+    esc(apiBase) +
+    "</code></p>" +
+    '<p class="muted" style="margin:0;font-size:12px">' +
+    esc(conv.dev_local_hint || "Dev máy: proxy /api → backend — không hardcode localhost trong code prod.") +
+    "</p>" +
+    (canEdit
+      ? '<button type="button" class="btn-ghost btn-sm" id="apply-conventions-btn" style="margin-top:8px">Áp dụng env mặc định</button>'
+      : "") +
+    '<span class="muted" style="font-size:11px;display:block;margin-top:6px">Repo mẫu: <code>templates/back-front/</code> · Prod cấm <code>localhost</code> trong env</span>' +
+    "</div>"
+  );
+}
+
+function bindApplyConventionsButton(main, slug, onDone) {
+  const btn = document.getElementById("apply-conventions-btn");
+  if (!btn) return;
+  btn.onclick = async function () {
+    setButtonLoading(btn, true, "Đang áp dụng…");
+    try {
+      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/conventions/apply", { method: "POST" });
+      const n = (res.seeds || []).filter(function (s) { return s.created; }).length;
+      toastSuccess(n ? "Đã thêm " + n + " biến env mặc định" : "Env chuẩn đã có sẵn");
+      if (onDone) onDone();
+    } catch (err) {
+      toastError(err.message);
+    } finally {
+      setButtonLoading(btn, false, "Áp dụng env mặc định");
+    }
+  };
+}
+
 function defaultMultiTemplate(svcData) {
   const template = (svcData && svcData.template) || [];
   if (template.length >= 2) return template;
@@ -2865,6 +2903,8 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
   const isMulti = layout === "multi";
   const tpl = defaultMultiTemplate(svcData);
   const multiItems = isMulti && items.length >= 2 ? items : tpl;
+  const conv = (svcData && svcData.conventions) || null;
+  const conventionBanner = isMulti ? renderBackFrontConventionBanner(conv, canEdit) : "";
 
   function servicePreviewCard(s) {
     const mode = buildModeLabel(s.build_mode);
@@ -2916,7 +2956,9 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
 
   const multiPanel =
     '<div id="layout-multi-panel"' + (!isMulti ? ' hidden' : "") + ">" +
-    '<p class="muted" style="margin:0 0 10px">Monorepo chuẩn: <code>backend/</code> + <code>frontend/</code> · branch gợi ý <code>multi-service</code></p>' +
+    conventionBanner +
+    '<p class="muted" style="margin:0 0 10px">Monorepo chuẩn: <code>backend/</code> + <code>frontend/</code> · branch gợi ý <code>multi-service</code><br>' +
+    '<span style="font-size:12px">Lưu kiểu dự án kiểm tra thư mục theo <strong>branch đang chọn</strong> ở card GitHub bên dưới.</span></p>' +
     '<div class="service-preview-grid" id="service-preview-grid">' +
     multiItems.map(servicePreviewCard).join("") +
     "</div>" +
@@ -2960,6 +3002,14 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
           : singleHint)) +
     "</div>"
   );
+}
+
+function selectedGitHubBranch(fallback) {
+  const sel = document.getElementById("github-branch-select");
+  if (sel && sel.value && String(sel.value).trim()) {
+    return String(sel.value).trim();
+  }
+  return String(fallback || "main").trim() || "main";
 }
 
 function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
@@ -3021,7 +3071,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   async function loadGitHubDirs() {
     const owner = (repo.github_owner || "").trim();
     const ghRepo = (repo.github_repo || "").trim();
-    const branch = (repo.branch || "main").trim();
+    const branch = selectedGitHubBranch(repo.branch || "main");
     if (!ghStatus.connected || !owner || !ghRepo) {
       if (dirHint) {
         dirHint.textContent =
@@ -3175,6 +3225,9 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   if (currentLayout() === "multi") {
     refreshGitHubDirs();
   }
+  bindApplyConventionsButton(main, slug, function () {
+    pageProjectHub(main, slug, "deploy");
+  });
 
   form.onsubmit = async function (e) {
     e.preventDefault();
@@ -3186,11 +3239,19 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
       });
     }
     try {
-      await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
+      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
         method: "PUT",
-        body: { layout: layout, services: services },
+        body: {
+          layout: layout,
+          services: services,
+          branch: selectedGitHubBranch(repo.branch || "main"),
+        },
       });
-      toastSuccess("Đã lưu kiểu dự án — nhớ sync workflow GitHub");
+      if (res.convention_seeds && res.convention_seeds.length) {
+        toastSuccess("Đã lưu — đã gợi ý env VITE_API_BASE=/api · sync workflow GitHub");
+      } else {
+        toastSuccess("Đã lưu kiểu dự án — nhớ sync workflow GitHub");
+      }
       pageProjectHub(main, slug, "deploy");
     } catch (err) {
       toastError(err.message);
@@ -3872,6 +3933,9 @@ async function pageProjectHub(main, slug, tab) {
     const envRes = await api(
       "/api/v1/projects/" + encodeURIComponent(slug) + "/env" + qs({ environment: env })
     ).catch(function () { return { items: [] }; });
+    const convP = api("/api/v1/projects/" + encodeURIComponent(slug) + "/conventions").catch(function () {
+      return { enabled: false };
+    });
     const buildReadyP =
       env === "prod"
         ? Promise.resolve(null)
@@ -3887,6 +3951,7 @@ async function pageProjectHub(main, slug, tab) {
     const buildReady = await buildReadyP;
     const runtimeReady = await runtimeReadyP;
     const envSyncStatus = await envSyncP;
+    const conventions = await convP;
     const envItems = envRes.items || [];
     const runtimeItems = envItems.filter(envVarIsRuntimeScope);
     const buildItems = envItems.filter(envVarIsBuildScope);
@@ -3942,6 +4007,7 @@ async function pageProjectHub(main, slug, tab) {
     main.innerHTML =
       projectHeader(p, "Cấu hình app") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "env"); }) +
+      (conventions.enabled ? renderBackFrontConventionBanner(conventions, canEditEnv) : "") +
       '<div class="card env-vars-card">' +
       renderEnvReadinessPanel(runtimeReady, slug, env, "runtime") +
       '<div class="env-vars-head"><div><h3>Khi app chạy (Pod)</h3>' +
@@ -4001,6 +4067,9 @@ async function pageProjectHub(main, slug, tab) {
     }
     bindEnvVarTableActions(main, slug, env);
     bindEnvSuggestButtons(main, slug, env);
+    bindApplyConventionsButton(main, slug, function () {
+      pageProjectHub(main, slug, "env");
+    });
     return;
   }
 

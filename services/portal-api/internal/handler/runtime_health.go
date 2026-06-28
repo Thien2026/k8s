@@ -353,7 +353,9 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	smokeDetail := strings.TrimSpace(d.SmokeDetail)
 	if stageStatus(k8sSt) == "success" {
 		host := h.primaryDomainHost(ctx, p.ID, d.Environment)
-		smokeSt, smokeDetail = h.smokeCheckHTTP(ctx, host)
+		repo, _ := h.getProjectRepo(ctx, p.ID)
+		paths := h.smokePathsForProject(ctx, p.ID, repo)
+		smokeSt, smokeDetail = h.smokeCheckHTTP(ctx, host, paths)
 		d.SmokeStatus = smokeSt
 		d.SmokeDetail = smokeDetail
 	} else {

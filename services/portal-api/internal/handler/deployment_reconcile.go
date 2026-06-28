@@ -3,6 +3,24 @@ package handler
 import "strings"
 
 // reconcileDeploymentRow đồng bộ status tổng + downstream từ các giai đoạn thật (không tô xanh giả).
+// reconcileBuildFromSteps — steps xanh thì không giữ failed từ workflow conclusion cũ.
+func reconcileBuildFromSteps(d *deploymentRow) {
+	if d == nil {
+		return
+	}
+	syncBuildStatusFromSteps(d)
+	if !allBuildStepsSuccess(d.BuildSteps) {
+		return
+	}
+	d.BuildStatus = "success"
+	phase := strings.ToLower(strings.TrimSpace(d.ErrorPhase))
+	msg := strings.ToLower(strings.TrimSpace(d.ErrorMessage))
+	if phase == "build" || strings.HasPrefix(msg, "github actions:") {
+		d.ErrorPhase = ""
+		d.ErrorMessage = ""
+	}
+}
+
 func reconcileDeploymentRow(d *deploymentRow) {
 	if d == nil {
 		return

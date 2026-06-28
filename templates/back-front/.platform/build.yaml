@@ -1,0 +1,8 @@
+version: 1
+vars:
+  VITE_API_BASE:
+    required: true
+    description: Frontend gọi API — prod/dev deploy dùng /api (cùng domain)
+  NEXT_PUBLIC_API_BASE:
+    required: false
+    description: Next.js — cùng giá trị /api nếu dùng

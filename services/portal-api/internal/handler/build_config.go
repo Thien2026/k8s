@@ -89,6 +89,22 @@ func (h *Handler) persistEnvContracts(ctx context.Context, projectID int64, c en
 	return err
 }
 
+func (h *Handler) effectiveBuildContract(ctx context.Context, projectID int64, repo projectRepoRow) *platformcontract.File {
+	base := contractFromJSON(repo.EnvContractBuild)
+	if h.getProjectLayout(ctx, projectID) == deploy.LayoutMulti {
+		return platformcontract.MergeContracts(base, deploy.DefaultMultiBuildContract())
+	}
+	return base
+}
+
+func (h *Handler) effectiveRuntimeContract(ctx context.Context, projectID int64, repo projectRepoRow) *platformcontract.File {
+	base := contractFromJSON(repo.EnvContractRuntime)
+	if h.getProjectLayout(ctx, projectID) == deploy.LayoutMulti {
+		return platformcontract.MergeContracts(base, deploy.DefaultMultiRuntimeContract())
+	}
+	return base
+}
+
 func (h *Handler) evaluateBuildConfigCached(ctx context.Context, p projectRow, env string) (platformcontract.CheckResult, error) {
 	repo, err := h.getProjectRepo(ctx, p.ID)
 	if err != nil {
@@ -98,7 +114,7 @@ func (h *Handler) evaluateBuildConfigCached(ctx context.Context, p projectRow, e
 	if err != nil {
 		return platformcontract.CheckResult{}, err
 	}
-	return platformcontract.CheckBuild(contractFromJSON(repo.EnvContractBuild), console, nil), nil
+	return platformcontract.CheckBuild(h.effectiveBuildContract(ctx, p.ID, repo), console, nil), nil
 }
 
 func (h *Handler) contractSuggestions(ctx context.Context, p projectRow, env, scope string) []map[string]any {
@@ -108,9 +124,9 @@ func (h *Handler) contractSuggestions(ctx context.Context, p projectRow, env, sc
 	}
 	var contract *platformcontract.File
 	if scope == "build" {
-		contract = contractFromJSON(repo.EnvContractBuild)
+		contract = h.effectiveBuildContract(ctx, p.ID, repo)
 	} else {
-		contract = contractFromJSON(repo.EnvContractRuntime)
+		contract = h.effectiveRuntimeContract(ctx, p.ID, repo)
 	}
 	if contract == nil {
 		return nil
@@ -163,7 +179,7 @@ func (h *Handler) evaluateRuntimeConfigCached(ctx context.Context, p projectRow,
 	if err != nil {
 		return platformcontract.CheckResult{}, err
 	}
-	return platformcontract.CheckRuntime(contractFromJSON(repo.EnvContractRuntime), console), nil
+	return platformcontract.CheckRuntime(h.effectiveRuntimeContract(ctx, p.ID, repo), console), nil
 }
 
 func (h *Handler) requireDeployEnvReady(ctx context.Context, p projectRow, env string) error {
@@ -171,10 +187,10 @@ func (h *Handler) requireDeployEnvReady(ctx context.Context, p projectRow, env s
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(repo.GitHubOwner) != "" && strings.TrimSpace(repo.EnvContractBuild) == "" {
+	if strings.TrimSpace(repo.GitHubOwner) != "" && strings.TrimSpace(repo.EnvContractBuild) == "" && h.getProjectLayout(ctx, p.ID) != deploy.LayoutMulti {
 		return fmt.Errorf("chưa load contract build — Console → Cấu hình app → Đồng bộ workflow GitHub (cần sau khi có .platform/build.yaml)")
 	}
-	if strings.TrimSpace(repo.GitHubOwner) != "" && strings.TrimSpace(repo.EnvContractRuntime) == "" {
+	if strings.TrimSpace(repo.GitHubOwner) != "" && strings.TrimSpace(repo.EnvContractRuntime) == "" && h.getProjectLayout(ctx, p.ID) != deploy.LayoutMulti {
 		return fmt.Errorf("chưa load contract runtime — Console → Cấu hình app → Đồng bộ workflow GitHub")
 	}
 	// Build env chỉ cần khi deploy dev (GitHub build). Promote prod tái dùng image dev.
@@ -222,7 +238,7 @@ func (h *Handler) evaluateBuildConfig(ctx context.Context, userID int64, p proje
 	if err != nil {
 		return platformcontract.CheckResult{}, err
 	}
-	return platformcontract.CheckBuild(contracts.Build, console, contracts.DockerARGs), nil
+	return platformcontract.CheckBuild(h.effectiveBuildContract(ctx, p.ID, repo), console, contracts.DockerARGs), nil
 }
 
 func (h *Handler) evaluateRuntimeConfig(ctx context.Context, userID int64, p projectRow, env string) (platformcontract.CheckResult, error) {
@@ -230,12 +246,11 @@ func (h *Handler) evaluateRuntimeConfig(ctx context.Context, userID int64, p pro
 	if err != nil {
 		return platformcontract.CheckResult{}, err
 	}
-	contracts := h.loadEnvContracts(ctx, userID, repo)
 	console, err := h.consoleVarsForScope(ctx, p.ID, env, "runtime")
 	if err != nil {
 		return platformcontract.CheckResult{}, err
 	}
-	return platformcontract.CheckRuntime(contracts.Runtime, console), nil
+	return platformcontract.CheckRuntime(h.effectiveRuntimeContract(ctx, p.ID, repo), console), nil
 }
 
 func (h *Handler) requireBuildConfigReady(ctx context.Context, userID int64, p projectRow, env string) error {
@@ -265,11 +280,10 @@ func (h *Handler) contractForSave(ctx context.Context, userID int64, p projectRo
 	if err != nil {
 		return nil
 	}
-	c := h.loadEnvContracts(ctx, userID, repo)
 	if scope == "build" {
-		return c.Build
+		return h.effectiveBuildContract(ctx, p.ID, repo)
 	}
-	return c.Runtime
+	return h.effectiveRuntimeContract(ctx, p.ID, repo)
 }
 
 // GetProjectEnvReadiness GET /projects/{slug}/env/readiness?environment=dev&scope=build|runtime
@@ -309,12 +323,11 @@ func (h *Handler) GetProjectEnvReadiness(w http.ResponseWriter, r *http.Request)
 	// Gợi ý key từ contract chưa có trên Console.
 	suggestions := []map[string]any{}
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
-	contracts := h.loadEnvContracts(r.Context(), u.ID, repo)
 	var contract *platformcontract.File
 	if scope == "build" {
-		contract = contracts.Build
+		contract = h.effectiveBuildContract(r.Context(), p.ID, repo)
 	} else {
-		contract = contracts.Runtime
+		contract = h.effectiveRuntimeContract(r.Context(), p.ID, repo)
 	}
 	if contract != nil {
 		console, _ := h.consoleVarsForScope(r.Context(), p.ID, env, scope)

@@ -122,6 +122,16 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.getProjectLayout(r.Context(), p.ID) == deploy.LayoutMulti {
+		svcRows, err := h.listProjectServices(r.Context(), p.ID)
+		if err == nil && len(svcRows) >= 2 {
+			if err := h.validateMultiServicePaths(r.Context(), u.ID, owner, repo, branch, svcRows); err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+	}
+
 	deployToken, err := h.ensureDeployHookToken(r.Context(), p.ID)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})

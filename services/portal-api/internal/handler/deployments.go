@@ -338,6 +338,18 @@ func (h *Handler) markDeploymentFailed(ctx context.Context, id int64, phase, msg
 		WHERE id=$3`, phase, msg, id)
 }
 
+func (h *Handler) clearFalseBuildFailure(ctx context.Context, id int64) {
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments SET
+			build_status='success',
+			error_phase=CASE WHEN error_phase='build' THEN '' ELSE error_phase END,
+			error_message=CASE WHEN error_phase='build' OR error_message ILIKE 'GitHub Actions:%' THEN '' ELSE error_message END,
+			status=CASE WHEN status='failed' AND deploy_status='success' AND runtime_status IN ('success','pending','running') THEN 'in_progress' ELSE status END,
+			finished_at=CASE WHEN status='failed' AND deploy_status='success' THEN NULL ELSE finished_at END,
+			updated_at=now()
+		WHERE id=$1`, id)
+}
+
 func (h *Handler) markDeploymentDeployPhase(ctx context.Context, id int64, image string) {
 	_, _ = h.db.Exec(ctx, `
 		UPDATE project_deployments SET
@@ -669,6 +681,7 @@ func (h *Handler) enrichDeployClusterLog(ctx context.Context, p projectRow, env 
 }
 
 func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d *deploymentRow) {
+	reconcileBuildFromSteps(d)
 	if stageStatus(d.BuildStatus) == "failed" {
 		reconcileDeploymentRow(d)
 		return
@@ -998,6 +1011,7 @@ func (h *Handler) enrichBuildLive(ctx context.Context, userID int64, owner, repo
 	}
 	terminal := deploymentIsTerminal(*d)
 	buildDone := strings.EqualFold(strings.TrimSpace(d.BuildStatus), "success")
+	var runFailMsg string
 	ghToken, _, err := h.getGitHubToken(ctx, userID)
 	if err != nil || ghToken == "" {
 		return
@@ -1012,15 +1026,9 @@ func (h *Handler) enrichBuildLive(ctx context.Context, userID int64, owner, repo
 			terminal = false
 		}
 		if bs == "failed" {
-			msg := "GitHub Actions: " + strings.TrimSpace(run.Conclusion)
-			if msg == "GitHub Actions: " {
-				msg = "Build thất bại trên GitHub Actions"
-			}
-			d.Status = "failed"
-			d.ErrorPhase = "build"
-			d.ErrorMessage = msg
-			if d.ID > 0 {
-				h.markDeploymentFailed(ctx, d.ID, "build", msg)
+			runFailMsg = "GitHub Actions: " + strings.TrimSpace(run.Conclusion)
+			if runFailMsg == "GitHub Actions: " {
+				runFailMsg = "Build thất bại trên GitHub Actions"
 			}
 		}
 	}
@@ -1092,8 +1100,18 @@ func (h *Handler) enrichBuildLive(ctx context.Context, userID int64, owner, repo
 	}
 	steps = finalizeBuildStepsTruth(steps)
 	d.BuildSteps = steps
-	syncBuildStatusFromSteps(d)
+	reconcileBuildFromSteps(d)
 	buildDone = stageStatus(d.BuildStatus) == "success"
+	if !buildDone && runFailMsg != "" {
+		d.Status = "failed"
+		d.ErrorPhase = "build"
+		d.ErrorMessage = runFailMsg
+		if d.ID > 0 {
+			h.markDeploymentFailed(ctx, d.ID, "build", runFailMsg)
+		}
+	} else if buildDone && d.ID > 0 {
+		h.clearFalseBuildFailure(ctx, d.ID)
+	}
 	if logBuf.Len() == 0 && d.GitHubRunID > 0 {
 		if runLog, err := client.DownloadRunLog(ctx, ghToken, owner, repo, d.GitHubRunID); err == nil {
 			text, cut := gh.TruncateLogFull(runLog, maxBytes)
