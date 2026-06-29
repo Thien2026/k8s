@@ -2963,14 +2963,29 @@ function serviceCtxCellHtml(idx, s) {
   );
 }
 
+function stackLabel(stack, mode) {
+  if ((mode || "").toLowerCase() === "buildpack" && stack) {
+    return " · " + stack;
+  }
+  return "";
+}
+
 function buildServiceTableRowHtml(s, idx) {
   const pub = serviceRowIsPublic(s);
+  const stack = s.stack || "";
   return (
     '<tr data-svc-idx="' + idx + '">' +
     '<td><input name="svc_name_' + idx + '" value="' + esc(s.name || "") + '" /></td>' +
     '<td><select name="svc_mode_' + idx + '">' +
     '<option value="dockerfile"' + ((s.build_mode || "dockerfile") !== "buildpack" ? " selected" : "") + ">Docker</option>" +
     '<option value="buildpack"' + ((s.build_mode || "") === "buildpack" ? " selected" : "") + ">Buildpack</option>" +
+    "</select></td>" +
+    '<td><select name="svc_stack_' + idx + '">' +
+    '<option value=""' + (!stack ? " selected" : "") + ">auto</option>" +
+    '<option value="python"' + (stack === "python" ? " selected" : "") + ">python</option>" +
+    '<option value="node"' + (stack === "node" ? " selected" : "") + ">node</option>" +
+    '<option value="go"' + (stack === "go" ? " selected" : "") + ">go</option>" +
+    '<option value="dotnet"' + (stack === "dotnet" ? " selected" : "") + ">dotnet</option>" +
     "</select></td>" +
     serviceCtxCellHtml(idx, s) +
     '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
@@ -2989,7 +3004,7 @@ function renderServicePreviewCard(s) {
     : '<span class="badge warn">Internal</span> · cluster <code>http://' + esc(s.name || "?") + ":80</code>";
   return (
     '<div class="service-preview-card">' +
-    "<h4>" + esc(s.display_name || s.name || "?") + ' <span class="badge">' + esc(mode) + "</span></h4>" +
+    "<h4>" + esc(s.display_name || s.name || "?") + ' <span class="badge">' + esc(mode) + esc(stackLabel(s.stack, s.build_mode)) + "</span></h4>" +
     "<p>Thư mục <code>" + esc(s.build_context || ".") + "</code> → image <code>" + esc(s.name) + "</code><br>" +
     access + "</p></div>"
   );
@@ -3073,7 +3088,7 @@ function renderProjectServicesCard(slug, svcData, repo, canEdit) {
     '<details class="layout-advanced-details"><summary>Tùy chỉnh nâng cao (dev)</summary>' +
     '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục: chọn từ dropdown GitHub (branch đã cấu hình). Nhập sai → Lưu báo lỗi hoặc CI fail.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
-    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
+    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
     '<tbody id="project-services-tbody">' +
     multiItems.map(advancedRowHtml).join("") +
     "</tbody></table>" +
@@ -3258,9 +3273,11 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
     const ingressEl = form.querySelector('[name="svc_ingress_' + idx + '"]');
     let ingress = ingressEl ? ingressEl.value : defaults.ingress_path || "/";
     if (!expose) ingress = "-";
+    const stackEl = form.querySelector('[name="svc_stack_' + idx + '"]');
     return {
       name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || defaults.name || "",
       build_mode: modeEl ? modeEl.value : defaults.build_mode || "dockerfile",
+      stack: stackEl ? stackEl.value : defaults.stack || "",
       build_context: readCtxValue(idx) || defaults.build_context || ".",
       dockerfile_path: (form.querySelector('[name="svc_df_' + idx + '"]') || {}).value || defaults.dockerfile_path || "Dockerfile",
       ingress_path: ingress,

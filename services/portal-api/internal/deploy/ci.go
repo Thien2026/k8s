@@ -161,6 +161,7 @@ func GitHubWorkflow(p Params) Workflow {
 func serviceParams(p Params, svc ServiceDef) Params {
 	sp := p
 	sp.BuildMode = svc.BuildMode
+	sp.Stack = svc.Stack
 	sp.BuildContext = svc.BuildContext
 	sp.DockerfilePath = svc.DockerfilePath
 	return sp
@@ -192,7 +193,7 @@ func writeDockerfileBuildWith(b *strings.Builder, p Params, image string) {
 	writeBuildInjectLines(b, p, "            ", true)
 }
 
-const buildpackBuilderImage = "paketobuildpacks/builder-jammy-full"
+const buildpackBuilderImage = defaultBuildpackBuilder
 
 func writeBuildpackBuildStep(b *strings.Builder, p Params, image string) {
 	b.WriteString("        run: |\n")
@@ -201,15 +202,21 @@ func writeBuildpackBuildStep(b *strings.Builder, p Params, image string) {
 		imageBase = image[:i]
 	}
 	ctx := p.buildContext()
+	builder := BuildpackBuilderForStack(p.Stack)
 	b.WriteString("          pack build \"" + image + "\" \\\n")
 	b.WriteString("            --path \"" + ctx + "\" \\\n")
-	b.WriteString("            --builder " + buildpackBuilderImage + " \\\n")
+	b.WriteString("            --builder " + builder + " \\\n")
 	b.WriteString("            --publish \\\n")
 	b.WriteString("            --tag \"" + imageBase + ":${{ github.sha }}\" \\\n")
 	b.WriteString("            --env \"GIT_SHA=${{ github.sha }}\" \\\n")
 	b.WriteString("            --env \"GIT_REF=${{ github.ref_name }}\" \\\n")
-	b.WriteString("            --env \"PORT=8080\" \\\n")
-	b.WriteString("            --env \"BP_NODE_VERSION=20\"")
+	b.WriteString("            --env \"PORT=8080\"")
+	for _, extra := range BuildpackExtraEnv(p.Stack) {
+		b.WriteString(" \\\n            --env \"" + extra + "\"")
+	}
+	if NormalizeStack(p.Stack) == "" {
+		b.WriteString(" \\\n            --env \"BP_NODE_VERSION=20\"")
+	}
 	for _, arg := range p.BuildArgs {
 		key := strings.TrimSpace(arg.Key)
 		if key == "" || key == "GIT_SHA" || key == "GIT_REF" || key == "PORT" {

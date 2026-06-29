@@ -85,6 +85,7 @@ func (h *Handler) contractToProjectServiceRows(f platformcontract.ServicesFile) 
 			DisplayName:    s.DisplayName,
 			BuildContext:   s.BuildContext,
 			BuildMode:      s.BuildMode,
+			Stack:          s.Stack,
 			DockerfilePath: s.DockerfilePath,
 			ContainerPort:  s.ContainerPort,
 			HealthPath:     s.HealthPath,
@@ -177,6 +178,7 @@ func (h *Handler) SyncProjectServicesFromRepo(w http.ResponseWriter, r *http.Req
 			DisplayName:    s.DisplayName,
 			BuildContext:   s.BuildContext,
 			BuildMode:      s.BuildMode,
+			Stack:          s.Stack,
 			DockerfilePath: s.DockerfilePath,
 			ContainerPort:  s.ContainerPort,
 			HealthPath:     s.HealthPath,
@@ -190,10 +192,10 @@ func (h *Handler) SyncProjectServicesFromRepo(w http.ResponseWriter, r *http.Req
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO project_services
 			  (project_id, name, display_name, build_context, build_mode, dockerfile_path,
-			   container_port, health_path, ingress_path, expose_ingress, sort_order, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())`,
+			   container_port, health_path, ingress_path, expose_ingress, stack, sort_order, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
 			p.ID, svc.Name, svc.DisplayName, svc.BuildContext, svc.BuildMode, svc.DockerfilePath,
-			svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, svc.SortOrder); err != nil {
+			svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, deploy.NormalizeStack(svc.Stack), svc.SortOrder); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
@@ -202,6 +204,7 @@ func (h *Handler) SyncProjectServicesFromRepo(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	_ = h.enrichProjectServiceBuildModes(ctx, u.ID, p.ID, repo, branch)
 	_, _ = h.db.Exec(ctx, `UPDATE project_repos SET workflow_synced_at=NULL WHERE project_id=$1`, p.ID)
 	conventionSeeds, _ := h.ensureBackFrontConventions(ctx, p.ID)
 	resp := map[string]any{
@@ -241,7 +244,7 @@ func (h *Handler) maybeApplyServicesContractOnSetup(ctx context.Context, userID 
 	for i, s := range rows {
 		svc := deploy.NormalizeServiceDef(deploy.ServiceDef{
 			Name: s.Name, DisplayName: s.DisplayName, BuildContext: s.BuildContext,
-			BuildMode: s.BuildMode, DockerfilePath: s.DockerfilePath, ContainerPort: s.ContainerPort,
+			BuildMode: s.BuildMode, Stack: s.Stack, DockerfilePath: s.DockerfilePath, ContainerPort: s.ContainerPort,
 			HealthPath: s.HealthPath, IngressPath: s.IngressPath, ExposeIngress: serviceRowExposeIngress(s),
 			SortOrder: s.SortOrder,
 		})
@@ -251,13 +254,14 @@ func (h *Handler) maybeApplyServicesContractOnSetup(ctx context.Context, userID 
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO project_services
 			  (project_id, name, display_name, build_context, build_mode, dockerfile_path,
-			   container_port, health_path, ingress_path, expose_ingress, sort_order, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())`,
+			   container_port, health_path, ingress_path, expose_ingress, stack, sort_order, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
 			p.ID, svc.Name, svc.DisplayName, svc.BuildContext, svc.BuildMode, svc.DockerfilePath,
-			svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, svc.SortOrder); err != nil {
+			svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, deploy.NormalizeStack(svc.Stack), svc.SortOrder); err != nil {
 			return
 		}
 	}
 	_ = tx.Commit(ctx)
+	_ = h.enrichProjectServiceBuildModes(ctx, userID, p.ID, repo, branch)
 	_, _ = h.ensureBackFrontConventions(ctx, p.ID)
 }

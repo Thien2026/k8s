@@ -16,6 +16,7 @@ type ServiceDef struct {
 	DisplayName    string `json:"display_name,omitempty"`
 	BuildContext   string `json:"build_context"`
 	BuildMode      string `json:"build_mode"`
+	Stack          string `json:"stack,omitempty"`
 	DockerfilePath string `json:"dockerfile_path"`
 	ContainerPort  int    `json:"container_port"`
 	HealthPath     string `json:"health_path"`
@@ -114,6 +115,7 @@ func normalizeServiceDef(s ServiceDef) ServiceDef {
 		s.BuildContext = "."
 	}
 	s.BuildMode = NormalizeBuildMode(s.BuildMode)
+	s.Stack = NormalizeStack(s.Stack)
 	if strings.TrimSpace(s.DockerfilePath) == "" {
 		s.DockerfilePath = "Dockerfile"
 	}

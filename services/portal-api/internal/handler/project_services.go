@@ -17,6 +17,7 @@ type projectServiceRow struct {
 	DisplayName    string `json:"display_name,omitempty"`
 	BuildContext   string `json:"build_context"`
 	BuildMode      string `json:"build_mode"`
+	Stack          string `json:"stack,omitempty"`
 	DockerfilePath string `json:"dockerfile_path"`
 	ContainerPort  int    `json:"container_port"`
 	HealthPath     string `json:"health_path"`
@@ -41,7 +42,8 @@ func (h *Handler) getProjectLayout(ctx context.Context, projectID int64) string 
 func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]projectServiceRow, error) {
 	rows, err := h.db.Query(ctx, `
 		SELECT name, COALESCE(display_name,''), build_context, COALESCE(build_mode,'dockerfile'),
-		       dockerfile_path, container_port, health_path, ingress_path, expose_ingress, sort_order
+		       dockerfile_path, container_port, health_path, ingress_path, expose_ingress,
+		       COALESCE(stack,''), sort_order
 		FROM project_services
 		WHERE project_id=$1 AND enabled=true
 		ORDER BY sort_order, name`, projectID)
@@ -54,7 +56,7 @@ func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]p
 		var s projectServiceRow
 		var expose bool
 		if err := rows.Scan(&s.Name, &s.DisplayName, &s.BuildContext, &s.BuildMode,
-			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &expose, &s.SortOrder); err != nil {
+			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &expose, &s.Stack, &s.SortOrder); err != nil {
 			return nil, err
 		}
 		s.ExposeIngress = &expose
@@ -82,6 +84,7 @@ func (h *Handler) loadDeployServices(ctx context.Context, projectID int64, repo 
 			DisplayName:    r.DisplayName,
 			BuildContext:   r.BuildContext,
 			BuildMode:      r.BuildMode,
+			Stack:          r.Stack,
 			DockerfilePath: r.DockerfilePath,
 			ContainerPort:  r.ContainerPort,
 			HealthPath:     r.HealthPath,
@@ -224,6 +227,7 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 				DisplayName:    s.DisplayName,
 				BuildContext:   s.BuildContext,
 				BuildMode:      s.BuildMode,
+				Stack:          s.Stack,
 				DockerfilePath: s.DockerfilePath,
 				ContainerPort:  s.ContainerPort,
 				HealthPath:     s.HealthPath,
@@ -237,10 +241,10 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO project_services
 				  (project_id, name, display_name, build_context, build_mode, dockerfile_path,
-				   container_port, health_path, ingress_path, expose_ingress, sort_order, updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,now())`,
+				   container_port, health_path, ingress_path, expose_ingress, stack, sort_order, updated_at)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
 				p.ID, svc.Name, svc.DisplayName, svc.BuildContext, svc.BuildMode, svc.DockerfilePath,
-				svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, svc.SortOrder); err != nil {
+				svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, deploy.NormalizeStack(svc.Stack), svc.SortOrder); err != nil {
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 				return
 			}

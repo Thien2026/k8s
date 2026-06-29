@@ -23,6 +23,7 @@ type ServiceSpec struct {
 	Dockerfile     string `yaml:"dockerfile"`
 	DockerfilePath string `yaml:"dockerfile_path"`
 	BuildMode      string `yaml:"build_mode"`
+	Stack          string `yaml:"stack"`
 	Port           int    `yaml:"port"`
 	ContainerPort  int    `yaml:"container_port"`
 	Health         string `yaml:"health"`
@@ -139,6 +140,7 @@ func normalizeServiceSpec(s ServiceSpec) ServiceSpec {
 	s.Dockerfile = df
 	s.DockerfilePath = df
 	s.BuildMode = normalizeBuildModeContract(s.BuildMode)
+	s.Stack = strings.ToLower(strings.TrimSpace(s.Stack))
 	port := s.Port
 	if port <= 0 {
 		port = s.ContainerPort

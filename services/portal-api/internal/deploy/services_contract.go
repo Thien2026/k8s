@@ -16,6 +16,7 @@ func ServiceDefsFromContract(f platformcontract.ServicesFile) []ServiceDef {
 			DisplayName:    s.DisplayName,
 			BuildContext:   s.BuildContext,
 			BuildMode:      s.BuildMode,
+			Stack:          NormalizeStack(s.Stack),
 			DockerfilePath: s.DockerfilePath,
 			ContainerPort:  s.ContainerPort,
 			HealthPath:     s.HealthPath,

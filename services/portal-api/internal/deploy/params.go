@@ -18,6 +18,7 @@ type Params struct {
 	GitURL           string
 	Branch           string
 	BuildMode        string // dockerfile | buildpack (single-service fallback)
+	Stack            string // python | node | go | dotnet — buildpack hint
 	DockerfilePath   string
 	BuildContext     string
 	Services         []ServiceDef
