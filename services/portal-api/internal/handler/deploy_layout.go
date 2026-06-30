@@ -83,3 +83,48 @@ func (h *Handler) requireMultiServiceImages(ctx context.Context, p projectRow, r
 		branch,
 	)
 }
+
+// validateRollbackImages — rollback: báo rõ nếu tag single-app vs layout multi.
+func (h *Handler) validateRollbackImages(ctx context.Context, p projectRow, params deploy.Params, tag string) error {
+	if !params.IsMultiService() {
+		return nil
+	}
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	if p.RegistryProvider != "harbor" || h.harbor == nil || !h.harbor.Enabled() {
+		return nil
+	}
+	projectName := harborProjectName(p)
+	svcs := params.EffectiveServices()
+	var missing []string
+	for _, svc := range svcs {
+		name := strings.TrimSpace(svc.Name)
+		if name == "" {
+			continue
+		}
+		ok, err := h.harbor.ArtifactExists(ctx, projectName, name, tag)
+		if err != nil {
+			return fmt.Errorf("kiểm tra image %s: %w", name, err)
+		}
+		if !ok {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	appOk, _ := h.harbor.ArtifactExists(ctx, projectName, "app", tag)
+	if appOk {
+		return fmt.Errorf(
+			"tag %s là bản single-app (chỉ có image app) — không rollback được khi layout multi-service; chọn tag đã build api+web",
+			shortImageTag(tag),
+		)
+	}
+	return fmt.Errorf(
+		"thiếu image %s (tag %s) trên Harbor — có thể đã bị xóa hoặc chưa từng build multi-service",
+		strings.Join(missing, ", "),
+		shortImageTag(tag),
+	)
+}

@@ -159,7 +159,14 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		return result, nil
 	}
 
-	if err := h.requireMultiServiceImages(ctx, p, repo, params, imageTag); err != nil {
+	if rollback {
+		if err := h.validateRollbackImages(ctx, p, params, imageTag); err != nil {
+			if deployID > 0 {
+				h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+			}
+			return nil, err
+		}
+	} else if err := h.requireMultiServiceImages(ctx, p, repo, params, imageTag); err != nil {
 		if deployID > 0 {
 			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
 		}
@@ -745,7 +752,7 @@ func (h *Handler) RollbackProjectDeploy(w http.ResponseWriter, r *http.Request) 
 	h.enrichProjectRegistry(r.Context(), &p)
 	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, "", true, true)
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
 	result["rollback"] = true
