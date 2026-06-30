@@ -3109,11 +3109,11 @@ function renderPipelineCrosscheckHtml(repo, svcData, contract) {
   }
   if (contract.found && !contract.parse_error) {
     if (contract.layout === "multi" && layout !== "multi") {
-      lines.push("Repo có <code>services.yaml</code> multi (" + (contract.services || []).length + " service) — nên chọn Multi-service hoặc 「Áp dụng từ repo」.");
+      lines.push("Repo có <code>services.yaml</code> multi (" + (contract.services || []).length + " service) — chọn Multi-service hoặc bấm 「Áp dụng từ repo」.");
       cls = "warn";
     }
     if (contract.layout !== "multi" && layout === "multi") {
-      lines.push("Console đang multi nhưng branch không có <code>services.yaml</code> multi — kiểm tra lại branch.");
+      lines.push("Console đang multi nhưng branch chưa có <code>services.yaml</code> multi — bấm 「Lưu & đồng bộ GitHub」 để push workflow build api/web.");
       cls = "warn";
     }
     if (layout === "multi" && !contract.in_sync && contract.layout === "multi") {

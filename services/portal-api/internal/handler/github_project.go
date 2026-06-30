@@ -46,6 +46,12 @@ func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	if strings.TrimSpace(repo.WorkflowSyncedAt) == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+			"error": "Workflow chưa đồng bộ — bấm 「Lưu & đồng bộ GitHub」 trên Console trước khi deploy",
+		})
+		return
+	}
 	if !repo.AutoDeployEnabled {
 		skipReason := "auto_deploy tắt — image đã build, không deploy lên cluster"
 		h.markDeploymentDeploySkipped(r.Context(), p.ID, env, tag, skipReason)

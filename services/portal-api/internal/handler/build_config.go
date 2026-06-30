@@ -89,6 +89,98 @@ func (h *Handler) persistEnvContracts(ctx context.Context, projectID int64, c en
 	return err
 }
 
+func contractDefaultValue(key string, p projectRow) string {
+	switch key {
+	case deploy.ConventionViteAPIBaseKey, deploy.ConventionNextAPIBaseKey:
+		return deploy.ConventionAPIBasePath
+	case deploy.ConventionAPIRoutePrefixKey:
+		return deploy.ConventionAPIBasePath
+	case "BUILD_LABEL":
+		return p.Slug
+	case "APP_GREETING":
+		if strings.TrimSpace(p.Name) != "" {
+			return "Hello from " + p.Name
+		}
+		return "Hello from " + p.Slug
+	default:
+		return p.Slug
+	}
+}
+
+// ensureContractEnvSeeds — gợi ý giá trị mặc định cho biến required chưa có trên Console (không ghi đè).
+func (h *Handler) ensureContractEnvSeeds(ctx context.Context, p projectRow, env string, contract *platformcontract.File, scope string) error {
+	if contract == nil {
+		return nil
+	}
+	envs := []string{env}
+	if scope == "runtime" {
+		envs = []string{"dev", "prod"}
+	}
+	for _, e := range envs {
+		for key, spec := range contract.Vars {
+			if !spec.Required {
+				continue
+			}
+			val := contractDefaultValue(key, p)
+			if _, err := h.upsertProjectEnvVar(ctx, p.ID, e, scope, key, val, false); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (h *Handler) syncEnvContractsFromGitHub(ctx context.Context, userID int64, p projectRow) error {
+	repo, err := h.getProjectRepo(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(repo.GitHubOwner) == "" {
+		return nil
+	}
+	contracts := h.loadEnvContracts(ctx, userID, repo)
+	if contracts.Build == nil && contracts.Runtime == nil {
+		return nil
+	}
+	if err := h.persistEnvContracts(ctx, p.ID, contracts); err != nil {
+		return err
+	}
+	env := strings.ToLower(strings.TrimSpace(repo.DeployEnvironment))
+	if env == "" {
+		env = "dev"
+	}
+	if contracts.Build != nil {
+		if err := h.ensureContractEnvSeeds(ctx, p, env, contracts.Build, "build"); err != nil {
+			return err
+		}
+	}
+	if contracts.Runtime != nil {
+		if err := h.ensureContractEnvSeeds(ctx, p, env, contracts.Runtime, "runtime"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h *Handler) reloadEnvContractsIfNeeded(ctx context.Context, p projectRow) error {
+	repo, err := h.getProjectRepo(ctx, p.ID)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(repo.GitHubOwner) == "" {
+		return nil
+	}
+	if strings.TrimSpace(repo.EnvContractBuild) != "" && strings.TrimSpace(repo.EnvContractRuntime) != "" {
+		return nil
+	}
+	var ownerID int64
+	_ = h.db.QueryRow(ctx, `SELECT COALESCE(owner_id, 0) FROM projects WHERE id=$1`, p.ID).Scan(&ownerID)
+	if ownerID == 0 {
+		return nil
+	}
+	return h.syncEnvContractsFromGitHub(ctx, ownerID, p)
+}
+
 func (h *Handler) effectiveBuildContract(ctx context.Context, projectID int64, repo projectRepoRow) *platformcontract.File {
 	base := contractFromJSON(repo.EnvContractBuild)
 	if h.getProjectLayout(ctx, projectID) == deploy.LayoutMulti {
@@ -183,6 +275,7 @@ func (h *Handler) evaluateRuntimeConfigCached(ctx context.Context, p projectRow,
 }
 
 func (h *Handler) requireDeployEnvReady(ctx context.Context, p projectRow, env string) error {
+	_ = h.reloadEnvContractsIfNeeded(ctx, p)
 	repo, err := h.getProjectRepo(ctx, p.ID)
 	if err != nil {
 		return err
@@ -374,6 +467,13 @@ func (h *Handler) DeployValidateConfigHook(w http.ResponseWriter, r *http.Reques
 	p, err := h.getProjectByDeployToken(r.Context(), token)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "token không hợp lệ"})
+		return
+	}
+	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	if strings.TrimSpace(repo.WorkflowSyncedAt) == "" {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
+			"error": "Workflow chưa đồng bộ với Console — bấm 「Lưu & đồng bộ GitHub」 trên tab Deploy trước khi build",
+		})
 		return
 	}
 	if err := h.requireDeployEnvReady(r.Context(), p, env); err != nil {

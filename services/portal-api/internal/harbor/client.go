@@ -320,6 +320,39 @@ func (c *Client) EnableAutoScan(ctx context.Context, projectName string) error {
 	return nil
 }
 
+// ArtifactExists kiểm tra artifact tag/sha có tồn tại trong Harbor.
+func (c *Client) ArtifactExists(ctx context.Context, projectName, repoName, reference string) (bool, error) {
+	if !c.Enabled() {
+		return false, fmt.Errorf("harbor chưa cấu hình")
+	}
+	projectName = strings.TrimSpace(projectName)
+	repoName = strings.Trim(strings.TrimSpace(repoName), "/")
+	reference = strings.TrimSpace(reference)
+	if projectName == "" || repoName == "" || reference == "" {
+		return false, nil
+	}
+	apiURL := fmt.Sprintf("%s/api/v2.0/projects/%s/repositories/%s/artifacts/%s",
+		c.baseURL, url.PathEscape(projectName), url.PathEscape(repoName), url.PathEscape(reference))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return false, err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if res.StatusCode >= 400 {
+		body, _ := io.ReadAll(res.Body)
+		return false, fmt.Errorf("harbor artifact %d: %s", res.StatusCode, string(body))
+	}
+	return true, nil
+}
+
 // ArtifactScanOverview lấy tổng quan CVE từ Harbor Trivy cho image tag/sha.
 func (c *Client) ArtifactScanOverview(ctx context.Context, projectName, repoName, reference string) (*ScanOverview, error) {
 	if !c.Enabled() {
@@ -510,4 +543,126 @@ func (c *Client) ArtifactUIURL(projectName, repoName, reference string) string {
 	}
 	return fmt.Sprintf("%s/harbor/projects/%s/repositories/%s/artifacts-tab/artifacts/%s",
 		c.baseURL, url.PathEscape(projectName), url.PathEscape(repoName), url.PathEscape(reference))
+}
+
+type harborRepository struct {
+	Name string `json:"name"`
+}
+
+// PurgeProject xóa toàn bộ repository rồi xóa Harbor project (VPS registry).
+func (c *Client) PurgeProject(ctx context.Context, projectName string) error {
+	if !c.Enabled() {
+		return fmt.Errorf("harbor chưa cấu hình")
+	}
+	projectName = strings.TrimSpace(projectName)
+	if projectName == "" {
+		return fmt.Errorf("thiếu tên harbor project")
+	}
+	for page := 1; page <= 50; page++ {
+		repos, err := c.listRepositories(ctx, projectName, page)
+		if err != nil {
+			return err
+		}
+		if len(repos) == 0 {
+			break
+		}
+		for _, repo := range repos {
+			if err := c.deleteRepository(ctx, projectName, repo.Name); err != nil {
+				return err
+			}
+		}
+		if len(repos) < 100 {
+			break
+		}
+	}
+	return c.deleteProject(ctx, projectName)
+}
+
+func (c *Client) listRepositories(ctx context.Context, projectName string, page int) ([]harborRepository, error) {
+	q := url.Values{
+		"page":      {fmt.Sprintf("%d", page)},
+		"page_size": {"100"},
+	}
+	apiURL := fmt.Sprintf("%s/api/v2.0/projects/%s/repositories?%s",
+		c.baseURL, url.PathEscape(projectName), q.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if res.StatusCode >= 400 {
+		return nil, fmt.Errorf("harbor list repositories %d: %s", res.StatusCode, string(body))
+	}
+	var repos []harborRepository
+	if err := json.Unmarshal(body, &repos); err != nil {
+		return nil, err
+	}
+	return repos, nil
+}
+
+func (c *Client) deleteRepository(ctx context.Context, projectName, repoName string) error {
+	repoName = strings.TrimSpace(repoName)
+	if repoName == "" {
+		return nil
+	}
+	apiURL := fmt.Sprintf("%s/api/v2.0/projects/%s/repositories/%s",
+		c.baseURL, url.PathEscape(projectName), encodeHarborRepositoryName(repoName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if res.StatusCode >= 400 {
+		return fmt.Errorf("harbor delete repository %s %d: %s", repoName, res.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (c *Client) deleteProject(ctx context.Context, projectName string) error {
+	apiURL := fmt.Sprintf("%s/api/v2.0/projects/%s", c.baseURL, url.PathEscape(projectName))
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, apiURL, nil)
+	if err != nil {
+		return err
+	}
+	req.SetBasicAuth(c.username, c.password)
+	req.Header.Set("X-Is-Resource-Name", "true")
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if res.StatusCode >= 400 {
+		return fmt.Errorf("harbor delete project %d: %s", res.StatusCode, string(body))
+	}
+	return nil
+}
+
+func encodeHarborRepositoryName(name string) string {
+	name = strings.TrimPrefix(strings.TrimSpace(name), "/")
+	if i := strings.Index(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	return url.PathEscape(name)
 }

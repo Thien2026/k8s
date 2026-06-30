@@ -159,6 +159,16 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		return result, nil
 	}
 
+	if err := h.requireMultiServiceImages(ctx, p, repo, params, imageTag); err != nil {
+		if deployID > 0 {
+			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+		}
+		return nil, err
+	}
+	if params.IsMultiService() {
+		h.cleanupLegacySingleApp(ctx, clusterID, params.Namespace)
+	}
+
 	if err := h.rancher.EnsureNamespace(ctx, clusterID, params.Namespace); err != nil {
 		if deployID > 0 {
 			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
