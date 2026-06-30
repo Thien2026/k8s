@@ -24,8 +24,10 @@ function handleSessionLost(msg) {
   state.user = null;
   state.projectCtx = null;
   if (state.onLoginPage) {
-    const errEl = document.querySelector(".login-card .login-session-error");
-    if (errEl && msg) errEl.textContent = msg;
+    if (msg) {
+      setLoginError(msg);
+      toastError(msg);
+    }
     return;
   }
   showLoginPage(msg);
@@ -58,10 +60,13 @@ function setJoinGate(v) {
   else sessionStorage.removeItem("join-gate");
 }
 
-function qs(extra) {
+function qs(extra, opts) {
+  opts = opts || {};
   const p = new URLSearchParams();
-  if (state.clusterId) p.set("cluster_id", state.clusterId);
-  if (state.namespace) p.set("namespace", state.namespace);
+  if (!opts.project) {
+    if (state.clusterId) p.set("cluster_id", state.clusterId);
+    if (state.namespace) p.set("namespace", state.namespace);
+  }
   if (extra) {
     Object.keys(extra).forEach((k) => {
       if (extra[k] != null && extra[k] !== "") p.set(k, extra[k]);
@@ -69,6 +74,17 @@ function qs(extra) {
   }
   const s = p.toString();
   return s ? "?" + s : "";
+}
+
+function projectQs(extra) {
+  return qs(extra, { project: true });
+}
+
+function errorMessage(err, fallback) {
+  fallback = fallback || "Không tải được dữ liệu — thử tải lại trang";
+  if (!err) return fallback;
+  const msg = String(err.message || err.error || err).trim();
+  return msg || fallback;
 }
 
 async function api(path, opts) {
@@ -927,9 +943,13 @@ function renderDeployHumanSummary(item) {
   const env = (item.environment || "dev") === "prod" ? "Production" : "Dev";
   const st = item.status || "in_progress";
   const failed = st === "failed" || item.build_status === "failed";
+  const staged = st === "success" && !failed && item.serving === false;
   let headline = "";
   let headlineCls = "deploy-summary-neutral";
-  if (st === "success" && !failed) {
+  if (staged) {
+    headline = "Đã deploy manifest — chưa live trên cluster";
+    headlineCls = "deploy-summary-warn";
+  } else if (st === "success" && !failed) {
     headline = "Deploy " + env + " thành công";
     headlineCls = "deploy-summary-ok";
   } else if (st === "failed" || failed) {
@@ -1578,15 +1598,14 @@ function renderDeployActivityCard(activity, opts) {
       (cur.serving ? " (đã live)" : " chưa thay traffic") +
       "</p>";
   }
+  const promoteReady = opts.promoteReadiness || null;
+  const promoteTag = promotableDevImageTag(activity, promoteReady);
   const showPromote =
     showPromoteBar &&
     opts.slug &&
     envLabel === "DEV" &&
-    cur &&
-    cur.status === "success" &&
-    cur.image_tag &&
+    promoteTag &&
     canManagePlatformProjects();
-  const promoteReady = opts.promoteReadiness || null;
   const canPromote = !promoteReady || promoteReady.ready;
   if (showPromotePrep) {
     body += renderDeployPromotePrep(promoteReady || { ready: false, items: [] }, opts.slug);
@@ -1596,10 +1615,10 @@ function renderDeployActivityCard(activity, opts) {
       '<div class="deploy-promote-bar" id="deploy-promote-bar">' +
       '<div class="deploy-promote-bar-inner">' +
       '<span class="muted">Bản dev <code>' +
-      esc((cur.image_tag || "").slice(0, 7)) +
+      esc(promoteTag.slice(0, 7)) +
       "</code> đã chạy ổn — đưa lên prod <strong>không build lại</strong>.</span>" +
       '<button type="button" class="btn-primary btn-sm" id="deploy-promote-btn" data-tag="' +
-      esc(cur.image_tag) +
+      esc(promoteTag) +
       '"' +
       (canPromote
         ? ""
@@ -1660,6 +1679,20 @@ function renderDeployActivityCard(activity, opts) {
 
 function rememberPromoteReadiness(slug, readiness) {
   state.deployPromoteReadiness[slug] = readiness || null;
+}
+
+function promotableDevImageTag(activity, readiness) {
+  if (readiness && readiness.latest_success_tag) {
+    return readiness.latest_success_tag;
+  }
+  const cur = activity && activity.current;
+  if (cur && cur.status === "success" && cur.image_tag) {
+    return cur.image_tag;
+  }
+  if (activity && activity.serving_image_tag) {
+    return activity.serving_image_tag;
+  }
+  return "";
 }
 
 function imageTagMatches(a, b) {
@@ -1780,9 +1813,9 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
         });
         toastSuccess("Đã rollback — đang cập nhật log");
         const activity = await api(
-          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: env })
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: itemEnv })
         );
-        updateDeployActivityDOM(activity, slug, promoteReadiness, env);
+        updateDeployActivityDOM(activity, slug, promoteReadiness, itemEnv);
       } catch (err) {
         toastError(err.message);
       } finally {
@@ -1898,7 +1931,7 @@ function bindDeployActivityPoll(slug, env, navToken) {
     if (!isNavTokenActive(navToken)) return;
     try {
       const activity = await api(
-        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: env, scope: "current" })
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: env, scope: "current" })
       );
       if (!isNavTokenActive(navToken)) return;
       const terminal = activity.current && deployIsTerminal(activity.current);
@@ -2770,9 +2803,10 @@ async function pagePlatformProjects(main) {
           title: "Xóa project \"" + name + "\"?",
           message: "Hành động không hoàn tác. Metadata project sẽ bị xóa khỏi platform.",
           details: [
-            "Namespace dev: " + nsDev + " — xóa toàn bộ pod, deployment, ingress",
+            "Namespace dev: " + nsDev + " — xóa pod, deployment, ingress, secret",
             "Namespace prod: " + nsProd + " — xóa toàn bộ workload",
-            "Harbor registry (nếu có) không tự xóa",
+            "Harbor project (nếu dùng Harbor) — xóa image trên VPS",
+            "DB platform — lịch sử deploy, env, domains (GitHub/GHCR cloud giữ nguyên)",
           ],
           confirmText: "Xóa vĩnh viễn",
           danger: true,
@@ -3037,6 +3071,16 @@ function renderServicesContractBanner(contract, canEdit) {
   html += synced
     ? ' — <span style="color:#15803d">đồng bộ Console</span>'
     : ' — <span style="color:#b45309">khác Console</span>';
+  const gitSub = (contract.git_submodules || "").trim();
+  if (gitSub || contract.has_gitmodules) {
+    const subLabel = gitSub || "recursive";
+    const subSync = contract.git_submodules_in_sync !== false;
+    html +=
+      ' · Submodule <code>' +
+      esc(subLabel) +
+      "</code>" +
+      (subSync ? "" : ' <span style="color:#b45309">(chưa sync workflow)</span>');
+  }
   html += "</div>";
   if (canEdit && !synced && !contract.parse_error) {
     html +=
@@ -3045,87 +3089,346 @@ function renderServicesContractBanner(contract, canEdit) {
   return html;
 }
 
-function renderProjectServicesCard(slug, svcData, repo, canEdit) {
+function parseRepoFromForm(form) {
+  form = form || document.getElementById("pipeline-setup-form");
+  if (!form) return null;
+  const repoEl = form.querySelector('[name="repo"]');
+  return parseGitHubRepoValue(repoEl && repoEl.value);
+}
+
+function renderPipelineCrosscheckHtml(repo, svcData, contract) {
   repo = repo || {};
-  const layout = (svcData && svcData.layout) || "single";
-  const items = (svcData && svcData.items) || [];
+  svcData = svcData || {};
+  contract = contract || svcData.repo_contract || {};
+  const layout = (svcData.layout || "single");
+  const lines = [];
+  let cls = "ok";
+  if (!repo.workflow_synced_at) {
+    lines.push("Workflow chưa khớp Console — cần bấm 「Lưu & đồng bộ」.");
+    cls = "warn";
+  }
+  if (contract.found && !contract.parse_error) {
+    if (contract.layout === "multi" && layout !== "multi") {
+      lines.push("Repo có <code>services.yaml</code> multi (" + (contract.services || []).length + " service) — nên chọn Multi-service hoặc 「Áp dụng từ repo」.");
+      cls = "warn";
+    }
+    if (contract.layout !== "multi" && layout === "multi") {
+      lines.push("Console đang multi nhưng branch không có <code>services.yaml</code> multi — kiểm tra lại branch.");
+      cls = "warn";
+    }
+    if (layout === "multi" && !contract.in_sync && contract.layout === "multi") {
+      lines.push("Console khác <code>services.yaml</code> trên branch <code>" + esc(contract.branch || "?") + "</code>.");
+      cls = "warn";
+    }
+    if (contract.git_submodules && contract.git_submodules_in_sync === false) {
+      lines.push("Submodule <code>" + esc(contract.git_submodules) + "</code> chưa sync workflow.");
+      cls = "warn";
+    }
+  }
+  if (lines.length === 0) {
+    return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ok">✓ Branch và kiểu dự án nhất quán — sẵn sàng đồng bộ.</div>';
+  }
+  return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ' + cls + '">' + lines.map(function (l) { return "• " + l; }).join("<br>") + "</div>";
+}
+
+async function refreshPipelineCrosscheck(slug, form, svcData, repo) {
+  const el = document.getElementById("pipeline-crosscheck");
+  if (!el || !form) return;
+  const parsed = parseRepoFromForm(form);
+  const branch = selectedGitHubBranch(repo && repo.branch);
+  if (!parsed) {
+    el.className = "pipeline-crosscheck warn";
+    el.innerHTML = "• Chọn repository và branch để kiểm tra khớp layout.";
+    return;
+  }
+  el.className = "pipeline-crosscheck";
+  el.innerHTML = '<span class="btn-spinner"></span> Đang kiểm tra branch…';
+  try {
+    const contract = await api(
+      "/api/v1/projects/" + encodeURIComponent(slug) + "/services/detect" + qs({ branch: branch })
+    );
+    const merged = Object.assign({}, svcData || {}, { repo_contract: contract, layout: collectProjectLayoutPayload(form).layout });
+    const html = renderPipelineCrosscheckHtml(repo, merged, contract);
+    const newEl = document.getElementById("pipeline-crosscheck");
+    if (newEl) {
+      newEl.outerHTML = html;
+    }
+  } catch (err) {
+    el.className = "pipeline-crosscheck warn";
+    el.innerHTML = "• Không kiểm tra được repo: " + esc(errorMessage(err));
+  }
+}
+
+var PIPELINE_SETUP_STEPS = [
+  "Lưu kiểu dự án",
+  "Lưu repo & branch",
+  "Push workflow GitHub",
+  "Inject secrets (Harbor + deploy token)",
+];
+
+function collectProjectLayoutPayload(form) {
+  if (!form) return { layout: "single", services: [] };
+  const checked = form.querySelector('input[name="layout"]:checked');
+  const layout = checked ? checked.value : "single";
+  const services = [];
+  if (layout === "multi") {
+    const tbody = document.getElementById("project-services-tbody");
+    if (tbody) {
+      Array.prototype.slice.call(tbody.querySelectorAll("tr")).forEach(function (tr) {
+        const idx = tr.getAttribute("data-svc-idx");
+        const modeEl = form.querySelector('[name="svc_mode_' + idx + '"]');
+        const pubEl = form.querySelector('[name="svc_public_' + idx + '"]');
+        const expose = pubEl ? pubEl.checked : true;
+        const ingressEl = form.querySelector('[name="svc_ingress_' + idx + '"]');
+        let ingress = ingressEl ? ingressEl.value : "/";
+        if (!expose) ingress = "-";
+        const stackEl = form.querySelector('[name="svc_stack_' + idx + '"]');
+        const ctxSel = form.querySelector('[name="svc_ctx_sel_' + idx + '"]');
+        const ctxHidden = form.querySelector('[name="svc_ctx_' + idx + '"]');
+        const ctxCustom = form.querySelector('[name="svc_ctx_custom_' + idx + '"]');
+        let buildContext = ".";
+        if (ctxSel && ctxSel.value === "__custom__" && ctxCustom) {
+          buildContext = ctxCustom.value || ".";
+        } else if (ctxHidden && ctxHidden.value) {
+          buildContext = ctxHidden.value;
+        } else if (ctxSel && ctxSel.value && ctxSel.value !== "__custom__") {
+          buildContext = ctxSel.value;
+        }
+        services.push({
+          name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || "",
+          build_mode: modeEl ? modeEl.value : "dockerfile",
+          stack: stackEl ? stackEl.value : "",
+          build_context: buildContext,
+          dockerfile_path: (form.querySelector('[name="svc_df_' + idx + '"]') || {}).value || "Dockerfile",
+          ingress_path: ingress,
+          expose_ingress: expose,
+          container_port: 8080,
+          health_path: "/health",
+          sort_order: parseInt(idx, 10) || 0,
+        });
+      });
+    }
+  }
+  return { layout: layout, services: services };
+}
+
+async function runGitHubPipelineSetup(slug, opts) {
+  opts = opts || {};
+  const body = {
+    owner: opts.owner,
+    repo: opts.repo,
+    branch: opts.branch || "main",
+    environment: opts.environment || "dev",
+  };
+  if (opts.apply_repo_contract) {
+    body.apply_repo_contract = true;
+  } else {
+    const layoutPayload = opts.layoutPayload || { layout: "single", services: [] };
+    body.layout = layoutPayload.layout;
+    body.services = layoutPayload.services;
+  }
+  const progress = opts.progressEl;
+  const submitBtn = opts.submitBtn;
+  const formRoot = opts.formRoot;
+  const steps = PIPELINE_SETUP_STEPS;
+  if (progress) {
+    progress.hidden = false;
+    progress.innerHTML =
+      '<div class="setup-progress-title"><span class="btn-spinner"></span> Đang đồng bộ pipeline…</div>' +
+      steps
+        .map(function (s) {
+          return '<div class="setup-step setup-step-pending">' + esc(s) + "</div>";
+        })
+        .join("");
+  }
+  if (submitBtn) setButtonLoading(submitBtn, true, "Đang đồng bộ…");
+  if (formRoot) {
+    formRoot.querySelectorAll("input, select, button").forEach(function (el) {
+      if (el !== submitBtn) el.disabled = true;
+    });
+  }
+  let stepIdx = 0;
+  const stepTimer = setInterval(function () {
+    if (!progress) return;
+    progress.querySelectorAll(".setup-step").forEach(function (el, i) {
+      el.className = "setup-step " + (i < stepIdx ? "setup-step-done" : i === stepIdx ? "setup-step-run" : "setup-step-pending");
+    });
+    if (stepIdx < steps.length - 1) stepIdx++;
+  }, 900);
+  try {
+    const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/github/setup", {
+      method: "POST",
+      body: body,
+    });
+    clearInterval(stepTimer);
+    if (progress) {
+      progress.querySelectorAll(".setup-step").forEach(function (el) {
+        el.className = "setup-step setup-step-done";
+      });
+      progress.innerHTML =
+        '<div class="setup-progress-title setup-progress-ok">✓ Pipeline sẵn sàng — layout + workflow đồng bộ</div>' +
+        steps
+          .map(function (s) {
+            return '<div class="setup-step setup-step-done">' + esc(s) + "</div>";
+          })
+          .join("");
+      setTimeout(function () {
+        progress.hidden = true;
+      }, 4000);
+    }
+    return res;
+  } catch (err) {
+    clearInterval(stepTimer);
+    if (progress) {
+      renderSetupSyncError(progress, errorMessage(err, "Đồng bộ pipeline thất bại"), steps);
+    }
+    throw err;
+  } finally {
+    if (submitBtn) setButtonLoading(submitBtn, false, "Lưu & đồng bộ GitHub");
+    if (formRoot) {
+      formRoot.querySelectorAll("input, select, button").forEach(function (el) {
+        el.disabled = false;
+      });
+    }
+  }
+}
+
+function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit) {
+  repo = repo || {};
+  ghStatus = ghStatus || {};
+  ghRepos = ghRepos || { items: [] };
+  svcData = svcData || {};
+  const layout = svcData.layout || "single";
+  const items = svcData.items || [];
   const isMulti = layout === "multi";
   const tpl = defaultMultiTemplate(svcData);
   const multiItems = isMulti && items.length >= 2 ? items : tpl;
-  const conv = (svcData && svcData.conventions) || null;
-  const repoContract = (svcData && svcData.repo_contract) || null;
+  const conv = svcData.conventions || null;
+  const repoContract = svcData.repo_contract || null;
   const conventionBanner = isMulti ? renderBackFrontConventionBanner(conv, canEdit) : "";
   const contractBanner = renderServicesContractBanner(repoContract, canEdit);
-
-  function servicePreviewCard(s) {
-    return renderServicePreviewCard(s);
-  }
-
-  function advancedRowHtml(s, idx) {
-    return buildServiceTableRowHtml(s, idx);
-  }
+  const ghRepoOpts = githubRepoOptionsHtml(repo, ghRepos);
 
   const singleHint =
     '<div id="layout-single-hint" class="layout-hint-panel"' + (isMulti ? ' hidden' : "") + ">" +
-    "<strong>Một app</strong> — Platform tự quét repo khi bạn bấm <em>Kết nối repo</em> bên dưới.<br>" +
+    "<strong>Một app</strong> — 1 image <code>app</code>, Platform tự quét Dockerfile/Buildpack trên branch đã chọn.<br>" +
     (repo.build_mode
-      ? "Hiện tại: <strong>" + esc(buildModeLabel(repo.build_mode)) + "</strong>" +
+      ? "Gần nhất: <strong>" + esc(buildModeLabel(repo.build_mode)) + "</strong>" +
         (repo.build_mode_detected_path ? " · <code>" + esc(repo.build_mode_detected_path) + "</code>" : "") +
-        " · listen <code>8080</code><br>"
-      : "") +
-    "Không cần điền bảng build context ở đây — cấu hình Git nằm ở mục <strong>Nâng cao</strong> nếu cần.</div>";
+        " · listen <code>8080</code>"
+      : "Chọn branch → kiểm tra tự động bên trên.") +
+    "</div>";
 
   const multiPanel =
     '<div id="layout-multi-panel"' + (!isMulti ? ' hidden' : "") + ">" +
     contractBanner +
     conventionBanner +
-    '<p class="muted" style="margin:0 0 10px"><strong>Multi-service (micro)</strong> — thêm N service · public (Ingress) hoặc <em>internal</em> (chỉ cluster).<br>' +
-    'Pod nhận env discovery <code>SVC_&lt;TÊN&gt;_URL=http://&lt;service&gt;:80</code> cho mọi service khác.<br>' +
-    '<span style="font-size:12px">Lưu kiểm tra thư mục theo <strong>branch</strong> ở card GitHub bên dưới.</span></p>' +
+    '<p class="muted" style="margin:0 0 10px">N service · public (Ingress) hoặc internal. Env discovery <code>SVC_&lt;TÊN&gt;_URL</code>.</p>' +
     '<div class="service-preview-grid" id="service-preview-grid">' +
-    multiItems.map(servicePreviewCard).join("") +
+    multiItems.map(renderServicePreviewCard).join("") +
     "</div>" +
-    '<details class="layout-advanced-details"><summary>Tùy chỉnh nâng cao (dev)</summary>' +
-    '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục: chọn từ dropdown GitHub (branch đã cấu hình). Nhập sai → Lưu báo lỗi hoặc CI fail.</p>' +
+    '<details class="layout-advanced-details"><summary>Tùy chỉnh service (dev)</summary>' +
+    '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục build theo branch đã chọn ở bước 1.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
     '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
     '<tbody id="project-services-tbody">' +
-    multiItems.map(advancedRowHtml).join("") +
+    multiItems.map(function (s, idx) { return buildServiceTableRowHtml(s, idx); }).join("") +
     "</tbody></table>" +
     '<button type="button" class="btn-ghost btn-sm" id="project-services-add-row" style="margin-top:8px">+ Thêm service</button>' +
     "</details></div>";
 
+  const statusChips =
+    '<div class="pipeline-status-chips">' +
+    chip("Layout", isMulti ? "Multi-service" : "Một app") +
+    (ghStatus.connected ? chip("GitHub", "@" + (ghStatus.login || "?")) : "") +
+    (repo.workflow_synced_at && repo.auto_deploy_enabled
+      ? '<span class="badge ok">Workflow OK</span>'
+      : repo.workflow_synced_at
+        ? '<span class="badge warn">Workflow cũ</span>'
+        : '<span class="badge warn">Chưa đồng bộ</span>') +
+    "</div>";
+
+  const crosscheck = renderPipelineCrosscheckHtml(repo, svcData, repoContract);
+
+  if (!ghStatus.enabled) {
+    return (
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+      '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p></div>'
+    );
+  }
+
+  if (!ghStatus.connected) {
+    return (
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+      '<p class="muted">Một luồng từ trên xuống: kết nối GitHub → chọn repo/branch → kiểu dự án → đồng bộ workflow.</p>' +
+      (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : "") +
+      "</div>"
+    );
+  }
+
+  if (!canEdit) {
+    return (
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+      statusChips +
+      crosscheck +
+      '<div class="meta-chips">' + chip("Repo", (repo.github_owner || "") + "/" + (repo.github_repo || "")) + chip("Branch", repo.branch || "main") + "</div>" +
+      (isMulti ? '<div class="service-preview-grid" style="margin-top:12px">' + multiItems.map(renderServicePreviewCard).join("") + "</div>" : singleHint) +
+      "</div>"
+    );
+  }
+
   return (
-    '<div class="card" style="margin-bottom:16px" id="project-services-card"><h3>Kiểu dự án</h3>' +
-    '<p class="muted" style="margin-top:0">Chọn cách build khớp với repo Git — tránh chọn nhầm layout vs branch.</p>' +
-    (canEdit
-      ? '<form id="project-services-form" class="login-form">' +
-        '<div class="layout-picker">' +
-        '<label class="layout-option">' +
-        '<input type="radio" name="layout" value="single"' + (!isMulti ? " checked" : "") + " />" +
-        '<div class="layout-option-body">' +
-        "<strong>Một app</strong>" +
-        "<span>1 image <code>app</code> · 1 Deployment</span>" +
-        "<span>Single stack hoặc buildpack — tự nhận từ repo</span>" +
-        "</div></label>" +
-        '<label class="layout-option">' +
-        '<input type="radio" name="layout" value="multi"' + (isMulti ? " checked" : "") + " />" +
-        '<div class="layout-option-body">' +
-        "<strong>Multi-service (micro)</strong>" +
-        "<span>N service · api/web hoặc gateway + engines</span>" +
-        "<span>Public Ingress hoặc internal-only (ClusterIP)</span>" +
-        "</div></label></div>" +
-        singleHint +
-        multiPanel +
-        '<button type="submit" class="btn-primary" style="margin-top:4px">Lưu kiểu dự án</button>' +
-        '<p class="muted" style="margin-top:8px;font-size:12px">Sau khi đổi kiểu → <strong>sync lại workflow GitHub</strong> (card bên dưới).</p></form>'
-      : '<div class="meta-chips">' +
-        chip("Layout", isMulti ? "Multi-service" : "Một app") +
-        "</div>" +
-        (isMulti
-          ? '<div class="service-preview-grid" style="margin-top:12px">' + multiItems.map(servicePreviewCard).join("") + "</div>"
-          : singleHint)) +
-    "</div>"
+    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+    '<p class="muted" style="margin-top:0">Một form — kiểm tra chéo branch ↔ layout trước khi đồng bộ workflow.</p>' +
+    statusChips +
+    crosscheck +
+    '<form id="pipeline-setup-form" class="login-form pipeline-wizard">' +
+    '<div class="pipeline-step">' +
+    '<div class="pipeline-step-head"><span class="pipeline-step-num">1</span> Nguồn GitHub</div>' +
+    '<p class="muted" style="margin:0 0 10px">Đã kết nối <strong>@' + esc(ghStatus.login || "") + "</strong></p>" +
+    '<label>Repository' +
+    selectWrapHtml("github-repo-select", '<option value="">— chọn repo —</option>' + ghRepoOpts, { name: "repo", required: true }) +
+    "</label>" +
+    '<div class="form-row">' +
+    '<label>Branch' +
+    selectWrapHtml("github-branch-select", githubBranchOptionsHtml([], repo.branch || "main"), { name: "branch", required: true }) +
+    "</label>" +
+    '<label>Deploy env' +
+    selectWrapHtml(
+      "",
+      '<option value="dev"' + (repo.deploy_environment !== "prod" ? " selected" : "") + ">dev</option>" +
+        '<option value="prod"' + (repo.deploy_environment === "prod" ? " selected" : "") + ">prod</option>",
+      { name: "environment" }
+    ) +
+    "</label></div>" +
+    '<div id="pipeline-build-hint">' + buildModeAutoHintHtml(repo) + "</div>" +
+    (repo.workflow_synced_at
+      ? '<label class="auto-deploy-toggle"><input type="checkbox" id="auto-deploy-toggle" ' +
+        (repo.auto_deploy_enabled ? "checked" : "") +
+        " /> Tự deploy lên cluster khi build xong</label>"
+      : "") +
+    "</div>" +
+    '<div class="pipeline-step">' +
+    '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Kiểu dự án</div>' +
+    '<div class="layout-picker">' +
+    '<label class="layout-option">' +
+    '<input type="radio" name="layout" value="single"' + (!isMulti ? " checked" : "") + " />" +
+    '<div class="layout-option-body"><strong>Một app</strong><span>1 Deployment <code>app</code></span></div></label>' +
+    '<label class="layout-option">' +
+    '<input type="radio" name="layout" value="multi"' + (isMulti ? " checked" : "") + " />" +
+    '<div class="layout-option-body"><strong>Multi-service</strong><span>api/web, gateway, workers…</span></div></label></div>' +
+    singleHint +
+    multiPanel +
+    "</div>" +
+    '<div class="pipeline-step">' +
+    '<div class="pipeline-step-head"><span class="pipeline-step-num">3</span> Đồng bộ workflow</div>' +
+    '<div id="github-setup-progress" class="setup-progress" hidden></div>' +
+    '<div class="form-actions" style="flex-wrap:wrap;gap:8px">' +
+    '<button type="submit" class="btn-primary" id="github-setup-submit">Lưu &amp; đồng bộ GitHub</button>' +
+    '<button type="button" class="btn-ghost btn-sm" id="pipeline-save-draft">Chỉ lưu Console</button>' +
+    '<button type="button" class="btn-ghost btn-sm" id="github-disconnect-btn">Ngắt GitHub</button>' +
+    "</div></div>" +
+    "</form></div>"
   );
 }
 
@@ -3137,8 +3440,8 @@ function selectedGitHubBranch(fallback) {
   return String(fallback || "main").trim() || "main";
 }
 
-function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
-  const form = document.getElementById("project-services-form");
+function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken) {
+  const form = document.getElementById("pipeline-setup-form");
   const singleHint = document.getElementById("layout-single-hint");
   const multiPanel = document.getElementById("layout-multi-panel");
   const previewGrid = document.getElementById("service-preview-grid");
@@ -3149,6 +3452,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   let nextSvcIdx = Math.max((template.length || 2) - 1, 0);
   repo = repo || {};
   ghStatus = ghStatus || {};
+  env = env || state.projectEnv || "dev";
   if (!form) return;
 
   function readCtxValue(idx) {
@@ -3195,13 +3499,13 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   }
 
   async function loadGitHubDirs() {
-    const owner = (repo.github_owner || "").trim();
-    const ghRepo = (repo.github_repo || "").trim();
+    const parsed = parseRepoFromForm(form);
+    const owner = parsed ? parsed.owner : (repo.github_owner || "").trim();
+    const ghRepo = parsed ? parsed.repo : (repo.github_repo || "").trim();
     const branch = selectedGitHubBranch(repo.branch || "main");
     if (!ghStatus.connected || !owner || !ghRepo) {
       if (dirHint) {
-        dirHint.textContent =
-          "Kết nối GitHub + chọn repo/branch ở card bên dưới trước — rồi bấm Quét thư mục.";
+        dirHint.textContent = "Chọn repo và branch ở bước 1 — rồi bấm Quét thư mục.";
       }
       return [];
     }
@@ -3284,7 +3588,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
       expose_ingress: expose,
       container_port: defaults.container_port || 8080,
       health_path: defaults.health_path || "/health",
-      sort_order: idx,
+      sort_order: parseInt(idx, 10) || 0,
       display_name: defaults.display_name || "",
     };
   }
@@ -3352,6 +3656,10 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
     };
   }
 
+  function scheduleCrosscheck() {
+    refreshPipelineCrosscheck(slug, form, svcData, repo);
+  }
+
   function togglePanels() {
     const multi = currentLayout() === "multi";
     if (singleHint) singleHint.hidden = multi;
@@ -3370,6 +3678,7 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
       refreshGitHubDirs();
     }
     refreshPreview();
+    scheduleCrosscheck();
   }
 
   form.querySelectorAll('input[name="layout"]').forEach(function (el) {
@@ -3400,6 +3709,33 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   if (currentLayout() === "multi") {
     refreshGitHubDirs();
   }
+  scheduleCrosscheck();
+
+  const repoSel = form.querySelector('[name="repo"]');
+  const branchSel = form.querySelector('[name="branch"]');
+  if (repoSel) {
+    repoSel.onchange = function () {
+      const parsed = parseGitHubRepoValue(repoSel.value);
+      if (branchSel) {
+        if (!parsed) {
+          branchSel.innerHTML = '<option value="main" selected>main</option>';
+        } else {
+          const opt = repoSel.options[repoSel.selectedIndex];
+          const defBranch = (opt && opt.dataset.branch) || "main";
+          loadGitHubBranchSelect(branchSel, parsed.owner, parsed.repo, defBranch).then(scheduleCrosscheck);
+          return;
+        }
+      }
+      scheduleCrosscheck();
+    };
+  }
+  if (branchSel) {
+    branchSel.onchange = scheduleCrosscheck;
+  }
+  if (tbody) {
+    tbody.addEventListener("change", scheduleCrosscheck);
+  }
+
   bindApplyConventionsButton(main, slug, function () {
     pageProjectHub(main, slug, "deploy");
   });
@@ -3407,111 +3743,101 @@ function bindProjectServicesForm(main, slug, svcData, repo, ghStatus) {
   const syncContractBtn = document.getElementById("sync-services-contract");
   if (syncContractBtn) {
     syncContractBtn.onclick = async function () {
+      syncContractBtn.disabled = true;
       try {
-        syncContractBtn.disabled = true;
-        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services/sync-from-repo", {
-          method: "POST",
-          body: { branch: selectedGitHubBranch(repo.branch || "main") },
-        });
-        toastSuccess("Đã áp dụng services.yaml — sync workflow GitHub");
-        pageProjectHub(main, slug, "deploy");
+        const parsed = parseRepoFromForm(form);
+        if (ghStatus.connected && parsed) {
+          const fd = new FormData(form);
+          await runGitHubPipelineSetup(slug, {
+            owner: parsed.owner,
+            repo: parsed.repo,
+            branch: fd.get("branch") || selectedGitHubBranch(repo.branch || "main"),
+            environment: (fd.get("environment") || "dev").toString(),
+            apply_repo_contract: true,
+            progressEl: document.getElementById("github-setup-progress"),
+            submitBtn: document.getElementById("github-setup-submit"),
+            formRoot: form,
+          });
+          toastSuccess("Đã áp dụng services.yaml + đồng bộ workflow");
+          pageProjectHub(main, slug, "deploy");
+        } else {
+          await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services/sync-from-repo", {
+            method: "POST",
+            body: { branch: selectedGitHubBranch(repo.branch || "main") },
+          });
+          toastSuccess("Đã áp dụng services.yaml — chọn repo và bấm Lưu & đồng bộ GitHub");
+          pageProjectHub(main, slug, "deploy");
+        }
       } catch (err) {
-        toastError(err.message);
+        toastError(errorMessage(err));
       } finally {
         syncContractBtn.disabled = false;
       }
     };
   }
 
+  const draftBtn = document.getElementById("pipeline-save-draft");
+  if (draftBtn) {
+    draftBtn.onclick = async function () {
+      const layoutPayload = collectProjectLayoutPayload(form);
+      try {
+        const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
+          method: "PUT",
+          body: Object.assign({ branch: selectedGitHubBranch(repo.branch || "main") }, layoutPayload),
+        });
+        if (res.convention_seeds && res.convention_seeds.length) {
+          toastSuccess("Đã lưu nháp — đã gợi ý env · bấm Lưu & đồng bộ GitHub");
+        } else {
+          toastSuccess(res.hint || "Đã lưu Console — bấm Lưu & đồng bộ GitHub để push workflow");
+        }
+        scheduleCrosscheck();
+      } catch (err) {
+        toastError(errorMessage(err));
+      }
+    };
+  }
+
   form.onsubmit = async function (e) {
     e.preventDefault();
-    const layout = currentLayout();
-    const services = [];
-    if (layout === "multi" && tbody) {
-      services.push.apply(services, servicesFromForm());
+    const fd = new FormData(form);
+    const full = (fd.get("repo") || "").toString();
+    const parts = full.split("/");
+    if (parts.length < 2) {
+      toastError("Chọn repository");
+      return;
     }
+    const submitBtn = document.getElementById("github-setup-submit");
+    const progress = document.getElementById("github-setup-progress");
     try {
-      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
-        method: "PUT",
-        body: {
-          layout: layout,
-          services: services,
-          branch: selectedGitHubBranch(repo.branch || "main"),
-        },
+      await runGitHubPipelineSetup(slug, {
+        owner: parts[0],
+        repo: parts[1],
+        branch: fd.get("branch"),
+        environment: fd.get("environment"),
+        layoutPayload: collectProjectLayoutPayload(form),
+        progressEl: progress,
+        submitBtn: submitBtn,
+        formRoot: form,
       });
-      if (res.convention_seeds && res.convention_seeds.length) {
-        toastSuccess("Đã lưu — đã gợi ý env VITE_API_BASE=/api · sync workflow GitHub");
-      } else {
-        toastSuccess("Đã lưu kiểu dự án — nhớ sync workflow GitHub");
+      toastSuccess("Pipeline sẵn sàng — theo dõi build bên dưới");
+      const activity = await api(
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: env })
+      ).catch(function () { return { items: [] }; });
+      let readiness = null;
+      if (env === "dev" && canManagePlatformProjects()) {
+        readiness = await api(
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"
+        ).catch(function () { return null; });
       }
-      pageProjectHub(main, slug, "deploy");
+      updateDeployActivityDOM(activity, slug, readiness, env);
+      bindDeployActivityPoll(slug, env, navToken);
+      const actCard = document.getElementById("deploy-activity-card");
+      if (actCard) actCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      scheduleCrosscheck();
     } catch (err) {
-      toastError(err.message);
+      toastError(errorMessage(err, "Đồng bộ pipeline thất bại"));
     }
   };
-}
-
-function renderDeployGhCard(repo, ghStatus, ghRepos) {
-  const ghRepoOpts = githubRepoOptionsHtml(repo, ghRepos);
-  return (
-    '<div class="card" style="margin-bottom:16px"><h3>GitHub · Auto deploy</h3>' +
-    (!ghStatus.enabled
-      ? '<p class="muted">GitHub OAuth chưa cấu hình trên VPS (<code>GITHUB_CLIENT_ID</code> / <code>GITHUB_CLIENT_SECRET</code>).</p>'
-      : !ghStatus.connected
-        ? '<p class="muted">Kết nối GitHub để chọn repo và bật auto-deploy khi push code.</p>' +
-          (canWriteK8s()
-            ? '<button type="button" class="btn-primary" id="github-connect-btn">Kết nối GitHub</button>'
-            : "")
-        : '<p class="muted">Đã kết nối <strong>@' +
-          esc(ghStatus.login || "") +
-          "</strong>" +
-          (repo.workflow_synced_at
-            ? repo.auto_deploy_enabled
-              ? ' · <span class="badge ok" id="auto-deploy-badge">Auto-deploy bật</span>'
-              : ' · <span class="badge warn" id="auto-deploy-badge">Auto-deploy tắt</span>'
-            : "") +
-          (repo.build_mode
-            ? ' · <span class="badge">' +
-              esc(repo.build_mode === "buildpack" ? "Buildpack" : "Docker") +
-              (repo.build_mode_detected_path ? " · " + esc(repo.build_mode_detected_path) : "") +
-              "</span>"
-            : "") +
-          "</p>" +
-          (canWriteK8s() && repo.workflow_synced_at
-            ? '<label class="auto-deploy-toggle"><input type="checkbox" id="auto-deploy-toggle" ' +
-              (repo.auto_deploy_enabled ? "checked" : "") +
-              " /> Tự deploy lên cluster khi build xong (push GitHub)</label>"
-            : "") +
-          (canWriteK8s()
-            ? '<form id="github-setup-form" class="login-form github-setup-form">' +
-              '<label>Repository' +
-              selectWrapHtml("github-repo-select", '<option value="">— chọn repo —</option>' + ghRepoOpts, { name: "repo", required: true }) +
-              "</label>" +
-              '<div class="form-row">' +
-              '<label>Branch' +
-              selectWrapHtml(
-                "github-branch-select",
-                githubBranchOptionsHtml([], repo.branch || "main"),
-                { name: "branch", required: true }
-              ) +
-              "</label>" +
-              '<label>Deploy env' +
-              selectWrapHtml(
-                "",
-                '<option value="dev"' + (repo.deploy_environment !== "prod" ? " selected" : "") + '>dev</option>' +
-                  '<option value="prod"' + (repo.deploy_environment === "prod" ? " selected" : "") + ">prod</option>",
-                { name: "environment" }
-              ) +
-              "</label></div>" +
-              buildModeAutoHintHtml(repo) +
-              '<div id="github-setup-progress" class="setup-progress" hidden></div>' +
-              '<div class="form-actions">' +
-              '<button type="submit" class="btn-primary" id="github-setup-submit">Kết nối repo & bật auto-deploy</button>' +
-              '<button type="button" class="btn-ghost btn-sm" id="github-disconnect-btn">Ngắt GitHub</button>' +
-              "</div></form>"
-            : "")) +
-    "</div>"
-  );
 }
 
 async function pageProjectHub(main, slug, tab) {
@@ -3520,15 +3846,36 @@ async function pageProjectHub(main, slug, tab) {
     stopDeployPoll();
   }
   main.innerHTML = '<p class="loading">Đang tải project…</p>';
-  const data = await api("/api/v1/projects/" + encodeURIComponent(slug));
+  let data;
+  try {
+    data = await api("/api/v1/projects/" + encodeURIComponent(slug));
+  } catch (err) {
+    main.innerHTML =
+      '<p class="error">Lỗi: ' +
+      esc(errorMessage(err, "Không tải được project — thử đăng nhập lại")) +
+      '</p><p class="muted" style="margin-top:8px"><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></p>';
+    return;
+  }
   const p = data.project;
+  if (!p) {
+    main.innerHTML = '<p class="error">Lỗi: project không tồn tại hoặc API trả dữ liệu không hợp lệ.</p>';
+    return;
+  }
   state.projectCtx = p;
+  if (
+    state.namespace &&
+    state.namespace !== p.namespace_dev &&
+    state.namespace !== p.namespace_prod
+  ) {
+    state.namespace = "";
+    localStorage.removeItem("filter-ns");
+  }
   const canManage = canManagePlatformProjects();
   const env = state.projectEnv || "dev";
   const ns = env === "prod" ? p.namespace_prod : p.namespace_dev;
 
   if (tab === "overview") {
-    const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + qs());
+    const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
     const dev = ov.dev || {};
     const prod = ov.prod || {};
     main.innerHTML =
@@ -3625,7 +3972,7 @@ async function pageProjectHub(main, slug, tab) {
       '<div class="card" id="deploy-history-page"><h3>Lịch sử · ' + esc(envLabel) + '</h3><p class="loading">Đang tải lịch sử…</p></div>';
     try {
       const activity = await api(
-        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: env, scope: "history" })
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: env, scope: "history" })
       );
       state.deployActivityCache[deployHistoryPageKey(slug, env)] = activity;
       const hist = renderDeployHistoryContent(activity, { slug: slug, expectedEnv: env });
@@ -3672,12 +4019,11 @@ async function pageProjectHub(main, slug, tab) {
       const [readiness, activityDev] = await Promise.all([
         api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"),
         api(
-          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: "dev", scope: "current" })
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: "dev", scope: "current" })
         ),
       ]);
       rememberPromoteReadiness(slug, readiness);
-      const cur = activityDev.current;
-      const tag = cur && cur.status === "success" ? cur.image_tag : "";
+      const tag = promotableDevImageTag(activityDev, readiness);
       let html = renderDeployPromotePrep(readiness, slug);
       if (tag) {
         html +=
@@ -3685,7 +4031,11 @@ async function pageProjectHub(main, slug, tab) {
           '<div class="deploy-promote-bar-inner">' +
           '<span class="muted">Image dev sẵn sàng: <code>' +
           esc(tag.slice(0, 12)) +
-          "</code></span>" +
+          "</code>" +
+          (activityDev.current && activityDev.current.status !== "success"
+            ? ' <span class="badge warn" style="margin-left:6px">từ lịch sử success</span>'
+            : "") +
+          "</span>" +
           '<button type="button" class="btn-primary" id="deploy-promote-btn" data-tag="' +
           esc(tag) +
           '"' +
@@ -3739,6 +4089,7 @@ async function pageProjectHub(main, slug, tab) {
   }
 
   if (tab === "deploy") {
+    try {
     const navToken = state.navToken;
     const repo = data.repo || {};
     const reg = p.registry || {};
@@ -3754,7 +4105,7 @@ async function pageProjectHub(main, slug, tab) {
       return { enabled: false, connected: false };
     });
     const planP = api(
-      "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/plan" + qs({ environment: env })
+      "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/plan" + projectQs({ environment: env })
     ).catch(function (err) {
       return { error: err.message };
     });
@@ -3779,8 +4130,7 @@ async function pageProjectHub(main, slug, tab) {
     main.innerHTML =
       projectHeader(p, "Deploy / Git") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "deploy"); }) +
-      renderProjectServicesCard(slug, svcData, repo, canWriteK8s()) +
-      renderDeployGhCard(repo, ghStatus, ghReposPlaceholder) +
+      renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghReposPlaceholder, canWriteK8s()) +
       '<div class="card" style="margin-bottom:16px"><h3>Tóm tắt</h3>' +
       '<div class="meta-chips">' +
       chip(reg.label || p.registry_provider || "GHCR", reg.provider || p.registry_provider) +
@@ -3857,14 +4207,14 @@ async function pageProjectHub(main, slug, tab) {
           "</div></details>");
 
     bindSnippetCopyButtons(main);
-    bindProjectServicesForm(main, slug, svcData, repo, ghStatus);
+    bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken);
 
     Promise.all([
       ghStatus.connected
         ? api("/api/v1/github/repos").catch(function () { return { items: [] }; })
         : Promise.resolve({ items: [] }),
       api(
-        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: env, scope: "current" })
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: env, scope: "current" })
       ).catch(function () {
         return { items: [] };
       }),
@@ -3883,7 +4233,10 @@ async function pageProjectHub(main, slug, tab) {
           ? { owner: repo.github_owner, repo: repo.github_repo }
           : parseGitHubRepoValue(repoSel && repoSel.value);
       if (branchSel && linked) {
-        loadGitHubBranchSelect(branchSel, linked.owner, linked.repo, repo.branch || "main");
+        loadGitHubBranchSelect(branchSel, linked.owner, linked.repo, repo.branch || "main").then(function () {
+          const pipelineForm = document.getElementById("pipeline-setup-form");
+          if (pipelineForm) refreshPipelineCrosscheck(slug, pipelineForm, svcData, repo);
+        });
       }
       updateDeployActivityDOM(activity, slug, undefined, env, {
         showHistory: false,
@@ -3931,7 +4284,7 @@ async function pageProjectHub(main, slug, tab) {
     }
     const ghRepoSel = document.getElementById("github-repo-select");
     const ghBranchSel = document.getElementById("github-branch-select");
-    if (ghRepoSel && ghBranchSel) {
+    if (ghRepoSel && ghBranchSel && !document.getElementById("pipeline-setup-form")) {
       ghRepoSel.onchange = function () {
         const parsed = parseGitHubRepoValue(ghRepoSel.value);
         if (!parsed) {
@@ -3952,98 +4305,6 @@ async function pageProjectHub(main, slug, tab) {
           loadGitHubBranchSelect(ghBranchSel, parsed.owner, parsed.repo, repo.branch || "main");
         }
       }
-    }
-    const ghSetup = document.getElementById("github-setup-form");
-    if (ghSetup) {
-      ghSetup.onsubmit = async function (e) {
-        e.preventDefault();
-        const fd = new FormData(ghSetup);
-        const full = (fd.get("repo") || "").toString();
-        const parts = full.split("/");
-        if (parts.length < 2) {
-          toastError("Chọn repository");
-          return;
-        }
-        const submitBtn = document.getElementById("github-setup-submit");
-        const progress = document.getElementById("github-setup-progress");
-        const steps = ["Lưu cấu hình repo", "Push workflow lên GitHub", "Inject secrets (Harbor + deploy token)"];
-        if (progress) {
-          progress.hidden = false;
-          progress.innerHTML =
-            '<div class="setup-progress-title"><span class="btn-spinner"></span> Đang đồng bộ GitHub…</div>' +
-            steps.map(function (s, i) {
-              return '<div class="setup-step setup-step-pending" data-step="' + i + '">' + esc(s) + "</div>";
-            }).join("");
-        }
-        setButtonLoading(submitBtn, true, "Đang đồng bộ…");
-        ghSetup.querySelectorAll("input, select, button").forEach(function (el) {
-          if (el !== submitBtn) el.disabled = true;
-        });
-        let stepIdx = 0;
-        const stepTimer = setInterval(function () {
-          if (!progress) return;
-          progress.querySelectorAll(".setup-step").forEach(function (el, i) {
-            el.className = "setup-step " + (i < stepIdx ? "setup-step-done" : i === stepIdx ? "setup-step-run" : "setup-step-pending");
-          });
-          if (stepIdx < steps.length - 1) stepIdx++;
-        }, 900);
-        try {
-          await api("/api/v1/projects/" + encodeURIComponent(slug) + "/github/setup", {
-            method: "POST",
-            body: {
-              owner: parts[0],
-              repo: parts[1],
-              branch: fd.get("branch"),
-              environment: fd.get("environment"),
-            },
-          });
-          clearInterval(stepTimer);
-          if (progress) {
-            progress.querySelectorAll(".setup-step").forEach(function (el) {
-              el.className = "setup-step setup-step-done";
-            });
-            progress.innerHTML =
-              '<div class="setup-progress-title setup-progress-ok">✓ Đã đồng bộ GitHub — auto-deploy sẵn sàng</div>' +
-              steps
-                .map(function (s) {
-                  return '<div class="setup-step setup-step-done">' + esc(s) + "</div>";
-                })
-                .join("");
-            setTimeout(function () {
-              progress.hidden = true;
-            }, 3500);
-          }
-          toastSuccess("Đã bật auto-deploy — theo dõi log bên dưới");
-          const activity = await api(
-            "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + qs({ environment: env })
-          ).catch(function () { return { items: [] }; });
-          let readiness = null;
-          if (env === "dev" && canManagePlatformProjects()) {
-            readiness = await api(
-              "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"
-            ).catch(function () { return null; });
-          }
-          updateDeployActivityDOM(activity, slug, readiness, env);
-          bindDeployActivityPoll(slug, env, navToken);
-          const actCard = document.getElementById("deploy-activity-card");
-          if (actCard) actCard.scrollIntoView({ behavior: "smooth", block: "start" });
-          const statusLine = ghSetup.closest(".card") && ghSetup.closest(".card").querySelector("p.muted");
-          if (statusLine) {
-            statusLine.innerHTML =
-              'Đã kết nối <strong>@' + esc(ghStatus.login || "") + '</strong> · <span class="badge ok">Auto-deploy bật</span>';
-          }
-        } catch (err) {
-          clearInterval(stepTimer);
-          const msg = (err && err.message) || "Đồng bộ GitHub thất bại";
-          renderSetupSyncError(progress, msg, steps);
-          toastError(msg);
-        } finally {
-          setButtonLoading(submitBtn, false, "Kết nối repo & bật auto-deploy");
-          ghSetup.querySelectorAll("input, select, button").forEach(function (el) {
-            el.disabled = false;
-          });
-        }
-      };
     }
     const ghDisc = document.getElementById("github-disconnect-btn");
     if (ghDisc) {
@@ -4119,6 +4380,13 @@ async function pageProjectHub(main, slug, tab) {
       };
     }
     bindEnvSuggestButtons(main, slug, env);
+    } catch (err) {
+      main.innerHTML =
+        projectHeader(p, "Deploy / Git") +
+        '<div class="card"><p class="error-text">Lỗi: ' +
+        esc(errorMessage(err, "Không tải được trang Deploy")) +
+        '</p><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></div>';
+    }
     return;
   }
 
@@ -5330,17 +5598,8 @@ function showLoginPage(msg) {
   if (!main) return;
   const existingForm = document.getElementById("login-form");
   if (existingForm) {
-    const errEl = document.querySelector(".login-card .login-session-error");
-    if (msg && errEl) errEl.textContent = msg;
-    else if (msg && !errEl) {
-      const card = document.querySelector(".login-card");
-      if (card) {
-        const p = document.createElement("p");
-        p.className = "error login-session-error";
-        p.textContent = msg;
-        card.insertBefore(p, existingForm);
-      }
-    }
+    if (msg) setLoginError(msg);
+    else clearLoginError();
     return;
   }
   main.innerHTML =
@@ -5348,26 +5607,70 @@ function showLoginPage(msg) {
     '<div class="login-card">' +
     "<h2>Platform Console</h2>" +
     "<p class=\"muted\">Đăng nhập để quản lý cluster</p>" +
-    (msg ? '<p class="error login-session-error">' + esc(msg) + "</p>" : '<p class="login-session-error" hidden></p>') +
+    '<p class="login-session-error" role="alert" aria-live="polite" hidden></p>' +
     '<form id="login-form" class="login-form">' +
     '<label>Email<input type="email" name="email" autocomplete="username" required /></label>' +
     '<label>Mật khẩu<input type="password" name="password" autocomplete="current-password" required minlength="12" /></label>' +
-    '<button type="submit" class="btn-primary">Đăng nhập</button>' +
+    '<button type="submit" class="btn-primary" id="login-submit-btn">Đăng nhập</button>' +
     "</form>" +
     '<div id="quick-login-box" class="quick-login-box quick-login-loading">' +
     '<p class="muted quick-login-placeholder">Đang tải đăng nhập nhanh…</p></div>' +
     '<p class="login-hint muted">Mật khẩu ≥ 12 ký tự, có chữ và số</p>' +
     "</div></div>";
+  if (msg) setLoginError(msg);
   $("#login-form").onsubmit = async (e) => {
     e.preventDefault();
+    clearLoginError();
     const fd = new FormData(e.target);
+    const btn = document.getElementById("login-submit-btn");
+    if (btn) {
+      btn.disabled = true;
+      btn.dataset.label = btn.textContent;
+      btn.innerHTML = '<span class="btn-spinner"></span> Đang đăng nhập…';
+    }
     try {
       await performLogin(String(fd.get("email") || ""), String(fd.get("password") || ""));
     } catch (err) {
-      showLoginPage(err.message);
+      setLoginError(err.message || "Đăng nhập thất bại");
+      toastError(err.message || "Đăng nhập thất bại");
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.label || "Đăng nhập";
+      }
     }
   };
   bindQuickLoginBox();
+}
+
+function setLoginError(msg) {
+  msg = String(msg || "").trim();
+  if (!msg) return;
+  const card = document.querySelector(".login-card");
+  if (!card) return;
+  let errEl = card.querySelector(".login-session-error");
+  if (!errEl) {
+    errEl = document.createElement("p");
+    errEl.className = "login-session-error";
+    errEl.setAttribute("role", "alert");
+    errEl.setAttribute("aria-live", "polite");
+    const form = document.getElementById("login-form");
+    if (form) card.insertBefore(errEl, form);
+    else card.appendChild(errEl);
+  }
+  errEl.hidden = false;
+  errEl.removeAttribute("hidden");
+  errEl.classList.add("login-session-error--visible");
+  errEl.textContent = msg;
+  errEl.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function clearLoginError() {
+  const errEl = document.querySelector(".login-card .login-session-error");
+  if (!errEl) return;
+  errEl.textContent = "";
+  errEl.hidden = true;
+  errEl.classList.remove("login-session-error--visible");
 }
 
 async function performLogin(email, password) {
@@ -5411,10 +5714,12 @@ async function bindQuickLoginBox() {
         if (emailEl) emailEl.value = hint.email;
         if (passEl) passEl.value = hint.password;
       }
+      clearLoginError();
       try {
         await performLogin(hint.email, hint.password);
       } catch (err) {
-        showLoginPage(err.message);
+        setLoginError(err.message || "Đăng nhập thất bại");
+        toastError(err.message || "Đăng nhập thất bại");
       }
     };
   } catch (_e) {
@@ -5621,7 +5926,10 @@ async function navigate() {
     main.innerHTML = '<p class="error">Không tìm thấy trang: ' + esc(parsed.key) + "</p>";
   } catch (e) {
     if (!isNavTokenActive(navToken)) return;
-    main.innerHTML = '<p class="error">Lỗi: ' + esc(e.message) + "</p>";
+    main.innerHTML =
+      '<p class="error">Lỗi: ' +
+      esc(errorMessage(e)) +
+      '</p><p class="muted" style="margin-top:8px"><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></p>';
   }
 }
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Manifest gồm Deployment + Service JSON (apply qua Rancher).
@@ -90,12 +91,21 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 				},
 			},
 			"template": map[string]any{
-				"metadata": map[string]any{
-					"labels": map[string]string{
-						"app":         name,
-						LabelImageTag: ImageTagLabelValue(p.ImageTag),
-					},
-				},
+				"metadata": func() map[string]any {
+					meta := map[string]any{
+						"labels": map[string]string{
+							"app":         name,
+							LabelImageTag: ImageTagLabelValue(p.ImageTag),
+						},
+					}
+					if p.ForceRolloutRestart {
+						ann := map[string]string{
+							"kubectl.kubernetes.io/restartedAt": time.Now().UTC().Format(time.RFC3339Nano),
+						}
+						meta["annotations"] = ann
+					}
+					return meta
+				}(),
 				"spec": func() map[string]any {
 					spec := map[string]any{
 						"containers": []map[string]any{

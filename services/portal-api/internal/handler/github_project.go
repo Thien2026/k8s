@@ -47,9 +47,11 @@ func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
 
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
 	if !repo.AutoDeployEnabled {
+		skipReason := "auto_deploy tắt — image đã build, không deploy lên cluster"
+		h.markDeploymentDeploySkipped(r.Context(), p.ID, env, tag, skipReason)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"status":      "skipped",
-			"reason":      "auto_deploy tắt — image đã build, không deploy lên cluster",
+			"reason":      skipReason,
 			"image_tag":   tag,
 			"environment": env,
 			"project":     p.Slug,
@@ -68,7 +70,7 @@ func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
-	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, body.ClusterID, true)
+	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, body.ClusterID, true, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -94,10 +96,13 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Owner       string `json:"owner"`
-		Repo        string `json:"repo"`
-		Branch      string `json:"branch"`
-		Environment string `json:"environment"`
+		Owner             string              `json:"owner"`
+		Repo              string              `json:"repo"`
+		Branch            string              `json:"branch"`
+		Environment       string              `json:"environment"`
+		Layout            string              `json:"layout,omitempty"`
+		Services          []projectServiceRow `json:"services,omitempty"`
+		ApplyRepoContract bool                `json:"apply_repo_contract,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
@@ -120,6 +125,27 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	if env != "dev" && env != "prod" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
 		return
+	}
+
+	layoutFromBody := strings.TrimSpace(body.Layout) != ""
+	if body.ApplyRepoContract {
+		if _, _, err := h.applyServicesContractFromRepo(r.Context(), u.ID, p, owner, repo, branch); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	} else if layoutFromBody {
+		layout := deploy.NormalizeLayout(body.Layout)
+		if err := h.validateProjectServicesLayout(r.Context(), u.ID, owner, repo, branch, layout, body.Services); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := h.persistProjectServices(r.Context(), p.ID, layout, body.Services); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			return
+		}
+		if layout == deploy.LayoutMulti {
+			_, _ = h.ensureBackFrontConventions(r.Context(), p.ID)
+		}
 	}
 
 	if h.getProjectLayout(r.Context(), p.ID) == deploy.LayoutMulti {
@@ -151,12 +177,22 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
-	h.maybeApplyServicesContractOnSetup(r.Context(), u.ID, p, repoRow, branch)
+	if !body.ApplyRepoContract && !layoutFromBody {
+		h.maybeApplyServicesContractOnSetup(r.Context(), u.ID, p, repoRow, branch)
+	}
+	h.syncGitSubmodulesFromContract(r.Context(), u.ID, p.ID, repoRow, branch)
+	repoRow, _ = h.getProjectRepo(r.Context(), p.ID)
 	h.enrichProjectRegistry(r.Context(), &p)
 	if err := h.resolveBuildMode(r.Context(), u.ID, p.ID, &repoRow); err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không quét được repo: " + err.Error()})
 		return
 	}
+	if err := h.syncEnvContractsFromGitHub(r.Context(), u.ID, p); err != nil {
+		log.Printf("github setup env contracts failed project=%s err=%v", p.Slug, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không đồng bộ contract env: " + err.Error()})
+		return
+	}
+	repoRow, _ = h.getProjectRepo(r.Context(), p.ID)
 	params := h.buildDeployParams(r.Context(), p, repoRow, env, "", true)
 	wf := deploy.GitHubWorkflow(params)
 
@@ -165,11 +201,6 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		"chore(platform): sync deploy workflow for "+p.Slug, wf.Content, branch); err != nil {
 		log.Printf("github setup workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, err)
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không push workflow: " + err.Error()})
-		return
-	}
-	if err := client.DispatchWorkflow(r.Context(), ghToken, owner, repo, wf.Filename, branch); err != nil {
-		log.Printf("github dispatch workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, err)
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không chạy workflow: " + err.Error()})
 		return
 	}
 	deploySecret := deploy.DeployTokenSecretName(p.Slug)
@@ -208,21 +239,32 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	dispatchErr := client.DispatchWorkflow(r.Context(), ghToken, owner, repo, wf.Filename, branch)
+	if dispatchErr != nil {
+		log.Printf("github dispatch workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, dispatchErr)
+	}
+
 	_, _ = h.db.Exec(r.Context(),
 		`UPDATE project_repos SET workflow_synced_at=now(), auto_deploy_enabled=true WHERE project_id=$1`, p.ID)
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":               "ok",
-		"git_url":              gitURL,
-		"build_mode":           repoRow.BuildMode,
+	resp := map[string]any{
+		"status":                   "ok",
+		"git_url":                  gitURL,
+		"layout":                   h.getProjectLayout(r.Context(), p.ID),
+		"build_mode":               repoRow.BuildMode,
 		"build_mode_detected_path": repoRow.BuildModeDetectedPath,
-		"workflow_file":        wf.Filename,
-		"workflow_url":         "https://github.com/" + owner + "/" + repo + "/actions",
-		"auto_deploy":          true,
-		"deploy_environment":   env,
-		"secrets_provisioned":  secretsProvisioned,
-		"dev_action_required":  false,
-	})
+		"workflow_file":            wf.Filename,
+		"workflow_url":             "https://github.com/" + owner + "/" + repo + "/actions",
+		"auto_deploy":              true,
+		"deploy_environment":       env,
+		"secrets_provisioned":      secretsProvisioned,
+		"workflow_dispatched":      dispatchErr == nil,
+		"dev_action_required":      false,
+	}
+	if dispatchErr != nil {
+		resp["dispatch_warning"] = "Workflow đã push và secrets đã cấp — build sẽ chạy khi push code hoặc trigger thủ công trên GitHub Actions."
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo projectRepoRow, env, imageTag string, includeHook bool) deploy.Params {
@@ -253,6 +295,7 @@ func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo proj
 		Registry:         p.Registry,
 		GitURL:           repo.GitURL,
 		Branch:           repo.Branch,
+		GitSubmodules:    repo.GitSubmodules,
 		BuildMode:        repo.BuildMode,
 		DockerfilePath:   repo.DockerfilePath,
 		BuildContext:     repo.BuildContext,

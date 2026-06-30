@@ -96,7 +96,7 @@ func (h *Handler) ApplyProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.enrichProjectRegistry(r.Context(), &p)
-	result, err := h.applyProjectDeploy(r.Context(), p, body.Environment, body.ImageTag, body.ClusterID, true)
+	result, err := h.applyProjectDeploy(r.Context(), p, body.Environment, body.ImageTag, body.ClusterID, true, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -104,18 +104,59 @@ func (h *Handler) ApplyProjectDeploy(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, imageTag, clusterID string, asyncRuntime bool) (map[string]any, error) {
+func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, imageTag, clusterID string, asyncRuntime bool, rollback bool) (map[string]any, error) {
 	if err := h.requireDeployEnvReady(ctx, p, env); err != nil {
 		return nil, err
 	}
 	h.enrichProjectRegistry(ctx, &p)
 	repo, _ := h.getProjectRepo(ctx, p.ID)
 	params := h.buildDeployParams(ctx, p, repo, env, imageTag, false)
+	params.ForceRolloutRestart = rollback
 	imageRef := deployImageRef(params)
 
-	deployID, _ := h.getOrCreateDeploymentID(ctx, p.ID, params.Environment, imageTag)
+	var deployID int64
+	var err error
+	if rollback {
+		deployID, err = h.beginRollbackDeployment(ctx, p.ID, params.Environment, imageTag)
+	} else {
+		deployID, err = h.getOrCreateDeploymentID(ctx, p.ID, params.Environment, imageTag)
+	}
+	if err != nil {
+		return nil, err
+	}
 	if deployID > 0 {
 		h.markDeploymentDeployPhase(ctx, deployID, imageRef)
+	}
+	if h.argoEnabled() {
+		appName, appURL, err := h.ensureArgoApplication(ctx, p, params.Environment, imageTag)
+		if err != nil {
+			if deployID > 0 {
+				h.markDeploymentFailed(ctx, deployID, "deploy", "ArgoCD apply: "+err.Error())
+			}
+			return nil, fmt.Errorf("argocd application: %w", err)
+		}
+		if deployID > 0 {
+			_, _ = h.db.Exec(ctx, `
+				UPDATE project_deployments SET deploy_status='running', runtime_status='pending',
+					runtime_detail=$1, updated_at=now()
+				WHERE id=$2`, "ArgoCD application queued: "+appName, deployID)
+		}
+		result := map[string]any{
+			"status":          "accepted",
+			"environment":     params.Environment,
+			"namespace":       params.Namespace,
+			"image":           deployImageRef(params),
+			"deployments":     []string{params.PrimaryService().Name},
+			"deployment":      params.PrimaryService().Name,
+			"deployment_mode": "argocd",
+			"argocd_app":      appName,
+			"argocd_url":      appURL,
+			"runtime":         "argocd-sync",
+		}
+		if deployID > 0 {
+			result["deployment_id"] = deployID
+		}
+		return result, nil
 	}
 
 	if err := h.rancher.EnsureNamespace(ctx, clusterID, params.Namespace); err != nil {
@@ -187,6 +228,14 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 			}
 			return nil, err
 		}
+		if rollback && manifest.ServiceName != "" {
+			if err := h.rancher.RolloutRestartDeployment(ctx, clusterID, params.Namespace, manifest.ServiceName); err != nil {
+				if deployID > 0 {
+					h.markDeploymentFailed(ctx, deployID, "deploy", "rollout restart: "+err.Error())
+				}
+				return nil, fmt.Errorf("rollout restart %s: %w", manifest.ServiceName, err)
+			}
+		}
 		if manifest.ServiceName != "" {
 			deployedNames = append(deployedNames, manifest.ServiceName)
 		}
@@ -228,7 +277,7 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 }
 
 func (h *Handler) finishDeployRuntime(deployID int64, p projectRow, params deploy.Params, imageTag, clusterID string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	h.finishDeployRuntimeSync(ctx, deployID, p, params, imageTag, clusterID)
 }
@@ -286,10 +335,29 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 	}
 	if st == "success" {
 		drow := deploymentRow{ID: deployID, ImageTag: imageTag, PodName: podName, Environment: params.Environment}
+		if fleetSt, fleetDetail, fleetErr := h.evaluateFleetRollout(ctx, p, params.Environment, imageTag); fleetSt == "failed" {
+			msg := fleetErr
+			if msg == "" {
+				msg = fleetDetail
+			}
+			h.markDeploymentFailed(ctx, deployID, "runtime", msg)
+			return
+		} else if fleetSt == "running" {
+			_, _ = h.db.Exec(ctx, `
+				UPDATE project_deployments SET deploy_status='success', runtime_status='running', runtime_detail=$1, status='in_progress', updated_at=now()
+				WHERE id=$2`, fleetDetail, deployID)
+			return
+		}
 		v := h.assessRuntimeHealth(ctx, p, &drow)
 		if v.Status == "failed" {
 			h.markDeploymentFailed(ctx, deployID, "runtime", v.ErrorMsg)
 		} else if v.Status == "success" {
+			if live, detail := h.deploymentTrafficLive(ctx, p, params.Environment, imageTag); !live {
+				_, _ = h.db.Exec(ctx, `
+					UPDATE project_deployments SET deploy_status='success', runtime_status='running', runtime_detail=$1,
+						status='in_progress', updated_at=now() WHERE id=$2`, detail, deployID)
+				return
+			}
 			h.markDeploymentSuccess(ctx, deployID, v.Detail)
 		} else {
 			_, _ = h.db.Exec(ctx, `
@@ -354,7 +422,7 @@ func (h *Handler) PromoteProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.enrichProjectRegistry(r.Context(), &p)
-	result, err := h.applyProjectDeploy(r.Context(), p, "prod", tag, "", true)
+	result, err := h.applyProjectDeploy(r.Context(), p, "prod", tag, "", true, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -381,9 +449,12 @@ func (h *Handler) GetPromoteReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items, ready := h.promoteReadiness(r.Context(), p)
+	latestTag := h.latestSuccessfulDeployTag(r.Context(), p.ID, "dev")
 	resp := map[string]any{
-		"ready": ready,
-		"items": items,
+		"ready":               ready,
+		"items":               items,
+		"latest_success_tag":  latestTag,
+		"can_promote":         latestTag != "",
 	}
 	if br := h.projectEnvReadinessPayload(r.Context(), p, "dev", "build"); br != nil {
 		resp["build_readiness"] = br
@@ -593,12 +664,25 @@ func (h *Handler) ensurePromoteReady(w http.ResponseWriter, r *http.Request, p p
 		}
 	}
 	writeJSON(w, http.StatusBadRequest, map[string]any{
-		"error":  "Chưa đủ cấu hình prod — hoàn tất checklist trước khi promote",
-		"items":  items,
-		"ready":  false,
-		"hints":  hints,
+		"error": "Chưa đủ cấu hình prod — hoàn tất checklist trước khi promote",
+		"items": items,
+		"ready": false,
+		"hints": hints,
 	})
 	return false
+}
+
+func (h *Handler) latestSuccessfulDeployTag(ctx context.Context, projectID int64, env string) string {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	var tag string
+	_ = h.db.QueryRow(ctx, `
+		SELECT image_tag FROM project_deployments
+		WHERE project_id=$1 AND environment=$2 AND status='success'
+		ORDER BY id DESC LIMIT 1`, projectID, env).Scan(&tag)
+	return strings.TrimSpace(tag)
 }
 
 func (h *Handler) RollbackProjectDeploy(w http.ResponseWriter, r *http.Request) {
@@ -637,12 +721,7 @@ func (h *Handler) RollbackProjectDeploy(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Chỉ admin/tech_lead được rollback prod"})
 		return
 	}
-	var prevStatus string
-	err := h.db.QueryRow(r.Context(), `
-		SELECT status FROM project_deployments
-		WHERE project_id=$1 AND environment=$2 AND image_tag=$3
-		ORDER BY id DESC LIMIT 1`, p.ID, env, tag).Scan(&prevStatus)
-	if err != nil || prevStatus != "success" {
+	if !h.hasSuccessfulDeployForTag(r.Context(), p.ID, env, tag) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "Chỉ rollback về bản đã từng deploy thành công trong lịch sử",
 		})
@@ -654,7 +733,7 @@ func (h *Handler) RollbackProjectDeploy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.enrichProjectRegistry(r.Context(), &p)
-	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, "", true)
+	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, "", true, true)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
 		return
@@ -697,8 +776,8 @@ func (h *Handler) PatchProjectAutoDeploy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":               "ok",
-		"auto_deploy_enabled":  *body.Enabled,
-		"auto_deploy":          *body.Enabled,
+		"status":              "ok",
+		"auto_deploy_enabled": *body.Enabled,
+		"auto_deploy":         *body.Enabled,
 	})
 }

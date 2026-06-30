@@ -16,37 +16,37 @@ import (
 )
 
 type deploymentRow struct {
-	ID             int64  `json:"id"`
-	Environment    string `json:"environment"`
-	ImageTag       string `json:"image_tag"`
-	Status         string `json:"status"`
-	BuildStatus    string `json:"build_status"`
-	RegistryStatus string `json:"registry_status"`
-	DeployStatus   string `json:"deploy_status"`
-	RuntimeStatus  string `json:"runtime_status"`
-	ErrorPhase     string `json:"error_phase,omitempty"`
-	ErrorMessage   string `json:"error_message,omitempty"`
-	GitHubRunID    int64  `json:"github_run_id,omitempty"`
-	GitHubRunURL   string `json:"github_run_url,omitempty"`
-	Image          string `json:"image,omitempty"`
-	RuntimeDetail  string `json:"runtime_detail,omitempty"`
-	RuntimeLog         string `json:"runtime_log,omitempty"`
-	RuntimeLogTruncated bool  `json:"runtime_log_truncated,omitempty"`
-	PodName            string `json:"pod_name,omitempty"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
-	FinishedAt     string `json:"finished_at,omitempty"`
-	Stages         []deployStage `json:"stages"`
-	BuildSteps     []buildStepView `json:"build_steps,omitempty"`
-	BuildLog           string `json:"build_log,omitempty"`
-	BuildLogTruncated  bool   `json:"build_log_truncated,omitempty"`
-	DeployLog          string `json:"deploy_log,omitempty"`
-	Live               bool   `json:"live,omitempty"`
-	Serving            bool   `json:"serving,omitempty"`
-	SmokeStatus        string `json:"smoke_status,omitempty"`
-	SmokeDetail        string `json:"smoke_detail,omitempty"`
-	RuntimeSignals     []runtimeSignalTier `json:"runtime_signals,omitempty"`
-	HarborScan         *harborScanView `json:"harbor_scan,omitempty"`
+	ID                  int64               `json:"id"`
+	Environment         string              `json:"environment"`
+	ImageTag            string              `json:"image_tag"`
+	Status              string              `json:"status"`
+	BuildStatus         string              `json:"build_status"`
+	RegistryStatus      string              `json:"registry_status"`
+	DeployStatus        string              `json:"deploy_status"`
+	RuntimeStatus       string              `json:"runtime_status"`
+	ErrorPhase          string              `json:"error_phase,omitempty"`
+	ErrorMessage        string              `json:"error_message,omitempty"`
+	GitHubRunID         int64               `json:"github_run_id,omitempty"`
+	GitHubRunURL        string              `json:"github_run_url,omitempty"`
+	Image               string              `json:"image,omitempty"`
+	RuntimeDetail       string              `json:"runtime_detail,omitempty"`
+	RuntimeLog          string              `json:"runtime_log,omitempty"`
+	RuntimeLogTruncated bool                `json:"runtime_log_truncated,omitempty"`
+	PodName             string              `json:"pod_name,omitempty"`
+	CreatedAt           string              `json:"created_at"`
+	UpdatedAt           string              `json:"updated_at"`
+	FinishedAt          string              `json:"finished_at,omitempty"`
+	Stages              []deployStage       `json:"stages"`
+	BuildSteps          []buildStepView     `json:"build_steps,omitempty"`
+	BuildLog            string              `json:"build_log,omitempty"`
+	BuildLogTruncated   bool                `json:"build_log_truncated,omitempty"`
+	DeployLog           string              `json:"deploy_log,omitempty"`
+	Live                bool                `json:"live,omitempty"`
+	Serving             bool                `json:"serving,omitempty"`
+	SmokeStatus         string              `json:"smoke_status,omitempty"`
+	SmokeDetail         string              `json:"smoke_detail,omitempty"`
+	RuntimeSignals      []runtimeSignalTier `json:"runtime_signals,omitempty"`
+	HarborScan          *harborScanView     `json:"harbor_scan,omitempty"`
 }
 
 type buildStepView struct {
@@ -56,14 +56,14 @@ type buildStepView struct {
 }
 
 type harborScanView struct {
-	Status     string            `json:"status"`
-	Severity   map[string]int    `json:"severity,omitempty"`
-	Total      int               `json:"total"`
-	Fixable    int               `json:"fixable"`
-	Detail     string            `json:"detail,omitempty"`
-	URL        string            `json:"url,omitempty"`
-	Items      []harborVulnView  `json:"items,omitempty"`
-	ItemsTotal int               `json:"items_total,omitempty"`
+	Status     string           `json:"status"`
+	Severity   map[string]int   `json:"severity,omitempty"`
+	Total      int              `json:"total"`
+	Fixable    int              `json:"fixable"`
+	Detail     string           `json:"detail,omitempty"`
+	URL        string           `json:"url,omitempty"`
+	Items      []harborVulnView `json:"items,omitempty"`
+	ItemsTotal int              `json:"items_total,omitempty"`
 }
 
 type harborVulnView struct {
@@ -113,6 +113,23 @@ func deploymentIsTrulyActive(d deploymentRow) bool {
 	return false
 }
 
+// deploymentSupersededByNewerSuccess — bản in_progress cũ sau khi đã có deploy dev success mới hơn.
+func deploymentSupersededByNewerSuccess(items []deploymentRow, env string, idx int) bool {
+	if idx <= 0 || idx >= len(items) {
+		return false
+	}
+	env = strings.ToLower(strings.TrimSpace(env))
+	for j := 0; j < idx; j++ {
+		if strings.ToLower(strings.TrimSpace(items[j].Environment)) != env {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(items[j].Status), "success") {
+			return true
+		}
+	}
+	return false
+}
+
 func normalizeStaleDeploymentRow(d *deploymentRow) {
 	if d == nil || !strings.EqualFold(strings.TrimSpace(d.Status), "failed") {
 		return
@@ -136,7 +153,7 @@ func pickCurrentDeploymentIndex(items []deploymentRow, env, servingTag string) i
 		if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
 			continue
 		}
-		if deploymentIsTrulyActive(items[i]) {
+		if deploymentIsTrulyActive(items[i]) && !deploymentSupersededByNewerSuccess(items, env, i) {
 			return i
 		}
 	}
@@ -326,6 +343,21 @@ func (h *Handler) markDeploymentBuildStarted(ctx context.Context, projectID int6
 	_, _ = h.upsertDeployment(ctx, projectID, env, imageTag)
 }
 
+// markDeploymentDeploySkipped — CI đã build image nhưng hook không apply cluster (auto-deploy tắt).
+func (h *Handler) markDeploymentDeploySkipped(ctx context.Context, projectID int64, env, imageTag, reason string) {
+	id, err := h.getOrCreateDeploymentID(ctx, projectID, env, imageTag)
+	if err != nil || id <= 0 {
+		return
+	}
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments SET
+			status='failed', build_status='success', registry_status='success',
+			deploy_status='skipped', runtime_status='skipped',
+			error_phase='deploy', error_message=$1,
+			runtime_detail=$1, updated_at=now(), finished_at=now()
+		WHERE id=$2`, reason, id)
+}
+
 func (h *Handler) markDeploymentFailed(ctx context.Context, id int64, phase, msg string) {
 	_, _ = h.db.Exec(ctx, `
 		UPDATE project_deployments SET
@@ -380,6 +412,39 @@ func (h *Handler) getOrCreateDeploymentID(ctx context.Context, projectID int64, 
 		return id, nil
 	}
 	return h.upsertDeployment(ctx, projectID, env, imageTag)
+}
+
+// beginRollbackDeployment — mỗi lần rollback tạo row mới (không reuse bản cũ) để tracking/UI đúng.
+func (h *Handler) beginRollbackDeployment(ctx context.Context, projectID int64, env, imageTag string) (int64, error) {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	tag := strings.TrimSpace(imageTag)
+	var id int64
+	err := h.db.QueryRow(ctx, `
+		INSERT INTO project_deployments (project_id, environment, image_tag, build_status, registry_status, deploy_status, status)
+		VALUES ($1, $2, $3, 'success', 'success', 'running', 'in_progress')
+		RETURNING id`, projectID, env, tag).Scan(&id)
+	return id, err
+}
+
+func (h *Handler) hasSuccessfulDeployForTag(ctx context.Context, projectID int64, env, imageTag string) bool {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	tag := strings.TrimSpace(imageTag)
+	if tag == "" {
+		return false
+	}
+	var ok bool
+	_ = h.db.QueryRow(ctx, `
+		SELECT EXISTS(
+			SELECT 1 FROM project_deployments
+			WHERE project_id=$1 AND environment=$2 AND image_tag=$3 AND status='success'
+		)`, projectID, env, tag).Scan(&ok)
+	return ok
 }
 
 func imageMatchesDeploy(image, tag, wantImage string) bool {
@@ -449,6 +514,21 @@ func appPodsForDeploy(list rancher.ResourceList, tag, wantImage string) []ranche
 }
 
 func (h *Handler) runtimeStatusForDeploy(ctx context.Context, p projectRow, env, imageTag string) (status, detail, podName, errMsg string) {
+	if h.argoEnabled() {
+		appName := h.argoAppName(p.Slug, env)
+		appSt, err := h.argoApplicationStatus(ctx, appName)
+		if err == nil {
+			st, dt, em := argoRuntimeVerdict(appSt)
+			if link := h.argoDashboardURL(appName); link != "" {
+				if dt == "" {
+					dt = link
+				} else {
+					dt = dt + " · " + link
+				}
+			}
+			return st, dt, "", em
+		}
+	}
 	if h.rancher == nil || !h.rancher.Enabled() {
 		return "pending", "Rancher chưa sẵn sàng", "", ""
 	}
@@ -690,8 +770,20 @@ func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d 
 		reconcileDeploymentRow(d)
 		return
 	}
+	if stageStatus(d.DeployStatus) == "pending" || stageStatus(d.DeployStatus) == "skipped" {
+		if stageStatus(d.BuildStatus) == "success" || allBuildStepsSuccess(d.BuildSteps) {
+			d.Live = false
+		}
+		reconcileDeploymentRow(d)
+		return
+	}
 	if strings.EqualFold(strings.TrimSpace(d.Status), "success") &&
 		strings.EqualFold(strings.TrimSpace(d.RuntimeStatus), "success") {
+		if live, _ := h.deploymentTrafficLive(ctx, p, d.Environment, d.ImageTag); !live {
+			h.applyTrafficGate(ctx, p, d)
+			reconcileDeploymentRow(d)
+			return
+		}
 		d.Live = false
 		if strings.TrimSpace(d.DeployLog) == "" || strings.TrimSpace(d.RuntimeLog) == "" {
 			v := h.assessRuntimeHealth(ctx, p, d)
@@ -715,7 +807,7 @@ func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d 
 		return
 	}
 	v := h.assessRuntimeHealth(ctx, p, d)
-	h.applyRuntimeVerdict(ctx, d, v)
+	h.applyRuntimeVerdict(ctx, p, d, v)
 }
 
 const deployHistoryLimit = 50
@@ -827,14 +919,14 @@ func (h *Handler) deploymentRowFromRun(ctx context.Context, p projectRow, deploy
 	params := h.buildDeployParams(ctx, p, repo, deployEnv, run.HeadSHA, false)
 	image := deployImageRef(params)
 	d := deploymentRow{
-		Environment: deployEnv,
-		ImageTag:    run.HeadSHA,
-		GitHubRunID: run.ID,
+		Environment:  deployEnv,
+		ImageTag:     run.HeadSHA,
+		GitHubRunID:  run.ID,
 		GitHubRunURL: run.HTMLURL,
-		BuildStatus: bs,
-		Image:       image,
-		CreatedAt:   run.CreatedAt,
-		UpdatedAt:   run.UpdatedAt,
+		BuildStatus:  bs,
+		Image:        image,
+		CreatedAt:    run.CreatedAt,
+		UpdatedAt:    run.UpdatedAt,
 	}
 	if bs == "success" {
 		d.RegistryStatus = "success"

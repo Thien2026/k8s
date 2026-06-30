@@ -17,6 +17,7 @@ type Params struct {
 	Registry         registry.ProjectRegistry
 	GitURL           string
 	Branch           string
+	GitSubmodules    string // "" | true | recursive — actions/checkout submodules
 	BuildMode        string // dockerfile | buildpack (single-service fallback)
 	Stack            string // python | node | go | dotnet — buildpack hint
 	DockerfilePath   string
@@ -32,6 +33,7 @@ type Params struct {
 	HarborUserSecret    string
 	HarborPassSecret    string
 	BuildArgs           []BuildArg
+	ForceRolloutRestart bool // rollback / redeploy — ép pod mới dù spec image trùng
 }
 
 func (p Params) ImageRef() string {
