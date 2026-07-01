@@ -111,12 +111,12 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	h.enrichProjectRegistry(ctx, &p)
 	repo, _ := h.getProjectRepo(ctx, p.ID)
 	params := h.buildDeployParams(ctx, p, repo, env, imageTag, false)
-	params.ForceRolloutRestart = rollback
-	var rollbackFromMulti bool
 	var multiServices []deploy.ServiceDef
+	var rollbackFromMulti bool
 	if rollback {
-		params, multiServices, rollbackFromMulti = h.resolveRollbackDeployParams(ctx, p, params, imageTag)
+		params, multiServices, rollbackFromMulti = h.resolveRollbackParams(ctx, p, repo, env, imageTag)
 	}
+	params.ForceRolloutRestart = rollback
 	imageRef := deployImageRef(params)
 
 	var deployID int64
@@ -128,6 +128,10 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	}
 	if err != nil {
 		return nil, err
+	}
+	snap := h.buildDeploySnapshot(p, repo, params)
+	if deployID > 0 {
+		h.saveDeploymentSnapshot(ctx, deployID, snap)
 	}
 	if deployID > 0 {
 		h.markDeploymentDeployPhase(ctx, deployID, imageRef)
@@ -165,11 +169,13 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	}
 
 	if rollback {
-		if err := h.validateRollbackImages(ctx, p, params, imageTag); err != nil {
-			if deployID > 0 {
-				h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+		if _, ok := h.latestDeploySnapshotForTag(ctx, p.ID, params.Environment, imageTag); !ok {
+			if err := h.validateRollbackImages(ctx, p, params, imageTag); err != nil {
+				if deployID > 0 {
+					h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+				}
+				return nil, err
 			}
-			return nil, err
 		}
 	} else if err := h.requireMultiServiceImages(ctx, p, repo, params, imageTag); err != nil {
 		if deployID > 0 {

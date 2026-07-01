@@ -40,6 +40,10 @@ func (p Params) ImageRef() string {
 	return p.imageRef()
 }
 
+func (p Params) ImageRefFor(svc ServiceDef) string {
+	return p.imageRefFor(svc)
+}
+
 func (p Params) imageRef() string {
 	svcs := p.EffectiveServices()
 	if len(svcs) == 1 {

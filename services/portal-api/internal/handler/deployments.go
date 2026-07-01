@@ -43,6 +43,11 @@ type deploymentRow struct {
 	DeployLog           string              `json:"deploy_log,omitempty"`
 	Live                bool                `json:"live,omitempty"`
 	Serving             bool                `json:"serving,omitempty"`
+	DeployLayout        string              `json:"deploy_layout,omitempty"`
+	DeployProfile       string              `json:"deploy_profile,omitempty"`
+	GitBranch           string              `json:"git_branch,omitempty"`
+	DeployServices      []deployServiceSnap `json:"deploy_services,omitempty"`
+	DeployImages        map[string]string   `json:"deploy_images,omitempty"`
 	SmokeStatus         string              `json:"smoke_status,omitempty"`
 	SmokeDetail         string              `json:"smoke_detail,omitempty"`
 	RuntimeSignals      []runtimeSignalTier `json:"runtime_signals,omitempty"`
@@ -825,6 +830,8 @@ func (h *Handler) listProjectDeployments(ctx context.Context, projectID int64, e
 			build_status, registry_status, deploy_status, runtime_status,
 			COALESCE(error_phase,''), COALESCE(error_message,''),
 			github_run_id, COALESCE(github_run_url,''), COALESCE(image,''), COALESCE(runtime_detail,''),
+			COALESCE(deploy_layout,''), COALESCE(git_branch,''),
+			COALESCE(deploy_services,'[]'::jsonb), COALESCE(deploy_images,'{}'::jsonb),
 			created_at, updated_at, finished_at
 		FROM project_deployments
 		WHERE project_id=$1 AND environment=$2
@@ -839,15 +846,19 @@ func (h *Handler) listProjectDeployments(ctx context.Context, projectID int64, e
 		var d deploymentRow
 		var finished *time.Time
 		var created, updated time.Time
+		var svcRaw, imgRaw []byte
+		var deployLayout, gitBranch string
 		if err := rows.Scan(
 			&d.ID, &d.Environment, &d.ImageTag, &d.Status,
 			&d.BuildStatus, &d.RegistryStatus, &d.DeployStatus, &d.RuntimeStatus,
 			&d.ErrorPhase, &d.ErrorMessage,
 			&d.GitHubRunID, &d.GitHubRunURL, &d.Image, &d.RuntimeDetail,
+			&deployLayout, &gitBranch, &svcRaw, &imgRaw,
 			&created, &updated, &finished,
 		); err != nil {
 			return nil, err
 		}
+		d.applySnapshotFields(deployLayout, gitBranch, svcRaw, imgRaw)
 		d.CreatedAt = created.UTC().Format(time.RFC3339)
 		d.UpdatedAt = updated.UTC().Format(time.RFC3339)
 		if finished != nil {
@@ -1408,6 +1419,8 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 		"current":           current,
 		"items":             filtered,
 		"serving_image_tag": servingTag,
+		"console_profile":   h.consoleDeployProfile(r.Context(), p.ID, repo),
+		"cluster_profile":   h.clusterRuntimeProfile(r.Context(), p, env),
 		"workflow_url": func() string {
 			if repo.GitHubOwner != "" && repo.GitHubRepo != "" {
 				return fmt.Sprintf("https://github.com/%s/%s/actions", repo.GitHubOwner, repo.GitHubRepo)

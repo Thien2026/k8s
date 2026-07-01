@@ -938,6 +938,58 @@ function deployStagePlainLine(stage) {
   return (stage.label || stage.id) + ": " + st;
 }
 
+function deployProfileLabel(item) {
+  if (!item) return "";
+  if (item.deploy_profile) return item.deploy_profile;
+  if (!item.deploy_layout) return "";
+  var names = (item.deploy_services || []).map(function (s) { return s.name; }).filter(Boolean);
+  if (item.deploy_layout === "multi") return "multi · " + (names.join("+") || "?");
+  return "single · " + (names[0] || "app");
+}
+
+function renderDeployProfileBadge(item) {
+  var label = deployProfileLabel(item);
+  if (!label) return "";
+  return (
+    '<span class="badge neutral deploy-profile-badge" title="Profile khi deploy">' + esc(label) + "</span>"
+  );
+}
+
+function renderDeployProfileContext(activity) {
+  if (!activity) return "";
+  var cp = activity.console_profile;
+  var kp = activity.cluster_profile;
+  if (!cp && !kp) return "";
+  var parts = [];
+  if (cp && cp.profile_label) {
+    parts.push(
+      "<span><strong>Console</strong>: " +
+        esc(cp.profile_label) +
+        (cp.branch ? ' · branch <code class="inline-code">' + esc(cp.branch) + "</code>" : "") +
+        "</span>"
+    );
+  }
+  if (kp && kp.profile_label) {
+    parts.push(
+      "<span><strong>Cluster</strong>: " +
+        esc(kp.profile_label) +
+        (kp.image_tag ? ' · tag <code class="inline-code">' + esc(String(kp.image_tag).slice(0, 7)) + "</code>" : "") +
+        "</span>"
+    );
+  }
+  if (!parts.length) return "";
+  var mismatch =
+    cp && kp && cp.profile_label && kp.profile_label && cp.profile_label !== kp.profile_label;
+  return (
+    '<div class="deploy-profile-context' +
+    (mismatch ? " warn" : "") +
+    '">' +
+    parts.join('<span class="deploy-profile-sep"> · </span>') +
+    (mismatch ? ' <em class="deploy-profile-mismatch">Console ≠ cluster</em>' : "") +
+    "</div>"
+  );
+}
+
 function renderDeployHumanSummary(item) {
   if (!item) return "";
   const env = (item.environment || "dev") === "prod" ? "Production" : "Dev";
@@ -1320,11 +1372,19 @@ function renderDeployPipelineItem(item, withLog, actions) {
         ? '<span class="badge neutral deploy-staged-badge">ĐÃ DEPLOY</span>'
         : "") +
     '<span class="muted">' + esc(item.environment || "dev") + " · " + esc(fmtTime(item.created_at)) + "</span>" +
+    (item.git_branch
+      ? '<span class="badge neutral deploy-branch-badge" title="Branch lúc deploy">' + esc(item.git_branch) + "</span>"
+      : "") +
+    renderDeployProfileBadge(item) +
     (actions.rollback && canWriteK8s()
       ? '<button type="button" class="btn-ghost btn-sm pipe-rollback-btn" data-tag="' +
         esc(item.image_tag || "") +
         '" data-env="' +
         esc(item.environment || actions.env || "dev") +
+        '" data-deploy-profile="' +
+        esc(deployProfileLabel(item)) +
+        '" data-git-branch="' +
+        esc(item.git_branch || "") +
         '" title="Deploy lại image tag này">Deploy lại</button>'
       : "") +
     "</div>";
@@ -1587,6 +1647,7 @@ function renderDeployActivityCard(activity, opts) {
     );
   }
   const envLabel = deployActivityEnv(activity, opts.expectedEnv).toUpperCase();
+  const profileCtx = renderDeployProfileContext(activity);
   const cur = activity.current;
   const servingTag = activity.serving_image_tag || state.deployServingTag || "";
   let body = "";
@@ -1645,7 +1706,7 @@ function renderDeployActivityCard(activity, opts) {
       "</strong>" +
       (hist.count ? " (" + hist.count + " bản)" : "") +
       '</summary><div class="deploy-history-body">' +
-      '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:11px">Mỗi commit (image tag) = 1 dòng. Nút <strong>Deploy lại</strong> = rollback cùng tag.</p>' +
+      '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:11px">Mỗi commit = 1 tag. Badge <strong>single · app</strong> / <strong>multi · api+web</strong> = profile lúc deploy. <strong>Deploy lại</strong> dùng đúng profile đã lưu.</p>' +
       '<div id="deploy-history-list">' +
       hist.itemsHtml +
       "</div>" +
@@ -1672,6 +1733,7 @@ function renderDeployActivityCard(activity, opts) {
     '"><h3>Tiến trình deploy · ' +
     esc(envLabel) +
     "</h3>" +
+    profileCtx +
     body +
     "</div>"
   );
@@ -1799,9 +1861,21 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
       const tag = btn.dataset.tag;
       const itemEnv = btn.dataset.env || env;
       if (!tag) return;
+      const profile = btn.dataset.deployProfile || "";
+      const branch = btn.dataset.gitBranch || "";
+      const cacheKey = deployHistoryPageKey(slug, itemEnv);
+      const cached = state.deployActivityCache[cacheKey] || {};
+      const clusterP = cached.cluster_profile;
+      const details = ["Không build lại trên GitHub — dùng image đã có trên Harbor"];
+      if (profile) details.push("Profile bản này: " + profile);
+      if (branch) details.push("Branch lúc deploy: " + branch);
+      if (clusterP && clusterP.profile_label && profile && clusterP.profile_label !== profile) {
+        details.push("Cluster hiện: " + clusterP.profile_label + " → sau rollback: " + profile);
+      }
       const ok = await uiConfirm({
         title: "Deploy lại bản cũ",
         message: "Deploy lại image " + tag.slice(0, 7) + " lên môi trường " + itemEnv.toUpperCase() + "?",
+        details: details,
         confirmText: "Deploy lại",
       });
       if (!ok) return;
@@ -3989,13 +4063,13 @@ async function pageProjectHub(main, slug, tab) {
         '<h4 style="margin:20px 0 10px">Các bản trước (' +
         hist.count +
         ")</h4>" +
-        '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:12px">Mỗi commit = 1 tag. <strong>Deploy lại</strong> = rollback cùng image, không build GitHub.</p>' +
+        '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:12px">Mỗi commit = 1 tag · badge profile = kiểu deploy lúc đó. <strong>Deploy lại</strong> khôi phục đúng profile đã lưu.</p>' +
         '<div id="deploy-history-list">' +
         hist.itemsHtml +
         "</div>" +
         hist.pagerHtml;
       document.getElementById("deploy-history-page").innerHTML =
-        "<h3>Lịch sử · " + esc(envLabel) + "</h3>" + body;
+        "<h3>Lịch sử · " + esc(envLabel) + "</h3>" + renderDeployProfileContext(activity) + body;
       bindDeployHistoryPagination(slug, env);
       bindDeployActivityActions(slug, env);
     } catch (err) {

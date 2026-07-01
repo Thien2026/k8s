@@ -141,6 +141,23 @@ body {
   font-size: 11px;
 }
 
+.login-session-error {
+  display: none;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #fecaca;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.login-session-error.login-session-error--visible,
+.login-session-error:not([hidden]) {
+  display: block;
+}
+
 .quick-login-box {
   margin-top: 18px;
   padding-top: 16px;
@@ -257,6 +274,37 @@ body {
   background: rgba(59, 130, 246, 0.1);
   border: 1px solid rgba(59, 130, 246, 0.25);
   font-size: 12px;
+}
+
+.deploy-profile-context {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(148, 163, 184, 0.08);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  font-size: 12px;
+  line-height: 1.5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  align-items: center;
+}
+
+.deploy-profile-context.warn {
+  background: rgba(251, 191, 36, 0.08);
+  border-color: rgba(251, 191, 36, 0.35);
+}
+
+.deploy-profile-mismatch {
+  color: #fbbf24;
+  font-style: normal;
+  font-size: 11px;
+}
+
+.deploy-profile-badge,
+.deploy-branch-badge {
+  font-size: 10px;
+  letter-spacing: 0.02em;
 }
 
 .deploy-promote-prep {
@@ -714,6 +762,11 @@ body {
 .deploy-summary-run {
   border-color: rgba(234, 179, 8, 0.35);
   background: rgba(234, 179, 8, 0.06);
+}
+
+.deploy-summary-warn {
+  border-color: rgba(245, 158, 11, 0.4);
+  background: rgba(245, 158, 11, 0.08);
 }
 
 .deploy-plain-list {
@@ -3027,10 +3080,62 @@ tr.dns-row td {
   width: auto;
 }
 
-/* Kiểu dự án — layout picker */
+.pipeline-wizard .pipeline-step {
+  margin-bottom: 20px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.pipeline-wizard .pipeline-step:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.pipeline-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-size: 14px;
+}
+.pipeline-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(139, 92, 246, 0.25);
+  color: #c4b5fd;
+  font-size: 12px;
+  font-weight: 700;
+}
+.pipeline-crosscheck {
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  background: rgba(15, 20, 35, 0.5);
+  border: 1px solid var(--border);
+}
+.pipeline-crosscheck.ok {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: #86efac;
+}
+.pipeline-crosscheck.warn {
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #fcd34d;
+}
+.pipeline-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
 .layout-picker {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin: 16px 0;
 }
@@ -3043,6 +3148,7 @@ tr.dns-row td {
   display: block;
   cursor: pointer;
   margin: 0;
+  height: 100%;
 }
 .layout-option input {
   position: absolute;
