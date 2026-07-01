@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
@@ -232,7 +231,7 @@ func (h *Handler) consoleDeployProfile(ctx context.Context, projectID int64, rep
 func (h *Handler) clusterRuntimeProfile(ctx context.Context, p projectRow, env string) deployProfileView {
 	tag := strings.TrimSpace(h.clusterServingImageTag(ctx, p, env))
 	repo, _ := h.getProjectRepo(ctx, p.ID)
-	_, dbServices := h.loadDeployServices(ctx, p.ID, repo)
+	dbServices, _ := h.loadDeployServices(ctx, p.ID, repo)
 	if h.clusterRunsSingleAppOnly(ctx, p, env, dbServices) {
 		return deployProfileView{
 			Layout:       deploy.LayoutSingle,
