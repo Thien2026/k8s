@@ -112,6 +112,11 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	repo, _ := h.getProjectRepo(ctx, p.ID)
 	params := h.buildDeployParams(ctx, p, repo, env, imageTag, false)
 	params.ForceRolloutRestart = rollback
+	var rollbackFromMulti bool
+	var multiServices []deploy.ServiceDef
+	if rollback {
+		params, multiServices, rollbackFromMulti = h.resolveRollbackDeployParams(ctx, p, params, imageTag)
+	}
 	imageRef := deployImageRef(params)
 
 	var deployID int64
@@ -174,6 +179,8 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 	}
 	if params.IsMultiService() {
 		h.cleanupLegacySingleApp(ctx, clusterID, params.Namespace)
+	} else if rollbackFromMulti {
+		h.cleanupMultiServiceWorkloads(ctx, clusterID, params.Namespace, multiServices)
 	}
 
 	if err := h.rancher.EnsureNamespace(ctx, clusterID, params.Namespace); err != nil {

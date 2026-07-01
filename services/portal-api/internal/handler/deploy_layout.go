@@ -128,3 +128,56 @@ func (h *Handler) validateRollbackImages(ctx context.Context, p projectRow, para
 		shortImageTag(tag),
 	)
 }
+
+// cleanupMultiServiceWorkloads — rollback về single-app: gỡ deployment api/web cũ trên cluster.
+func (h *Handler) cleanupMultiServiceWorkloads(ctx context.Context, clusterID, namespace string, services []deploy.ServiceDef) {
+	if h.rancher == nil || !h.rancher.Enabled() {
+		return
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return
+	}
+	for _, svc := range services {
+		name := strings.TrimSpace(svc.Name)
+		if name == "" || name == "app" {
+			continue
+		}
+		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/apis/apps/v1/deployments", namespace, name)
+		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/api/v1/services", namespace, name)
+	}
+}
+
+func (h *Handler) harborHasArtifact(ctx context.Context, p projectRow, repoName, tag string) bool {
+	if p.RegistryProvider != "harbor" || h.harbor == nil || !h.harbor.Enabled() {
+		return false
+	}
+	ok, err := h.harbor.ArtifactExists(ctx, harborProjectName(p), repoName, tag)
+	return err == nil && ok
+}
+
+// resolveRollbackDeployParams — tag single-app (chỉ image app) rollback về layout 1 deployment dù Console đang multi.
+func (h *Handler) resolveRollbackDeployParams(ctx context.Context, p projectRow, params deploy.Params, tag string) (deploy.Params, []deploy.ServiceDef, bool) {
+	tag = strings.TrimSpace(tag)
+	origServices := append([]deploy.ServiceDef(nil), params.EffectiveServices()...)
+	if !params.IsMultiService() || tag == "" {
+		return params, origServices, false
+	}
+	allMulti := true
+	for _, svc := range origServices {
+		if !h.harborHasArtifact(ctx, p, svc.Name, tag) {
+			allMulti = false
+			break
+		}
+	}
+	if allMulti {
+		return params, origServices, false
+	}
+	if !h.harborHasArtifact(ctx, p, "app", tag) {
+		return params, origServices, false
+	}
+	sp := params
+	sp.Layout = deploy.LayoutSingle
+	sp.Services = nil
+	return sp, origServices, true
+}
