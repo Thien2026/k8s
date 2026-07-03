@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
+	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 	"github.com/Thien2026/k8s/services/portal-api/internal/domains"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
 	"github.com/Thien2026/k8s/services/portal-api/internal/registry"
@@ -218,6 +219,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		NamespaceDev     string  `json:"namespace_dev"`
 		NamespaceProd    string  `json:"namespace_prod"`
 		RegistryProvider string  `json:"registry_provider"`
+		Layout           string  `json:"layout"`
 		MemberIDs        []int64 `json:"member_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -266,13 +268,17 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	harborName := prov.HarborProject
 	warnings := []string{}
+	layout := deploy.NormalizeLayout(body.Layout)
+	if layout == "" {
+		layout = deploy.LayoutSingle
+	}
 
 	var id int64
 	err = h.db.QueryRow(r.Context(), `
-		INSERT INTO projects (name, slug, description, namespace_dev, namespace_prod, harbor_project, registry_provider, owner_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO projects (name, slug, description, namespace_dev, namespace_prod, harbor_project, registry_provider, owner_id, layout)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id`,
-		name, slug, strings.TrimSpace(body.Description), nsDev, nsProd, harborName, provider, actor.ID,
+		name, slug, strings.TrimSpace(body.Description), nsDev, nsProd, harborName, provider, actor.ID, layout,
 	).Scan(&id)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
@@ -330,6 +336,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "slug": slug, "name": name,
+		"layout": layout,
 		"namespace_dev": nsDev, "namespace_prod": nsProd,
 		"registry_provider": provider,
 		"harbor_project": harborName, "warnings": warnings,
