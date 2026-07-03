@@ -2314,6 +2314,15 @@ tr.dns-row td {
   width: min(560px, calc(100vw - 32px));
 }
 
+.dialog-form .ui-dialog-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  margin-top: 16px;
+  padding-top: 12px;
+  background: linear-gradient(180deg, rgba(14, 18, 32, 0) 0%, rgba(14, 18, 32, 0.92) 28%);
+}
+
 .dialog-form .form-row {
   margin-bottom: 12px;
 }
@@ -2462,7 +2471,9 @@ tr.dns-row td {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background: rgba(4, 6, 14, 0.72);
   backdrop-filter: blur(8px);
   opacity: 0;
@@ -2476,7 +2487,12 @@ tr.dns-row td {
 .ui-dialog {
   position: relative;
   width: min(440px, 100%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 28px 28px 24px;
+  margin: auto;
+  flex-shrink: 0;
   border-radius: 20px;
   background: linear-gradient(165deg, rgba(22, 28, 48, 0.98), rgba(14, 18, 32, 0.98));
   border: 1px solid rgba(139, 92, 246, 0.22);
@@ -3192,20 +3208,24 @@ tr.dns-row td {
   margin-top: 2px;
 }
 .layout-picker-compact {
-  margin: 10px 0 8px;
+  margin: 8px 0;
+  gap: 8px;
+}
+.layout-picker-compact .layout-option-body {
+  padding: 10px 12px;
 }
 .layout-create-section .field-label {
   margin-bottom: 4px;
 }
 .layout-create-lead {
   font-size: 12px;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   line-height: 1.45;
 }
 .layout-create-foot {
   font-size: 11px;
-  margin: 8px 0 0;
-  line-height: 1.45;
+  margin: 6px 0 0;
+  line-height: 1.4;
 }
 .repo-detect-banner {
   font-size: 13px;
