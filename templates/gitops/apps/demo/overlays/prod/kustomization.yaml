@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: demo-prod
+resources:
+  - ../../base
+images:
+  - name: ghcr.io/example/demo
+    newTag: prod-latest
+replicas:
+  - name: demo
+    count: 2
+patches:
+  - target:
+      kind: Ingress
+      name: demo
+    patch: |-
+      - op: replace
+        path: /spec/rules/0/host
+        value: demo.example.com
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: demo.example.com
+      - op: replace
+        path: /spec/tls/0/secretName
+        value: demo-prod-tls

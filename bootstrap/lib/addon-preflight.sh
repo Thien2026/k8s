@@ -30,6 +30,10 @@ addon_resource_defaults() {
       ADDON_MIN_MEM_MB="${ADDON_HARBOR_MIN_MEM_MB:-3072}"
       ADDON_MIN_DISK_GB="${ADDON_HARBOR_MIN_DISK_GB:-40}"
       ;;
+    argocd)
+      ADDON_MIN_MEM_MB="${ADDON_ARGOCD_MIN_MEM_MB:-1536}"
+      ADDON_MIN_DISK_GB="${ADDON_ARGOCD_MIN_DISK_GB:-10}"
+      ;;
     *)
       ADDON_MIN_MEM_MB="${ADDON_DEFAULT_MIN_MEM_MB:-2048}"
       ADDON_MIN_DISK_GB="${ADDON_DEFAULT_MIN_DISK_GB:-20}"
@@ -135,6 +139,7 @@ addon_check_resources_only() {
   case "$addon" in
     rancher) addon_preflight_rancher_chart_only ;;
     harbor)  addon_preflight_harbor_chart_only ;;
+    argocd)  addon_preflight_argocd_chart_only ;;
     *) log "Addon không hỗ trợ check: ${addon}"; exit 1 ;;
   esac
   addon_check_resources "$addon"
@@ -155,16 +160,24 @@ addon_preflight_harbor_chart_only() {
   addon_assert_helm_chart_match harbor harbor "${HARBOR_CHART_VERSION}"
 }
 
+addon_preflight_argocd_chart_only() {
+  addon_assert_chart_pinned ARGOCD_CHART_VERSION ArgoCD
+  addon_assert_helm_chart_match argocd argocd "${ARGOCD_CHART_VERSION}"
+}
+
 addon_require_core_bootstrap() {
-  local core_steps=(06-hello-world 08-portal)
-  for s in "${core_steps[@]}"; do
-    if ! is_step_done "$(core_step "$s")"; then
-      log "Thiếu core bootstrap: ${s} — chạy ./bootstrap/run.sh next đến khi Console OK."
-      exit 1
-    fi
-  done
   kube_ready
   helm_ready
+  if is_step_done "$(core_step "08-portal")"; then
+    return 0
+  fi
+  # Tương thích VPS cũ: có thể mất state file nhưng portal đã chạy.
+  if kubectl -n platform get deploy portal-api >/dev/null 2>&1 && kubectl -n platform get deploy portal-web >/dev/null 2>&1; then
+    log "Không thấy state 08-portal nhưng portal đang chạy — tiếp tục addon."
+    return 0
+  fi
+  log "Thiếu core bootstrap 08-portal — chạy ./bootstrap/run.sh next đến khi Console OK."
+  exit 1
 }
 
 addon_assert_chart_pinned() {
@@ -213,4 +226,9 @@ addon_preflight_rancher() {
 addon_preflight_harbor() {
   addon_check_resources harbor
   addon_preflight_harbor_chart_only
+}
+
+addon_preflight_argocd() {
+  addon_check_resources argocd
+  addon_preflight_argocd_chart_only
 }

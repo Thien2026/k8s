@@ -21,19 +21,21 @@ func TLSSecretName(domainID int64) string {
 	return fmt.Sprintf("tls-app-%d", domainID)
 }
 
-// IngressManifest JSON cho networking.k8s.io/v1 Ingress.
-// routes rỗng → single app (backward compat).
-func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool, routes []deploy.IngressRoute) ([]byte, error) {
-	name := IngressName(domainID)
+func normalizeIngressRoutes(routes []deploy.IngressRoute) []deploy.IngressRoute {
 	if len(routes) == 0 {
-		routes = []deploy.IngressRoute{{
+		return []deploy.IngressRoute{{
 			Path:        "/",
 			PathType:    "Prefix",
 			ServiceName: LegacyServiceName,
 			ServicePort: ServicePort,
 		}}
 	}
-	// Path dài hơn trước (/api trước /).
+	return routes
+}
+
+// IngressHTTPPaths — spec.rules[0].http.paths cho JSON patch (single ↔ multi).
+func IngressHTTPPaths(routes []deploy.IngressRoute) []map[string]any {
+	routes = normalizeIngressRoutes(routes)
 	sorted := append([]deploy.IngressRoute(nil), routes...)
 	sort.Slice(sorted, func(i, j int) bool {
 		return len(sorted[i].Path) > len(sorted[j].Path)
@@ -59,6 +61,23 @@ func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool
 			},
 		})
 	}
+	return paths
+}
+
+// IngressPathsPatch JSON patch thay thế toàn bộ paths — đáng tin cậy hơn strategic-merge khi đổi layout.
+func IngressPathsPatch(routes []deploy.IngressRoute) ([]byte, error) {
+	return json.Marshal([]map[string]any{{
+		"op":    "replace",
+		"path":  "/spec/rules/0/http/paths",
+		"value": IngressHTTPPaths(routes),
+	}})
+}
+
+// IngressManifest JSON cho networking.k8s.io/v1 Ingress.
+// routes rỗng → single app (backward compat).
+func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool, routes []deploy.IngressRoute) ([]byte, error) {
+	name := IngressName(domainID)
+	paths := IngressHTTPPaths(routes)
 	obj := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",

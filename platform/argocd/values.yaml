@@ -1,0 +1,28 @@
+# Argo CD values tối giản cho single-cluster platform.
+
+global:
+  logging:
+    format: text
+
+configs:
+  params:
+    # TLS kết thúc ở ingress-nginx, Argo server chạy HTTP nội bộ.
+    server.insecure: true
+
+server:
+  replicas: 1
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+    tls: true
+
+repoServer:
+  replicas: 1
+
+applicationSet:
+  replicaCount: 1
+
+notifications:
+  enabled: true

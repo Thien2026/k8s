@@ -157,116 +157,41 @@ func (h *Handler) PutProjectServices(w http.ResponseWriter, r *http.Request) {
 		Branch   string              `json:"branch,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ: " + err.Error()})
 		return
 	}
 	layout := deploy.NormalizeLayout(body.Layout)
-	if layout == deploy.LayoutMulti {
-		if len(body.Services) < 2 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Multi-service cần ít nhất 2 service (vd. api + web)"})
-			return
-		}
-		names := map[string]bool{}
-		publicCount := 0
-		for _, s := range body.Services {
-			name := strings.TrimSpace(s.Name)
-			if name == "" {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Tên service không được rỗng"})
-				return
-			}
-			if names[name] {
-			 writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Tên service trùng: " + name})
-				return
-			}
-			names[name] = true
-			if serviceRowExposeIngress(s) {
-				publicCount++
-			}
-		}
-		if publicCount == 0 {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Cần ít nhất 1 service public (Ingress) — internal-only dùng expose_ingress=false"})
-			return
-		}
+	repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
+	validateBranch := strings.TrimSpace(body.Branch)
+	if validateBranch == "" {
+		validateBranch = strings.TrimSpace(repoRow.Branch)
 	}
-
-	if layout == deploy.LayoutMulti {
-		repoRow, _ := h.getProjectRepo(r.Context(), p.ID)
-		validateBranch := strings.TrimSpace(body.Branch)
-		if validateBranch == "" {
-			validateBranch = strings.TrimSpace(repoRow.Branch)
-		}
-		if validateBranch == "" {
-			validateBranch = "main"
-		}
-		if err := h.validateMultiServicePaths(r.Context(), u.ID, repoRow.GitHubOwner, repoRow.GitHubRepo, validateBranch, body.Services); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-			return
-		}
+	if validateBranch == "" {
+		validateBranch = "main"
 	}
-
-	ctx := r.Context()
-	tx, err := h.db.Begin(ctx)
-	if err != nil {
+	owner := strings.TrimSpace(repoRow.GitHubOwner)
+	ghRepo := strings.TrimSpace(repoRow.GitHubRepo)
+	if err := h.validateProjectServicesLayout(r.Context(), u.ID, owner, ghRepo, validateBranch, layout, body.Services); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.persistProjectServices(r.Context(), p.ID, layout, body.Services); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx, `UPDATE projects SET layout=$1 WHERE id=$2`, layout, p.ID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM project_services WHERE project_id=$1`, p.ID); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	if layout == deploy.LayoutMulti {
-		for i, s := range body.Services {
-			svc := deploy.NormalizeServiceDef(deploy.ServiceDef{
-				Name:           s.Name,
-				DisplayName:    s.DisplayName,
-				BuildContext:   s.BuildContext,
-				BuildMode:      s.BuildMode,
-				Stack:          s.Stack,
-				DockerfilePath: s.DockerfilePath,
-				ContainerPort:  s.ContainerPort,
-				HealthPath:     s.HealthPath,
-				IngressPath:    s.IngressPath,
-				ExposeIngress:  serviceRowExposeIngress(s),
-				SortOrder:      s.SortOrder,
-			})
-			if svc.SortOrder == 0 && i > 0 {
-				svc.SortOrder = i
-			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO project_services
-				  (project_id, name, display_name, build_context, build_mode, dockerfile_path,
-				   container_port, health_path, ingress_path, expose_ingress, stack, sort_order, updated_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now())`,
-				p.ID, svc.Name, svc.DisplayName, svc.BuildContext, svc.BuildMode, svc.DockerfilePath,
-				svc.ContainerPort, svc.HealthPath, svc.IngressPath, svc.ExposeIngress, deploy.NormalizeStack(svc.Stack), svc.SortOrder); err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-				return
-			}
-		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
-		return
-	}
-	_, _ = h.db.Exec(ctx, `UPDATE project_repos SET workflow_synced_at=NULL WHERE project_id=$1`, p.ID)
+	h.invalidateProjectWorkflow(r.Context(), p.ID)
 	var conventionSeeds []backFrontConventionSeed
 	if layout == deploy.LayoutMulti {
-		conventionSeeds, _ = h.ensureBackFrontConventions(ctx, p.ID)
+		conventionSeeds, _ = h.ensureBackFrontConventions(r.Context(), p.ID)
 	}
 	resp := map[string]any{
-		"status": "ok",
-		"layout": layout,
-		"hint":   "Sync lại workflow GitHub để áp dụng cấu hình multi-service.",
+		"status":          "ok",
+		"layout":          layout,
+		"workflow_stale":  true,
+		"hint":            "Cấu hình đã lưu — bấm 「Lưu & đồng bộ GitHub」 để push workflow khớp layout.",
 	}
 	if len(conventionSeeds) > 0 {
 		resp["convention_seeds"] = conventionSeeds
-		resp["hint"] = "Đã gợi ý env chuẩn back/front (VITE_API_BASE=/api). Sync workflow GitHub và kiểm tra tab Cấu hình app."
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

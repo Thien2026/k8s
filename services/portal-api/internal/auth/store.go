@@ -126,6 +126,13 @@ func (s *Store) CreateUser(ctx context.Context, email, displayName, passwordHash
 	return id, err
 }
 
+func (s *Store) UpdatePassword(ctx context.Context, userID int64, passwordHash string) error {
+	_, err := s.db.Exec(ctx, `
+		UPDATE users SET password_hash=$2, failed_login_attempts=0, locked_until=NULL, updated_at=now()
+		WHERE id=$1`, userID, passwordHash)
+	return err
+}
+
 func (s *Store) ListUsers(ctx context.Context) ([]User, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, email, COALESCE(display_name,''), role, active

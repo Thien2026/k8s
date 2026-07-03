@@ -3,6 +3,7 @@ package registry
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/harbor"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
@@ -128,4 +129,22 @@ func (s *Service) DefaultProvider(ctx context.Context) string {
 		return GHCR
 	}
 	return GHCR
+}
+
+// Deprovision gỡ tài nguyên registry trên VPS khi xóa project (GHCR nằm ngoài VPS — bỏ qua).
+func (s *Service) Deprovision(ctx context.Context, provider, slug, harborProject string) error {
+	if provider != Harbor {
+		return nil
+	}
+	if s.harbor.client == nil || !s.harbor.client.Enabled() {
+		return nil
+	}
+	name := strings.TrimSpace(harborProject)
+	if name == "" {
+		name = strings.TrimSpace(slug)
+	}
+	if name == "" {
+		return nil
+	}
+	return s.harbor.client.PurgeProject(ctx, name)
 }

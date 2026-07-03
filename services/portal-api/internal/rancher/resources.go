@@ -22,6 +22,7 @@ var K8sResources = []K8sResource{
 	{Key: "pods", Label: "Pods", Group: "Workloads", APIPath: "/api/v1/pods", Namespaced: true},
 	{Key: "services", Label: "Services", Group: "Networking", APIPath: "/api/v1/services", Namespaced: true},
 	{Key: "ingresses", Label: "Ingresses", Group: "Networking", APIPath: "/apis/networking.k8s.io/v1/ingresses", Namespaced: true},
+	{Key: "argocdapplications", Label: "ArgoCD Applications", Group: "GitOps", APIPath: "/apis/argoproj.io/v1alpha1/applications", Namespaced: true},
 	{Key: "horizontalpodautoscalers", Label: "HorizontalPodAutoscalers", Group: "Networking", APIPath: "/apis/autoscaling/v2/horizontalpodautoscalers", Namespaced: true},
 	{Key: "persistentvolumeclaims", Label: "PersistentVolumeClaims", Group: "Storage", APIPath: "/api/v1/persistentvolumeclaims", Namespaced: true},
 	{Key: "persistentvolumes", Label: "PersistentVolumes", Group: "Storage", APIPath: "/api/v1/persistentvolumes", Namespaced: false},

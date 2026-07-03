@@ -45,6 +45,34 @@ func TestGitHubWorkflowBuildpack(t *testing.T) {
 	}
 }
 
+func TestGitHubWorkflowSubmodules(t *testing.T) {
+	wf := GitHubWorkflow(Params{
+		ProjectSlug:      "demo",
+		Branch:           "main",
+		GitSubmodules:    "recursive",
+		BuildMode:        "dockerfile",
+		RegistryProvider: registry.GHCR,
+		Registry: registry.ProjectRegistry{
+			ImagePrefix: "ghcr.io/org/demo",
+		},
+	})
+	if !strings.Contains(wf.Content, "submodules: recursive") {
+		t.Fatal("expected submodules checkout")
+	}
+	if !strings.Contains(wf.Content, "token: ${{ secrets.GITHUB_TOKEN }}") {
+		t.Fatal("expected GITHUB_TOKEN for submodule checkout")
+	}
+}
+
+func TestNormalizeGitSubmodules(t *testing.T) {
+	if NormalizeGitSubmodules("recursive") != "recursive" {
+		t.Fatal("recursive")
+	}
+	if NormalizeGitSubmodules("") != "" {
+		t.Fatal("empty")
+	}
+}
+
 func TestGitHubWorkflowDockerfile(t *testing.T) {
 	wf := GitHubWorkflow(Params{
 		ProjectSlug:      "demo",

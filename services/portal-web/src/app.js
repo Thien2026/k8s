@@ -943,8 +943,16 @@ function deployProfileLabel(item) {
   if (item.deploy_profile) return item.deploy_profile;
   if (!item.deploy_layout) return "";
   var names = (item.deploy_services || []).map(function (s) { return s.name; }).filter(Boolean);
-  if (item.deploy_layout === "multi") return "multi · " + (names.join("+") || "?");
-  return "single · " + (names[0] || "app");
+  if (item.deploy_layout === "multi") return "Web + API · " + (names.join("+") || "api+web");
+  return "Một website · " + (names[0] || "app");
+}
+
+function rollbackLayoutAllowed(item, clusterProfile) {
+  if (!item || !item.deploy_layout) return true;
+  var target = item.deploy_layout;
+  var current = (clusterProfile && clusterProfile.layout) || "";
+  if (!current) return true;
+  return target === current;
 }
 
 function renderDeployProfileBadge(item) {
@@ -1377,15 +1385,19 @@ function renderDeployPipelineItem(item, withLog, actions) {
       : "") +
     renderDeployProfileBadge(item) +
     (actions.rollback && canWriteK8s()
-      ? '<button type="button" class="btn-ghost btn-sm pipe-rollback-btn" data-tag="' +
-        esc(item.image_tag || "") +
-        '" data-env="' +
-        esc(item.environment || actions.env || "dev") +
-        '" data-deploy-profile="' +
-        esc(deployProfileLabel(item)) +
-        '" data-git-branch="' +
-        esc(item.git_branch || "") +
-        '" title="Deploy lại image tag này">Deploy lại</button>'
+      ? rollbackLayoutAllowed(item, actions.clusterProfile)
+        ? '<button type="button" class="btn-ghost btn-sm pipe-rollback-btn" data-tag="' +
+          esc(item.image_tag || "") +
+          '" data-env="' +
+          esc(item.environment || actions.env || "dev") +
+          '" data-deploy-profile="' +
+          esc(deployProfileLabel(item)) +
+          '" data-deploy-layout="' +
+          esc(item.deploy_layout || "") +
+          '" data-git-branch="' +
+          esc(item.git_branch || "") +
+          '" title="Deploy lại image tag này">Deploy lại</button>'
+        : '<span class="muted" style="font-size:11px" title="Bản này khác kiểu chạy với site hiện tại — không thể deploy lại">Khác kiểu chạy</span>'
       : "") +
     "</div>";
   const summaryPanel = withLog ? renderDeployHumanSummary(item) : "";
@@ -1522,12 +1534,14 @@ function renderDeployHistoryContent(activity, opts) {
   state.deployHistoryPage[key] = page;
   const start = (page - 1) * pageSize;
   const slice = history.slice(start, start + pageSize);
+  const clusterProfile = activity.cluster_profile || null;
   const itemsHtml = history.length
     ? slice
         .map(function (it) {
           return renderDeployPipelineItem(it, false, {
             rollback: true,
             env: deployActivityEnv(activity, opts.expectedEnv),
+            clusterProfile: clusterProfile,
           });
         })
         .join("")
@@ -1801,9 +1815,13 @@ function navigateAfterPromote(slug, imageTag) {
   state.projectEnv = "prod";
   localStorage.setItem("project-env", "prod");
   state.promoteFollow = { slug: slug, tag: String(imageTag || "").trim() };
-  toastSuccess("Đã promote — chuyển sang tab Prod, theo dõi tiến trình bên dưới…");
-  const main = document.getElementById("main");
-  if (main) pageProjectHub(main, slug, "deploy");
+  toastSuccess("Đã promote — chuyển sang Deploy / Git (Prod), theo dõi tiến trình bên dưới…");
+  const target = "#/project/" + slug + "/deploy";
+  if (location.hash === target) {
+    navigate();
+  } else {
+    location.hash = target;
+  }
 }
 
 function bindDeployActivityActions(slug, env, promoteReadiness) {
@@ -1866,6 +1884,10 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
       const cacheKey = deployHistoryPageKey(slug, itemEnv);
       const cached = state.deployActivityCache[cacheKey] || {};
       const clusterP = cached.cluster_profile;
+      if (clusterP && !rollbackLayoutAllowed({ deploy_layout: btn.dataset.deployLayout || "" }, clusterP)) {
+        toastError("Không thể deploy lại: bản này khác kiểu chạy với site hiện tại. Chọn bản cùng kiểu hoặc deploy bản mới.");
+        return;
+      }
       const details = ["Không build lại trên GitHub — dùng image đã có trên Harbor"];
       if (profile) details.push("Profile bản này: " + profile);
       if (branch) details.push("Branch lúc deploy: " + branch);
@@ -1885,11 +1907,41 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
           method: "POST",
           body: { image_tag: tag, environment: itemEnv },
         });
-        toastSuccess("Đã rollback — đang cập nhật log");
+        toastSuccess("Đã gửi rollback — theo dõi tiến trình bên dưới");
+        const scope = document.getElementById("deploy-history-page") ? "history" : "current";
         const activity = await api(
-          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: itemEnv })
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: itemEnv, scope: scope })
         );
-        updateDeployActivityDOM(activity, slug, promoteReadiness, itemEnv);
+        if (document.getElementById("deploy-history-page")) {
+          const hist = renderDeployHistoryContent(activity, { slug: slug, expectedEnv: itemEnv });
+          const cur = activity.current;
+          let body = "";
+          if (cur) {
+            body +=
+              '<p class="muted" style="margin-bottom:12px">Bản mới nhất (cũng xem tại tab <a href="' +
+              esc(projectRoute(slug, "deploy")) +
+              '">Deploy / Git</a>):</p>' +
+              renderDeployPipelineItem(cur, true, { env: itemEnv });
+          }
+          const envLabel = itemEnv.toUpperCase();
+          body +=
+            '<h4 style="margin:20px 0 10px">Các bản trước (' +
+            hist.count +
+            ")</h4>" +
+            '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:12px">Mỗi commit = 1 tag · badge profile = kiểu deploy lúc đó. <strong>Deploy lại</strong> khôi phục đúng profile đã lưu.</p>' +
+            '<div id="deploy-history-list">' +
+            hist.itemsHtml +
+            "</div>" +
+            hist.pagerHtml;
+          document.getElementById("deploy-history-page").innerHTML =
+            "<h3>Lịch sử · " + esc(envLabel) + "</h3>" + renderDeployProfileContext(activity) + body;
+          bindDeployHistoryPagination(slug, itemEnv);
+          bindDeployActivityActions(slug, itemEnv);
+          state.deployActivityCache[deployHistoryPageKey(slug, itemEnv)] = activity;
+          if (activity.serving_image_tag) state.deployServingTag = activity.serving_image_tag;
+        } else {
+          updateDeployActivityDOM(activity, slug, promoteReadiness, itemEnv);
+        }
       } catch (err) {
         toastError(err.message);
       } finally {
@@ -3617,7 +3669,9 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     });
   }
 
-  async function refreshGitHubDirs() {
+  async function refreshGitHubDirs(opts) {
+    opts = opts || {};
+    const silent = opts.silent === true;
     if (refreshDirsBtn) {
       refreshDirsBtn.disabled = true;
       refreshDirsBtn.textContent = "Đang quét…";
@@ -3625,11 +3679,13 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     try {
       const dirs = await loadGitHubDirs();
       populateCtxSelects(dirs);
-      if (dirs.length === 0 && ghStatus.connected) {
+      if (!silent && dirs.length === 0 && ghStatus.connected) {
         toastError("Không thấy thư mục con — kiểm tra branch hoặc dùng Tự nhập");
       }
     } catch (err) {
-      toastError(err.message || "Không quét được GitHub");
+      if (!silent) {
+        toastError(err.message || "Không quét được GitHub");
+      }
     } finally {
       if (refreshDirsBtn) {
         refreshDirsBtn.disabled = false;
@@ -3749,7 +3805,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
       template.forEach(function (_s, idx) {
         bindCtxSelect(idx);
       });
-      refreshGitHubDirs();
+      refreshGitHubDirs({ silent: true });
     }
     refreshPreview();
     scheduleCrosscheck();
@@ -3760,7 +3816,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   });
   if (refreshDirsBtn) {
     refreshDirsBtn.onclick = function () {
-      refreshGitHubDirs();
+      refreshGitHubDirs({ silent: false });
     };
   }
   if (tbody) {
@@ -3781,7 +3837,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     bindRemoveRow(String(idx));
   });
   if (currentLayout() === "multi") {
-    refreshGitHubDirs();
+    refreshGitHubDirs({ silent: true });
   }
   scheduleCrosscheck();
 

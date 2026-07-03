@@ -189,11 +189,14 @@ func deploymentFailedMayRecover(d deploymentRow) bool {
 	}
 	for _, frag := range []string{
 		"smoke check",
+		"http 503",
 		"minimum availability",
 		"timed out progressing",
 		"progressing:",
 		"connection refused",
 		"containercreating",
+		"certificate is valid for ingress.local",
+		"failed to verify certificate",
 	} {
 		if strings.Contains(msg, frag) {
 			return true

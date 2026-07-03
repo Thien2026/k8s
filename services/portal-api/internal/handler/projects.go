@@ -27,6 +27,7 @@ type projectRow struct {
 	HarborProject      string `json:"harbor_project,omitempty"`
 	RegistryProvider   string `json:"registry_provider"`
 	Registry           registry.ProjectRegistry `json:"registry,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
 }
 
 type projectMemberRow struct {
@@ -48,6 +49,7 @@ type projectRepoRow struct {
 	DeployEnvironment string `json:"deploy_environment,omitempty"`
 	WorkflowSyncedAt  string `json:"workflow_synced_at,omitempty"`
 	AutoDeployEnabled bool   `json:"auto_deploy_enabled"`
+	GitSubmodules     string `json:"git_submodules,omitempty"`
 	EnvContractBuild  string `json:"-"`
 	EnvContractRuntime string `json:"-"`
 	UpdatedAt         string `json:"updated_at,omitempty"`
@@ -82,13 +84,17 @@ func slugify(s string) string {
 
 func (h *Handler) getProjectBySlug(ctx context.Context, slug string) (projectRow, error) {
 	var p projectRow
+	var created time.Time
 	err := h.db.QueryRow(ctx, `
 		SELECT id, name, slug, COALESCE(layout,'single'), COALESCE(description,''), namespace_dev, namespace_prod,
-		       COALESCE(harbor_project,''), COALESCE(registry_provider,'ghcr')
+		       COALESCE(harbor_project,''), COALESCE(registry_provider,'ghcr'), created_at
 		FROM projects WHERE slug = $1`, slug).Scan(
 		&p.ID, &p.Name, &p.Slug, &p.Layout, &p.Description, &p.NamespaceDev, &p.NamespaceProd,
-		&p.HarborProject, &p.RegistryProvider,
+		&p.HarborProject, &p.RegistryProvider, &created,
 	)
+	if err == nil {
+		p.CreatedAt = created.UTC().Format(time.RFC3339)
+	}
 	return p, err
 }
 
@@ -318,7 +324,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if rancherOn && h.rancher != nil && h.rancher.Enabled() {
 		domList, _ := h.listProjectDomains(r.Context(), id)
 		for i := range domList {
-			h.syncProjectDomain(r.Context(), created, &domList[i], cid)
+			h.syncProjectDomain(r.Context(), created, &domList[i], cid, nil)
 		}
 	}
 
@@ -351,10 +357,14 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 {
 		purgeK8s = body.PurgeK8s
 	}
+	// Luôn dọn tài nguyên trên VPS — chỉ giữ lại dữ liệu bên thứ 3 (GitHub/GHCR cloud).
+	purgeK8s = true
 
 	cid := r.URL.Query().Get("cluster_id")
 	warnings := []string{}
 	purged := []string{}
+
+	warnings = append(warnings, h.deleteArgoApplications(r.Context(), cid, p.Slug)...)
 
 	domList, _ := h.listProjectDomains(r.Context(), p.ID)
 	syncer := h.domainSyncer()
@@ -370,11 +380,27 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 			if strings.TrimSpace(ns) == "" {
 				continue
 			}
-			if err := h.rancher.DeleteNamespace(r.Context(), cid, ns); err != nil {
+			if err := h.rancher.PurgeNamespace(r.Context(), cid, ns); err != nil {
 				warnings = append(warnings, fmt.Sprintf("Namespace %s: %s", ns, err.Error()))
-			} else {
-				purged = append(purged, ns)
+				continue
 			}
+			if err := h.rancher.WaitNamespaceDeleted(r.Context(), cid, ns, 90*time.Second); err != nil {
+				warnings = append(warnings, err.Error())
+			} else {
+				purged = append(purged, "k8s:"+ns)
+			}
+		}
+	}
+
+	harborName := strings.TrimSpace(p.HarborProject)
+	if harborName == "" {
+		harborName = p.Slug
+	}
+	if strings.EqualFold(strings.TrimSpace(p.RegistryProvider), "harbor") && h.registry != nil {
+		if err := h.registry.Deprovision(r.Context(), p.RegistryProvider, p.Slug, harborName); err != nil {
+			warnings = append(warnings, fmt.Sprintf("Harbor project %s: %s", harborName, err.Error()))
+		} else {
+			purged = append(purged, "harbor:"+harborName)
 		}
 	}
 
@@ -393,7 +419,7 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		"slug":     slug,
 		"purged":   purged,
 		"warnings": warnings,
-		"note":     "Đã xóa metadata project. Harbor registry (nếu có) không tự xóa — xóa thủ công trong Harbor nếu cần.",
+		"note":     "Đã xóa metadata DB, namespace K8s, Harbor và ArgoCD app (nếu có). GitHub Actions / GHCR cloud không xóa.",
 	})
 }
 
@@ -659,7 +685,7 @@ func (h *Handler) AddProjectDomain(w http.ResponseWriter, r *http.Request) {
 		Kind: "custom", IngressName: ingressName, SyncStatus: "pending", CertStatus: "unknown",
 	}
 	cid := r.URL.Query().Get("cluster_id")
-	h.syncProjectDomain(r.Context(), p, &d, cid)
+	h.syncProjectDomain(r.Context(), p, &d, cid, nil)
 	h.enrichProjectDomain(r.Context(), p, &d, cid)
 	writeJSON(w, http.StatusCreated, d)
 }
@@ -747,11 +773,11 @@ func (h *Handler) getProjectRepo(ctx context.Context, projectID int64) (projectR
 		SELECT git_url, branch, COALESCE(build_mode,'dockerfile'), dockerfile_path, build_context,
 		       COALESCE(github_owner,''), COALESCE(github_repo,''),
 		       COALESCE(deploy_environment,'dev'), workflow_synced_at, auto_deploy_enabled,
-		       COALESCE(env_contract_build,''), COALESCE(env_contract_runtime,''), updated_at
+		       COALESCE(git_submodules,''), COALESCE(env_contract_build,''), COALESCE(env_contract_runtime,''), updated_at
 		FROM project_repos WHERE project_id = $1`, projectID).Scan(
 		&repo.GitURL, &repo.Branch, &repo.BuildMode, &repo.DockerfilePath, &repo.BuildContext,
 		&repo.GitHubOwner, &repo.GitHubRepo, &repo.DeployEnvironment, &synced, &repo.AutoDeployEnabled,
-		&repo.EnvContractBuild, &repo.EnvContractRuntime, &updated)
+		&repo.GitSubmodules, &repo.EnvContractBuild, &repo.EnvContractRuntime, &updated)
 	if err != nil {
 		return projectRepoRow{Branch: "main", BuildMode: "dockerfile", DockerfilePath: "Dockerfile", BuildContext: ".", DeployEnvironment: "dev"}, nil
 	}

@@ -145,10 +145,24 @@ source "${ROOT_DIR}/config/env.sh" 2>/dev/null || true
 if [[ -n "${PLATFORM_DOMAIN:-}" ]]; then
   SECRET_ARGS+=(--from-literal=PLATFORM_DOMAIN="${PLATFORM_DOMAIN}")
 elif [[ -n "${DOMAIN:-}" ]]; then
-  SECRET_ARGS+=(--from-literal=PLATFORM_DOMAIN="${DOMAIN}")
+  SECRET_ARGS+=(--from-literal=PLATFORM_DOMAIN="platform.${DOMAIN}")
 fi
 if [[ -n "${NODE_PUBLIC_IP:-}" ]]; then
   SECRET_ARGS+=(--from-literal=NODE_PUBLIC_IP="${NODE_PUBLIC_IP}")
+fi
+if [[ -n "${ARGOCD_HOST:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=ARGOCD_HOST="${ARGOCD_HOST}")
+  SECRET_ARGS+=(--from-literal=ARGOCD_URL="https://${ARGOCD_HOST}")
+fi
+SECRET_ARGS+=(--from-literal=ARGOCD_NAMESPACE="${ARGOCD_NAMESPACE:-argocd}")
+if [[ -n "${GITOPS_REPO_URL:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GITOPS_REPO_URL="${GITOPS_REPO_URL}")
+fi
+if [[ -n "${GITOPS_REPO_BRANCH:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GITOPS_REPO_BRANCH="${GITOPS_REPO_BRANCH}")
+fi
+if [[ -n "${GITOPS_BASE_PATH:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GITOPS_BASE_PATH="${GITOPS_BASE_PATH}")
 fi
 if [[ -n "${GITHUB_CLIENT_ID:-}" ]]; then
   SECRET_ARGS+=(--from-literal=GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID}")

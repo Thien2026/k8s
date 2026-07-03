@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
@@ -161,6 +162,11 @@ func snapServicesToDefs(snaps []deployServiceSnap, fallback []deploy.ServiceDef)
 	for _, s := range fallback {
 		byName[strings.TrimSpace(s.Name)] = s
 	}
+	for _, d := range deploy.DefaultMultiServices {
+		if _, ok := byName[d.Name]; !ok {
+			byName[d.Name] = d
+		}
+	}
 	out := make([]deploy.ServiceDef, 0, len(snaps))
 	for _, snap := range snaps {
 		name := strings.TrimSpace(snap.Name)
@@ -174,9 +180,89 @@ func snapServicesToDefs(snaps []deployServiceSnap, fallback []deploy.ServiceDef)
 			out = append(out, def)
 			continue
 		}
-		out = append(out, deploy.ServiceDef{Name: name, DisplayName: snap.DisplayName, ContainerPort: 8080, HealthPath: "/health", IngressPath: "/"})
+		out = append(out, defaultServiceDefFromSnap(name, snap.DisplayName))
 	}
 	return out
+}
+
+func defaultServiceDefFromSnap(name, displayName string) deploy.ServiceDef {
+	def := deploy.ServiceDef{
+		Name:          name,
+		DisplayName:   displayName,
+		ContainerPort: 8080,
+		HealthPath:    "/health",
+		IngressPath:   "/",
+		ExposeIngress: true,
+	}
+	switch name {
+	case "api":
+		def.IngressPath = deploy.ConventionAPIBasePath
+		def.HealthPath = "/health"
+	case "web":
+		def.IngressPath = "/"
+		def.HealthPath = "/"
+	}
+	return deploy.NormalizeServiceDef(def)
+}
+
+// deployParamsForHealthCheck — runtime/smoke theo profile bản deploy (snapshot), không phải Console hiện tại.
+func (h *Handler) deployParamsForHealthCheck(ctx context.Context, p projectRow, repo projectRepoRow, env, tag string, d *deploymentRow) deploy.Params {
+	base := h.buildDeployParams(ctx, p, repo, env, tag, false)
+	if d == nil || strings.TrimSpace(d.DeployLayout) == "" {
+		return base
+	}
+	layout := deploy.NormalizeLayout(d.DeployLayout)
+	if layout == deploy.LayoutMulti && len(d.DeployServices) > 0 {
+		base.Layout = layout
+		base.Services = snapServicesToDefs(d.DeployServices, base.EffectiveServices())
+		return base
+	}
+	if layout == deploy.LayoutSingle {
+		base.Layout = deploy.LayoutSingle
+		base.Services = nil
+		return base
+	}
+	return base
+}
+
+func (h *Handler) smokePathsForDeployment(ctx context.Context, projectID int64, repo projectRepoRow, d *deploymentRow) []string {
+	if d != nil && strings.TrimSpace(d.DeployLayout) != "" {
+		layout := deploy.NormalizeLayout(d.DeployLayout)
+		if layout != deploy.LayoutMulti {
+			return deploy.SmokeCheckPaths(deploy.LayoutSingle, nil)
+		}
+		fallback, _ := h.loadDeployServices(ctx, projectID, repo)
+		return deploy.SmokeCheckPaths(layout, snapServicesToDefs(d.DeployServices, fallback))
+	}
+	return h.smokePathsForProject(ctx, projectID, repo)
+}
+
+func deploymentRowFromParams(params deploy.Params) deploymentRow {
+	d := deploymentRow{DeployLayout: deploy.NormalizeLayout(params.Layout)}
+	for _, s := range params.EffectiveServices() {
+		d.DeployServices = append(d.DeployServices, deployServiceSnap{
+			Name:        s.Name,
+			DisplayName: s.DisplayName,
+		})
+	}
+	return d
+}
+
+// ingressRoutesForParams — route Ingress theo profile deploy thực tế (rollback snapshot), không phải Console.
+func ingressRoutesForParams(params deploy.Params) []deploy.IngressRoute {
+	if deploy.NormalizeLayout(params.Layout) == deploy.LayoutMulti {
+		routes := deploy.IngressRoutesFromServices(params.EffectiveServices())
+		if len(routes) == 0 {
+			routes = deploy.IngressRoutesFromServices(deploy.DefaultMultiServices)
+		}
+		return routes
+	}
+	return []deploy.IngressRoute{{
+		Path:        "/",
+		PathType:    "Prefix",
+		ServiceName: "app",
+		ServicePort: 80,
+	}}
 }
 
 func (h *Handler) resolveRollbackParams(ctx context.Context, p projectRow, repo projectRepoRow, env, tag string) (deploy.Params, []deploy.ServiceDef, bool) {
@@ -246,7 +332,7 @@ func (h *Handler) clusterRuntimeProfile(ctx context.Context, p projectRow, env s
 		if name == "" {
 			continue
 		}
-		if h.serviceWorkloadExists(ctx, p, env, name) {
+		if h.serviceHasReadyPods(ctx, p, env, name) {
 			running = append(running, name)
 		}
 	}
@@ -274,4 +360,122 @@ func (h *Handler) clusterRuntimeProfile(ctx context.Context, p projectRow, env s
 		return deployProfileView{ProfileLabel: "tag " + shortImageTag(tag), ImageTag: tag}
 	}
 	return deployProfileView{ProfileLabel: "chưa deploy"}
+}
+
+func layoutUserLabel(layout string) string {
+	if deploy.NormalizeLayout(layout) == deploy.LayoutMulti {
+		return "Web + API riêng"
+	}
+	return "Một website"
+}
+
+// validateRollbackLayoutAllowed — rollback chỉ trong cùng kiểu chạy (single/multi).
+func (h *Handler) validateRollbackLayoutAllowed(ctx context.Context, p projectRow, env, tag string) error {
+	snap, ok := h.latestDeploySnapshotForTag(ctx, p.ID, env, tag)
+	if !ok {
+		return nil
+	}
+	target := deploy.NormalizeLayout(snap.Layout)
+	if target == "" {
+		return nil
+	}
+	cluster := h.clusterRuntimeProfile(ctx, p, env)
+	current := deploy.NormalizeLayout(cluster.Layout)
+	if current == "" {
+		current = deploy.NormalizeLayout(p.Layout)
+	}
+	if current == "" {
+		return nil
+	}
+	if target == current {
+		return nil
+	}
+	return fmt.Errorf(
+		"Không thể deploy lại bản này: bản chạy kiểu «%s» nhưng site hiện đang kiểu «%s». Chọn bản cùng kiểu hoặc deploy bản mới",
+		layoutUserLabel(target), layoutUserLabel(current),
+	)
+}
+
+// validateProjectLayoutMatchesRepo — chặn deploy khi Console layout ≠ services.yaml trên repo.
+func (h *Handler) validateProjectLayoutMatchesRepo(ctx context.Context, userID int64, p projectRow, repo projectRepoRow) error {
+	det := h.detectServicesContract(ctx, userID, p, repo, repo.Branch)
+	if !det.Found || det.Layout == "" {
+		return nil
+	}
+	projectLayout := deploy.NormalizeLayout(p.Layout)
+	if projectLayout == "" {
+		projectLayout = deploy.LayoutSingle
+	}
+	contractLayout := deploy.NormalizeLayout(det.Layout)
+	if projectLayout == contractLayout {
+		return nil
+	}
+	return fmt.Errorf(
+		"Repo Git cần kiểu «%s» nhưng project đang chọn «%s». Vào tab Services → đổi kiểu cho khớp repo",
+		layoutUserLabel(contractLayout), layoutUserLabel(projectLayout),
+	)
+}
+
+// reconcileIngressToClusterProfile — tự sửa Ingress theo deploy đang chạy hoặc workload thực tế trên cluster.
+func (h *Handler) reconcileIngressToClusterProfile(ctx context.Context, p projectRow, env, clusterID string) {
+	if !h.domainSyncer().Ready() {
+		return
+	}
+	if row, ok := h.newestActiveDeploymentRow(ctx, p.ID, env); ok {
+		params := h.deployParamsFromRow(ctx, p, row)
+		if params.Layout != "" {
+			_ = h.syncProjectDomainsForEnv(ctx, p, env, clusterID, &params, 0)
+			return
+		}
+	}
+	prof := h.clusterRuntimeProfile(ctx, p, env)
+	if prof.Layout == "" {
+		return
+	}
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	console := h.consoleDeployProfile(ctx, p.ID, repo)
+	if console.Layout == prof.Layout {
+		return
+	}
+	params := deploy.Params{Layout: prof.Layout, ImageTag: prof.ImageTag}
+	if prof.Layout == deploy.LayoutMulti {
+		for _, name := range prof.Services {
+			params.Services = append(params.Services, deploy.ServiceDef{Name: name})
+		}
+	}
+	_ = h.syncProjectDomainsForEnv(ctx, p, env, clusterID, &params, 0)
+}
+
+func (h *Handler) newestActiveDeploymentRow(ctx context.Context, projectID int64, env string) (deploymentRow, bool) {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	rows, err := h.listProjectDeployments(ctx, projectID, env, 12)
+	if err != nil || len(rows) == 0 {
+		return deploymentRow{}, false
+	}
+	for i := range rows {
+		if deploymentIsOngoingDeploy(rows[i]) {
+			return rows[i], true
+		}
+	}
+	return deploymentRow{}, false
+}
+
+func (h *Handler) deployParamsFromRow(ctx context.Context, p projectRow, d deploymentRow) deploy.Params {
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	env := strings.ToLower(strings.TrimSpace(d.Environment))
+	if env == "" {
+		env = "dev"
+	}
+	params := h.buildDeployParams(ctx, p, repo, env, d.ImageTag, false)
+	layout := deploy.NormalizeLayout(d.DeployLayout)
+	if layout != "" {
+		params.Layout = layout
+	}
+	if len(d.DeployServices) > 0 {
+		params.Services = snapServicesToDefs(d.DeployServices, params.EffectiveServices())
+	}
+	return params
 }

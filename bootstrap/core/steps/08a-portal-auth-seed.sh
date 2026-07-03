@@ -64,7 +64,7 @@ seed_user() {
     -v "${ROOT_DIR}/services/portal-api:/src" -w /src \
     -e DATABASE_URL="${db_url}" \
     golang:1.23-alpine \
-    sh -c "go run ./cmd/seed-admin --email '${email}' --password '${pass}' --name '${name}' --role '${role}'" || rc=$?
+    sh -c "go run ./cmd/seed-admin --force --email '${email}' --password '${pass}' --name '${name}' --role '${role}'" || rc=$?
   [[ -n "${pf_pid}" ]] && kill "${pf_pid}" 2>/dev/null || true
   return "${rc}"
 }

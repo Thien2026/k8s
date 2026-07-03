@@ -37,7 +37,14 @@ func (s *Syncer) SyncIngress(ctx context.Context, clusterID string, d DomainInpu
 	if err != nil {
 		return err
 	}
-	return s.Rancher.ApplyNamespacedObject(ctx, clusterID, "/apis/networking.k8s.io/v1/ingresses", d.Namespace, payload)
+	if err := s.Rancher.ApplyNamespacedObject(ctx, clusterID, "/apis/networking.k8s.io/v1/ingresses", d.Namespace, payload); err != nil {
+		return err
+	}
+	patch, err := IngressPathsPatch(d.Routes)
+	if err != nil {
+		return err
+	}
+	return s.Rancher.PatchNamespacedObject(ctx, clusterID, "/apis/networking.k8s.io/v1/ingresses", d.Namespace, IngressName(d.ID), patch)
 }
 
 func (s *Syncer) DeleteIngress(ctx context.Context, clusterID, namespace string, domainID int64) error {

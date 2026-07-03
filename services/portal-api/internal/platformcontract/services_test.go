@@ -17,6 +17,38 @@ services:
 	}
 }
 
+func TestResolveSubmodulesMode(t *testing.T) {
+	if got := ResolveSubmodulesMode("", "recursive"); got != "recursive" {
+		t.Fatalf("recursive: %q", got)
+	}
+	if got := ResolveSubmodulesMode("true"); got != "true" {
+		t.Fatalf("true: %q", got)
+	}
+	if got := ResolveSubmodulesMode("false", "off"); got != "" {
+		t.Fatalf("empty: %q", got)
+	}
+}
+
+func TestParseServicesGitSubmodules(t *testing.T) {
+	f, err := ParseServices(`version: 1
+layout: multi
+git:
+  submodules: recursive
+services:
+  - name: api
+    path: backend
+    ingress: /api
+  - name: web
+    path: frontend
+    ingress: /`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ResolveSubmodulesMode(f.Git.Submodules, f.Submodules) != "recursive" {
+		t.Fatal("expected recursive from git.submodules")
+	}
+}
+
 func TestParseServicesLayoutDefault(t *testing.T) {
 	f, err := ParseServices(`version: 1
 services:

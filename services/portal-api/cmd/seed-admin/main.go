@@ -17,6 +17,7 @@ func main() {
 	password := flag.String("password", "", "admin password (min 12 chars)")
 	display := flag.String("name", "Platform Admin", "display name")
 	role := flag.String("role", auth.RoleAdmin, "role")
+	force := flag.Bool("force", false, "cập nhật mật khẩu nếu user đã tồn tại")
 	dbURL := flag.String("db", os.Getenv("DATABASE_URL"), "postgres url")
 	flag.Parse()
 
@@ -38,9 +39,21 @@ func main() {
 	}
 
 	store := auth.NewStore(pool)
-	_, err = store.GetUserByEmail(ctx, strings.ToLower(*email))
+	emailNorm := strings.ToLower(*email)
+	existing, err := store.GetUserByEmail(ctx, emailNorm)
 	if err == nil {
-		fmt.Println("user đã tồn tại — bỏ qua")
+		if !*force {
+			fmt.Println("user đã tồn tại — bỏ qua (dùng --force để đổi mật khẩu)")
+			return
+		}
+		hash, err := auth.HashPassword(*password)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if err := store.UpdatePassword(ctx, existing.ID, hash); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("đã cập nhật mật khẩu user id=%d email=%s\n", existing.ID, *email)
 		return
 	}
 

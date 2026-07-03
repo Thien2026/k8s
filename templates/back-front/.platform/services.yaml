@@ -1,5 +1,7 @@
 version: 1
 layout: multi
+# git:
+#   submodules: recursive  # L4C — bật khi repo có .gitmodules / monorepo submodule
 services:
   - name: api
     path: backend

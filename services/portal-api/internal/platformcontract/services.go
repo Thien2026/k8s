@@ -7,11 +7,18 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// GitConfig — checkout / monorepo (L4C submodules).
+type GitConfig struct {
+	Submodules string `yaml:"submodules"` // true | recursive
+}
+
 // ServicesFile — repo khai báo layout + fleet (L4A universal ingest).
 type ServicesFile struct {
-	Version  int           `yaml:"version"`
-	Layout   string        `yaml:"layout"`
-	Services []ServiceSpec `yaml:"services"`
+	Version    int           `yaml:"version"`
+	Layout     string        `yaml:"layout"`
+	Submodules string        `yaml:"submodules"` // shorthand top-level
+	Git        GitConfig     `yaml:"git"`
+	Services   []ServiceSpec `yaml:"services"`
 }
 
 // ServiceSpec một workload trong services.yaml.
@@ -203,6 +210,24 @@ func ServiceSpecExpose(s ServiceSpec) bool {
 		return true
 	}
 	return s.Name == "web" || s.Name == "api"
+}
+
+// ResolveSubmodulesMode trả về "" | "true" | "recursive" cho actions/checkout.
+func ResolveSubmodulesMode(explicit ...string) string {
+	for _, raw := range explicit {
+		v := strings.ToLower(strings.TrimSpace(raw))
+		switch v {
+		case "", "false", "off", "none", "0", "no":
+			continue
+		case "true", "yes", "1", "on":
+			return "true"
+		case "recursive", "recurse":
+			return "recursive"
+		default:
+			continue
+		}
+	}
+	return ""
 }
 
 // ServicesDetectIssue — cảnh báo / lỗi khi đọc contract.

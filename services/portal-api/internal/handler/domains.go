@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
+	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 	"github.com/Thien2026/k8s/services/portal-api/internal/domains"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
 	"github.com/go-chi/chi/v5"
@@ -69,7 +70,7 @@ func (h *Handler) ensureAutoDomains(ctx context.Context, p projectRow) error {
 	return rows.Err()
 }
 
-func (h *Handler) syncProjectDomain(ctx context.Context, p projectRow, d *projectDomainRow, clusterID string) {
+func (h *Handler) syncProjectDomain(ctx context.Context, p projectRow, d *projectDomainRow, clusterID string, deployParams *deploy.Params) {
 	syncer := h.domainSyncer()
 	if !syncer.Ready() {
 		d.SyncStatus = "pending"
@@ -77,14 +78,23 @@ func (h *Handler) syncProjectDomain(ctx context.Context, p projectRow, d *projec
 		return
 	}
 	ns := h.projectNamespace(p, d.Environment)
-	repo, _ := h.getProjectRepo(ctx, p.ID)
+	var routes []deploy.IngressRoute
+	if deployParams != nil {
+		routes = ingressRoutesForParams(*deployParams)
+	} else {
+		repo, _ := h.getProjectRepo(ctx, p.ID)
+		routes = h.ingressRoutesForProject(ctx, p.ID, repo)
+		if len(routes) == 0 && h.clusterRunsFleet(ctx, p, d.Environment) {
+			routes = deploy.IngressRoutesFromServices(deploy.DefaultMultiServices)
+		}
+	}
 	in := domains.DomainInput{
 		ID:          d.ID,
 		Hostname:    d.Hostname,
 		Environment: d.Environment,
 		TLSEnabled:  d.TLSEnabled,
 		Namespace:   ns,
-		Routes:      h.ingressRoutesForProject(ctx, p.ID, repo),
+		Routes:      routes,
 	}
 	if err := syncer.SyncIngress(ctx, clusterID, in); err != nil {
 		d.SyncStatus = "error"
@@ -118,18 +128,21 @@ func (h *Handler) enrichProjectDomain(ctx context.Context, p projectRow, d *proj
 	}
 }
 
-func (h *Handler) syncProjectDomainsForEnv(ctx context.Context, p projectRow, env, clusterID string) []string {
+func (h *Handler) syncProjectDomainsForEnv(ctx context.Context, p projectRow, env, clusterID string, deployParams *deploy.Params, deployID int64) []string {
+	if deployID > 0 && h.isSupersededByNewerDeploy(ctx, p.ID, env, deployID) {
+		return nil
+	}
 	_ = h.ensureAutoDomains(ctx, p)
 	list, err := h.listProjectDomains(ctx, p.ID)
 	if err != nil {
 		return []string{err.Error()}
 	}
-	warnings := []string{}
+	var warnings []string
 	for i := range list {
 		if list[i].Environment != env {
 			continue
 		}
-		h.syncProjectDomain(ctx, p, &list[i], clusterID)
+		h.syncProjectDomain(ctx, p, &list[i], clusterID, deployParams)
 		if list[i].SyncStatus == "error" && list[i].SyncError != "" {
 			warnings = append(warnings, list[i].SyncError)
 		}
@@ -179,7 +192,7 @@ func (h *Handler) SyncProjectDomain(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Rancher addon chưa bật"})
 		return
 	}
-	h.syncProjectDomain(r.Context(), p, &d, clusterID)
+	h.syncProjectDomain(r.Context(), p, &d, clusterID, nil)
 	h.enrichProjectDomain(r.Context(), p, &d, clusterID)
 	writeJSON(w, http.StatusOK, d)
 }

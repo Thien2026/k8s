@@ -61,6 +61,7 @@ addon_legacy_done() {
   case "$1" in
     rancher) echo "${STATE_DIR}/09-rancher.done" ;;
     harbor)  echo "${STATE_DIR}/10-harbor.done" ;;
+    argocd)  echo "${STATE_DIR}/11-argocd.done" ;;
     *)       echo "" ;;
   esac
 }

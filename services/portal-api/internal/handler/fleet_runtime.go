@@ -42,7 +42,7 @@ func (h *Handler) listServicePods(ctx context.Context, p projectRow, env, servic
 }
 
 func (h *Handler) serviceWorkloadExists(ctx context.Context, p projectRow, env, serviceName string) bool {
-	if len(h.listServicePods(ctx, p, env, serviceName)) > 0 {
+	if h.serviceHasReadyPods(ctx, p, env, serviceName) {
 		return true
 	}
 	if h.rancher == nil || !h.rancher.Enabled() {
@@ -51,6 +51,15 @@ func (h *Handler) serviceWorkloadExists(ctx context.Context, p projectRow, env, 
 	ns := h.projectNamespace(p, env)
 	_, err := h.rancher.GetDeploymentDetail(ctx, "", ns, strings.TrimSpace(serviceName))
 	return err == nil
+}
+
+func (h *Handler) serviceHasReadyPods(ctx context.Context, p projectRow, env, serviceName string) bool {
+	for _, pod := range h.listServicePods(ctx, p, env, serviceName) {
+		if podIsReadyAndHealthy(pod) {
+			return true
+		}
+	}
+	return false
 }
 
 // filterFleetRolloutServices — chỉ bắt buộc rollout các workload đã có trên cluster;
@@ -81,6 +90,70 @@ func (h *Handler) fleetServicesForRollout(ctx context.Context, p projectRow, env
 	return filterFleetRolloutServices(services, func(name string) bool {
 		return h.serviceWorkloadExists(ctx, p, env, name)
 	})
+}
+
+// evaluateFleetRolloutForParams — fleet check theo profile deploy thực tế (rollback snapshot), không phải Console.
+func (h *Handler) evaluateFleetRolloutForParams(ctx context.Context, p projectRow, params deploy.Params, imageTag string) (status, detail, errMsg string) {
+	if !params.IsMultiService() {
+		return "", "", ""
+	}
+	tag := strings.TrimSpace(imageTag)
+	if tag == "" {
+		return "", "", ""
+	}
+	services := params.EffectiveServices()
+	if len(services) < 2 {
+		return "", "", ""
+	}
+	if h.clusterRunsSingleAppOnly(ctx, p, params.Environment, services) {
+		return "", "", ""
+	}
+	toCheck := h.fleetServicesForRollout(ctx, p, params.Environment, services)
+	h.enrichProjectRegistry(ctx, &p)
+	ns := h.projectNamespace(p, params.Environment)
+
+	var parts []string
+	blocked := false
+	rolling := false
+	for _, svc := range toCheck {
+		svcSt, svcDetail, svcErr := h.serviceFleetRolloutStatus(ctx, p, ns, svc.Name, tag)
+		if svcDetail != "" {
+			parts = append(parts, svc.Name+": "+svcDetail)
+		}
+		switch stageStatus(svcSt) {
+		case "failed":
+			blocked = true
+			if svcErr != "" {
+				errMsg = svcErr
+			}
+		case "running", "pending":
+			rolling = true
+		}
+	}
+	detail = strings.Join(parts, "; ")
+	if rolling && !blocked && h.clusterLegacyAppMatchesTag(ctx, p, params.Environment, tag) {
+		msg := "Console đã cấu hình multi-service nhưng cluster vẫn chạy deployment app đơn — sync workflow GitHub rồi deploy lại"
+		if detail != "" {
+			msg = detail + " — " + msg
+		}
+		return "failed", detail, msg
+	}
+	if blocked {
+		if detail == "" {
+			detail = "pod mới crash hoặc lỗi"
+		}
+		if errMsg == "" {
+			errMsg = "Rollout fleet: " + detail
+		}
+		return "failed", detail, errMsg
+	}
+	if rolling {
+		if detail == "" {
+			detail = "đang chờ toàn bộ service lên image mới"
+		}
+		return "running", detail, ""
+	}
+	return "success", fmt.Sprintf("Fleet rollout OK (%d service)", len(toCheck)), ""
 }
 
 // evaluateFleetRollout — multi-service: dùng Deployment status (Rancher) làm nguồn sự thật, không đoán từ pod list.
@@ -208,7 +281,7 @@ func envFromNamespace(p projectRow, ns string) string {
 
 // clusterRunsSingleAppOnly — layout Console multi nhưng cluster chỉ còn workload app (rollback single).
 func (h *Handler) clusterRunsSingleAppOnly(ctx context.Context, p projectRow, env string, services []deploy.ServiceDef) bool {
-	if !h.serviceWorkloadExists(ctx, p, env, "app") {
+	if !h.serviceHasReadyPods(ctx, p, env, "app") {
 		return false
 	}
 	for _, svc := range services {
@@ -216,7 +289,7 @@ func (h *Handler) clusterRunsSingleAppOnly(ctx context.Context, p projectRow, en
 		if name == "" || name == "app" {
 			continue
 		}
-		if h.serviceWorkloadExists(ctx, p, env, name) {
+		if h.serviceHasReadyPods(ctx, p, env, name) {
 			return false
 		}
 	}
@@ -259,8 +332,24 @@ func shortImageTag(tag string) string {
 	return tag
 }
 
+func (h *Handler) clusterRunsFleet(ctx context.Context, p projectRow, env string) bool {
+	return h.serviceWorkloadExists(ctx, p, env, "api") && h.serviceWorkloadExists(ctx, p, env, "web")
+}
+
 func (h *Handler) applyTrafficGate(ctx context.Context, p projectRow, d *deploymentRow) bool {
 	if d == nil {
+		return true
+	}
+	if deploy.NormalizeLayout(d.DeployLayout) == deploy.LayoutSingle && h.clusterRunsFleet(ctx, p, d.Environment) {
+		return true
+	}
+	serving := strings.TrimSpace(h.clusterServingImageTag(ctx, p, d.Environment))
+	// Không thể xác định tag đang phục vụ → không downgrade row nào.
+	if serving == "" {
+		return true
+	}
+	if !imageTagsMatch(d.ImageTag, serving) {
+		// Tag khác đang phục vụ → hàng này đã lịch sử, giữ nguyên trạng thái.
 		return true
 	}
 	live, detail := h.deploymentTrafficLive(ctx, p, d.Environment, d.ImageTag)

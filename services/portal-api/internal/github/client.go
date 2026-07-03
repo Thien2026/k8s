@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -374,21 +375,41 @@ func (c *Client) PutWorkflowFile(ctx context.Context, token, owner, repo, path, 
 }
 
 // DispatchWorkflow triggers workflow_dispatch on the given ref (branch/tag).
+// workflowFile may be a full path (.github/workflows/foo.yml); GitHub API expects the file name only.
 func (c *Client) DispatchWorkflow(ctx context.Context, token, owner, repo, workflowFile, ref string) error {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
 		ref = "main"
 	}
-	path := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, url.PathEscape(workflowFile))
+	wfID := filepath.Base(strings.TrimSpace(workflowFile))
+	if wfID == "" {
+		return fmt.Errorf("workflow file name trống")
+	}
+	path := fmt.Sprintf("/repos/%s/%s/actions/workflows/%s/dispatches", owner, repo, url.PathEscape(wfID))
 	body := map[string]string{"ref": ref}
-	raw, code, err := c.api(ctx, token, http.MethodPost, path, body)
-	if err != nil {
-		return err
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			wait := time.Duration(attempt) * 2 * time.Second
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(wait):
+			}
+		}
+		raw, code, err := c.api(ctx, token, http.MethodPost, path, body)
+		if err != nil {
+			return err
+		}
+		if code < 400 {
+			return nil
+		}
+		lastErr = fmt.Errorf("dispatch workflow %d: %s", code, string(raw))
+		if code != 404 {
+			return lastErr
+		}
 	}
-	if code >= 400 {
-		return fmt.Errorf("dispatch workflow %d: %s", code, string(raw))
-	}
-	return nil
+	return lastErr
 }
 
 func (c *Client) SetActionsSecret(ctx context.Context, token, owner, repo, name, plaintext string) error {

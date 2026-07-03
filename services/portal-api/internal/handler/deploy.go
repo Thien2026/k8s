@@ -96,6 +96,11 @@ func (h *Handler) ApplyProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.enrichProjectRegistry(r.Context(), &p)
+	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	if err := h.validateProjectLayoutMatchesRepo(r.Context(), u.ID, p, repo); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
 	result, err := h.applyProjectDeploy(r.Context(), p, body.Environment, body.ImageTag, body.ClusterID, true, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -183,10 +188,11 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		}
 		return nil, err
 	}
+	if rollback && !rollbackFromMulti {
+		_ = h.syncProjectDomainsForEnv(ctx, p, params.Environment, clusterID, &params, 0)
+	}
 	if params.IsMultiService() {
 		h.cleanupLegacySingleApp(ctx, clusterID, params.Namespace)
-	} else if rollbackFromMulti {
-		h.cleanupMultiServiceWorkloads(ctx, clusterID, params.Namespace, multiServices)
 	}
 
 	if err := h.rancher.EnsureNamespace(ctx, clusterID, params.Namespace); err != nil {
@@ -258,20 +264,16 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 			}
 			return nil, err
 		}
-		if rollback && manifest.ServiceName != "" {
-			if err := h.rancher.RolloutRestartDeployment(ctx, clusterID, params.Namespace, manifest.ServiceName); err != nil {
-				if deployID > 0 {
-					h.markDeploymentFailed(ctx, deployID, "deploy", "rollout restart: "+err.Error())
-				}
-				return nil, fmt.Errorf("rollout restart %s: %w", manifest.ServiceName, err)
-			}
-		}
 		if manifest.ServiceName != "" {
 			deployedNames = append(deployedNames, manifest.ServiceName)
 		}
 	}
 	if deployID > 0 {
 		_, _ = h.db.Exec(ctx, `UPDATE project_deployments SET deploy_status='success', runtime_status='running', updated_at=now() WHERE id=$1`, deployID)
+	}
+	domainWarnings := h.syncProjectDomainsForEnv(ctx, p, params.Environment, clusterID, &params, deployID)
+	if rollbackFromMulti {
+		h.cleanupMultiServiceWorkloads(ctx, clusterID, params.Namespace, multiServices)
 	}
 	if deployID > 0 {
 		if asyncRuntime {
@@ -280,7 +282,6 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 			h.finishDeployRuntimeSync(ctx, deployID, p, params, imageTag, clusterID)
 		}
 	}
-	domainWarnings := h.syncProjectDomainsForEnv(ctx, p, params.Environment, clusterID)
 	result := map[string]any{
 		"status":      "ok",
 		"environment": params.Environment,
@@ -312,6 +313,16 @@ func (h *Handler) finishDeployRuntime(deployID int64, p projectRow, params deplo
 	h.finishDeployRuntimeSync(ctx, deployID, p, params, imageTag, clusterID)
 }
 
+// isSupersededByNewerDeploy kiểm tra có deploy mới hơn deployID trong cùng project/env không.
+func (h *Handler) isSupersededByNewerDeploy(ctx context.Context, projectID int64, env string, deployID int64) bool {
+	var newerID int64
+	_ = h.db.QueryRow(ctx, `
+		SELECT id FROM project_deployments
+		WHERE project_id=$1 AND environment=$2 AND id > $3
+		LIMIT 1`, projectID, env, deployID).Scan(&newerID)
+	return newerID > 0
+}
+
 func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p projectRow, params deploy.Params, imageTag, clusterID string) {
 	if deployID <= 0 || h.rancher == nil || !h.rancher.Enabled() {
 		return
@@ -328,6 +339,11 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 		if rollout.IsFailed() {
 			break
 		}
+	}
+	// Nếu có deploy mới hơn đã được tạo trong khi goroutine này đang chờ pod → dừng lại,
+	// không sync Ingress hay đánh dấu failed để tránh ghi đè trạng thái của deploy mới.
+	if h.isSupersededByNewerDeploy(ctx, p.ID, params.Environment, deployID) {
+		return
 	}
 	primary := params.PrimaryService()
 	pods := h.matchedDeployPods(ctx, p, params.Environment, imageTag, primary.Name)
@@ -364,8 +380,12 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 		return
 	}
 	if st == "success" {
-		drow := deploymentRow{ID: deployID, ImageTag: imageTag, PodName: podName, Environment: params.Environment}
-		if fleetSt, fleetDetail, fleetErr := h.evaluateFleetRollout(ctx, p, params.Environment, imageTag); fleetSt == "failed" {
+		drow := deploymentRowFromParams(params)
+		drow.ID = deployID
+		drow.ImageTag = imageTag
+		drow.PodName = podName
+		drow.Environment = params.Environment
+		if fleetSt, fleetDetail, fleetErr := h.evaluateFleetRolloutForParams(ctx, p, params, imageTag); fleetSt == "failed" {
 			msg := fleetErr
 			if msg == "" {
 				msg = fleetDetail
@@ -763,6 +783,10 @@ func (h *Handler) RollbackProjectDeploy(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	h.enrichProjectRegistry(r.Context(), &p)
+	if err := h.validateRollbackLayoutAllowed(r.Context(), p, env, tag); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
 	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, "", true, true)
 	if err != nil {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})

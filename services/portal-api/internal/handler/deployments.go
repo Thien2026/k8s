@@ -118,21 +118,189 @@ func deploymentIsTrulyActive(d deploymentRow) bool {
 	return false
 }
 
-// deploymentSupersededByNewerSuccess — bản in_progress cũ sau khi đã có deploy dev success mới hơn.
+func deploymentIsOngoingDeploy(d deploymentRow) bool {
+	if !deploymentIsTrulyActive(d) || deploymentIsTerminal(d) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(d.DeployStatus), "success") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(d.DeployStatus), "running")
+}
+
+// deploymentSupersededByNewerSuccess — bản in_progress cũ sau khi đã có success mới hơn cùng tag.
 func deploymentSupersededByNewerSuccess(items []deploymentRow, env string, idx int) bool {
-	if idx <= 0 || idx >= len(items) {
+	if idx < 0 || idx >= len(items) {
 		return false
 	}
 	env = strings.ToLower(strings.TrimSpace(env))
-	for j := 0; j < idx; j++ {
-		if strings.ToLower(strings.TrimSpace(items[j].Environment)) != env {
+	tag := strings.TrimSpace(items[idx].ImageTag)
+	for i := range items {
+		if i == idx {
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(items[j].Status), "success") {
+		if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
+			continue
+		}
+		if tag != "" && !imageTagsMatch(items[i].ImageTag, tag) {
+			continue
+		}
+		if items[i].ID > items[idx].ID && strings.EqualFold(strings.TrimSpace(items[i].Status), "success") {
 			return true
 		}
 	}
 	return false
+}
+
+// deploymentSupersededByTagSibling — cùng image_tag đã có bản success mới hơn (rollback row).
+func deploymentSupersededByTagSibling(items []deploymentRow, env string, idx int) bool {
+	if idx < 0 || idx >= len(items) {
+		return false
+	}
+	env = strings.ToLower(strings.TrimSpace(env))
+	tag := strings.TrimSpace(items[idx].ImageTag)
+	if tag == "" {
+		return false
+	}
+	for i := range items {
+		if i == idx {
+			continue
+		}
+		if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
+			continue
+		}
+		if !imageTagsMatch(items[i].ImageTag, tag) {
+			continue
+		}
+		if items[i].ID > items[idx].ID && strings.EqualFold(strings.TrimSpace(items[i].Status), "success") {
+			return true
+		}
+	}
+	return false
+}
+
+func deploymentHistoryRank(d deploymentRow) int {
+	switch strings.ToLower(strings.TrimSpace(d.Status)) {
+	case "success":
+		return 3
+	case "failed":
+		return 2
+	default:
+		return 1
+	}
+}
+
+// dedupeDeploymentsByTag — một tag chỉ hiện một row “tốt nhất” (ưu tiên deploy đang chạy, rồi success, rồi ID cao).
+func dedupeDeploymentsByTag(items []deploymentRow) []deploymentRow {
+	byKey := map[string]deploymentRow{}
+	for _, d := range items {
+		key := deploymentMergeKey(d)
+		existing, ok := byKey[key]
+		if !ok {
+			byKey[key] = d
+			continue
+		}
+		if deploymentIsOngoingDeploy(d) {
+			if !deploymentIsOngoingDeploy(existing) {
+				byKey[key] = d
+				continue
+			}
+		}
+		if deploymentIsOngoingDeploy(existing) {
+			continue
+		}
+		dRank := deploymentHistoryRank(d)
+		eRank := deploymentHistoryRank(existing)
+		if dRank > eRank || (dRank == eRank && d.ID > existing.ID) {
+			byKey[key] = d
+		}
+	}
+	return deploymentItemsSorted(mapValuesDeployment(byKey))
+}
+
+func (h *Handler) isHistoricalDeploymentRow(ctx context.Context, p projectRow, d *deploymentRow) bool {
+	if d == nil {
+		return false
+	}
+	serving := strings.TrimSpace(h.clusterServingImageTag(ctx, p, d.Environment))
+	if serving == "" {
+		return false
+	}
+	if imageTagsMatch(d.ImageTag, serving) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(d.Status), "success") &&
+		strings.EqualFold(strings.TrimSpace(d.RuntimeStatus), "success") {
+		return true
+	}
+	if strings.TrimSpace(d.FinishedAt) != "" && deploymentIsTerminal(*d) {
+		return true
+	}
+	return false
+}
+
+func deploymentHistoricalRuntimeNoise(d deploymentRow) bool {
+	if !strings.EqualFold(strings.TrimSpace(d.Status), "failed") {
+		return false
+	}
+	if strings.TrimSpace(d.DeployStatus) != "success" {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(d.ErrorMessage))
+	return strings.Contains(msg, "image spec") ||
+		strings.Contains(msg, "smoke check") ||
+		strings.Contains(msg, "chưa xác định image") ||
+		strings.Contains(msg, "rollout fleet")
+}
+
+func (h *Handler) repairHistoricalDeploymentRow(ctx context.Context, p projectRow, d *deploymentRow) bool {
+	if d == nil || d.ID <= 0 {
+		return false
+	}
+	serving := strings.TrimSpace(h.clusterServingImageTag(ctx, p, d.Environment))
+	if !deploymentHistoricalRuntimeNoise(*d) && !isTrafficGateStaleRow(*d) &&
+		!isSupersededClusterTrafficRow(*d) && !isStaleRuntimePollRow(*d, serving) {
+		return false
+	}
+	if !h.isHistoricalDeploymentRow(ctx, p, d) && !isTrafficGateStaleRow(*d) &&
+		!isSupersededClusterTrafficRow(*d) && !isStaleRuntimePollRow(*d, serving) {
+		return false
+	}
+	d.Status = "success"
+	d.RuntimeStatus = "success"
+	d.ErrorPhase = ""
+	d.ErrorMessage = ""
+	if strings.TrimSpace(d.RuntimeDetail) == "" {
+		d.RuntimeDetail = "Đã deploy thành công — cluster hiện phục vụ bản khác"
+	}
+	d.Live = false
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments SET status='success', runtime_status='success',
+			error_phase='', error_message='', runtime_detail=$1, updated_at=now(),
+			finished_at=COALESCE(finished_at, now())
+		WHERE id=$2`, d.RuntimeDetail, d.ID)
+	reconcileDeploymentRow(d)
+	return true
+}
+
+func (h *Handler) sealSupersededDeploymentRows(ctx context.Context, projectID int64, env string) {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments older SET
+			status='success', runtime_status='success',
+			runtime_detail=CASE WHEN COALESCE(older.runtime_detail,'')='' THEN 'Đã thay bởi deploy mới hơn' ELSE older.runtime_detail END,
+			error_phase='', error_message='', updated_at=now(),
+			finished_at=COALESCE(older.finished_at, now())
+		FROM project_deployments newer
+		WHERE older.project_id=$1 AND older.environment=$2
+		  AND newer.project_id=older.project_id AND newer.environment=older.environment
+		  AND older.image_tag=newer.image_tag AND older.id < newer.id
+		  AND newer.status='success' AND newer.runtime_status='success'
+		  AND older.status IN ('in_progress','failed')
+		  AND COALESCE(older.error_phase,'') <> 'build'`, projectID, env)
 }
 
 func normalizeStaleDeploymentRow(d *deploymentRow) {
@@ -149,28 +317,121 @@ func normalizeStaleDeploymentRow(d *deploymentRow) {
 	}
 }
 
+func isTrafficGateStaleRow(d deploymentRow) bool {
+	if !strings.EqualFold(strings.TrimSpace(d.Status), "in_progress") {
+		return false
+	}
+	// "Chưa xác định image" xuất hiện khi applyTrafficGate không tìm được serving tag
+	return strings.Contains(strings.TrimSpace(d.RuntimeDetail), "Chưa xác định image")
+}
+
+func isSupersededClusterTrafficRow(d deploymentRow) bool {
+	if !strings.EqualFold(strings.TrimSpace(d.Status), "in_progress") {
+		return false
+	}
+	rt := strings.TrimSpace(d.RuntimeDetail)
+	return strings.Contains(rt, "Cluster phục vụ") && strings.Contains(rt, "chưa thay traffic")
+}
+
+// isStaleRuntimePollRow — deploy đã apply xong nhưng cluster không còn phục vụ tag này (poll cũ).
+func isStaleRuntimePollRow(d deploymentRow, servingTag string) bool {
+	servingTag = strings.TrimSpace(servingTag)
+	if servingTag == "" || imageTagsMatch(d.ImageTag, servingTag) {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(d.DeployStatus), "success") {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(d.Status), "in_progress") ||
+		strings.EqualFold(strings.TrimSpace(d.RuntimeStatus), "running")
+}
+
+func pickIndexForServingTag(items []deploymentRow, env, servingTag string) int {
+	servingTag = strings.TrimSpace(servingTag)
+	if servingTag == "" {
+		return -1
+	}
+	env = strings.ToLower(strings.TrimSpace(env))
+	best := -1
+	bestRank := -1
+	for i := range items {
+		if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
+			continue
+		}
+		if !imageTagsMatch(items[i].ImageTag, servingTag) {
+			continue
+		}
+		rank := deploymentHistoryRank(items[i])
+		if rank > bestRank || (rank == bestRank && (best < 0 || items[i].ID > items[best].ID)) {
+			best = i
+			bestRank = rank
+		}
+	}
+	return best
+}
+
 func pickCurrentDeploymentIndex(items []deploymentRow, env, servingTag string) int {
 	env = strings.ToLower(strings.TrimSpace(env))
 	if env == "" {
 		env = "dev"
 	}
-	for i := range items {
-		if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
-			continue
-		}
-		if deploymentIsTrulyActive(items[i]) && !deploymentSupersededByNewerSuccess(items, env, i) {
-			return i
-		}
-	}
 	servingTag = strings.TrimSpace(servingTag)
-	if servingTag != "" {
+	pickActive := func(requireDB bool) int {
+		best := -1
 		for i := range items {
 			if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
 				continue
 			}
-			if strings.TrimSpace(items[i].ImageTag) == servingTag {
-				return i
+			if requireDB && items[i].ID <= 0 {
+				continue
 			}
+			if deploymentSupersededByTagSibling(items, env, i) {
+				continue
+			}
+			if isTrafficGateStaleRow(items[i]) {
+				continue
+			}
+			if isSupersededClusterTrafficRow(items[i]) {
+				continue
+			}
+			if isStaleRuntimePollRow(items[i], servingTag) {
+				continue
+			}
+			if deploymentIsTrulyActive(items[i]) && !deploymentSupersededByNewerSuccess(items, env, i) {
+				if best < 0 || items[i].ID > items[best].ID {
+					best = i
+				}
+			}
+		}
+		if best >= 0 {
+			return best
+		}
+		return -1
+	}
+	if idx := pickActive(true); idx >= 0 {
+		return idx
+	}
+	if idx := pickActive(false); idx >= 0 {
+		return idx
+	}
+	if idx := pickIndexForServingTag(items, env, servingTag); idx >= 0 {
+		return idx
+	}
+	servingTag = strings.TrimSpace(servingTag)
+	if servingTag != "" {
+		best := -1
+		for i := range items {
+			if strings.ToLower(strings.TrimSpace(items[i].Environment)) != env {
+				continue
+			}
+			if imageTagsMatch(items[i].ImageTag, servingTag) {
+				if best < 0 || items[i].ID > items[best].ID {
+					best = i
+				}
+			}
+		}
+		if best >= 0 {
+			return best
 		}
 	}
 	bestSuccess := -1
@@ -431,7 +692,26 @@ func (h *Handler) beginRollbackDeployment(ctx context.Context, projectID int64, 
 		INSERT INTO project_deployments (project_id, environment, image_tag, build_status, registry_status, deploy_status, status)
 		VALUES ($1, $2, $3, 'success', 'success', 'running', 'in_progress')
 		RETURNING id`, projectID, env, tag).Scan(&id)
-	return id, err
+	if err != nil {
+		return 0, err
+	}
+	h.sealStaleInProgressDeployments(ctx, projectID, env, id)
+	return id, nil
+}
+
+func (h *Handler) sealStaleInProgressDeployments(ctx context.Context, projectID int64, env string, exceptID int64) {
+	env = strings.ToLower(strings.TrimSpace(env))
+	if env == "" {
+		env = "dev"
+	}
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments SET
+			status='success', runtime_status='success',
+			runtime_detail=CASE WHEN COALESCE(runtime_detail,'')='' THEN 'Đã thay bởi deploy mới hơn' ELSE runtime_detail END,
+			error_phase='', error_message='', updated_at=now(),
+			finished_at=COALESCE(finished_at, now())
+		WHERE project_id=$1 AND environment=$2 AND status='in_progress' AND id <> $3`,
+		projectID, env, exceptID)
 }
 
 func (h *Handler) hasSuccessfulDeployForTag(ctx context.Context, projectID int64, env, imageTag string) bool {
@@ -538,7 +818,7 @@ func (h *Handler) runtimeStatusForDeploy(ctx context.Context, p projectRow, env,
 		return "pending", "Rancher chưa sẵn sàng", "", ""
 	}
 	ns := h.projectNamespace(p, env)
-	deployName, wantImage := h.runtimeWorkload(ctx, p, env, imageTag)
+	deployName, wantImage := h.runtimeWorkload(ctx, p, env, imageTag, nil)
 	dep, err := h.rancher.GetDeploymentDetail(ctx, "", ns, deployName)
 	pods := h.matchedDeployPods(ctx, p, env, imageTag, deployName)
 	podName = pickFirstPodName(pods)
@@ -590,7 +870,7 @@ func (h *Handler) pickRuntimePodForDeploy(ctx context.Context, p projectRow, env
 		return ""
 	}
 	tag := strings.TrimSpace(imageTag)
-	_, wantImage := h.runtimeWorkload(ctx, p, env, tag)
+	_, wantImage := h.runtimeWorkload(ctx, p, env, tag, nil)
 
 	var best string
 	bestScore := -1
@@ -767,6 +1047,29 @@ func (h *Handler) enrichDeployClusterLog(ctx context.Context, p projectRow, env 
 
 func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d *deploymentRow) {
 	reconcileBuildFromSteps(d)
+	if h.repairHistoricalDeploymentRow(ctx, p, d) {
+		return
+	}
+	if h.isHistoricalDeploymentRow(ctx, p, d) {
+		d.Live = false
+		reconcileDeploymentRow(d)
+		return
+	}
+	if isTrafficGateStaleRow(*d) {
+		// Row kẹt "Chưa xác định" — luôn seal thành success (cluster đã chuyển sang tag khác/serving khác).
+		d.Status = "success"
+		d.RuntimeStatus = "success"
+		d.RuntimeDetail = "Đã deploy thành công — cluster hiện phục vụ bản khác"
+		d.Live = false
+		_, _ = h.db.Exec(ctx, `
+			UPDATE project_deployments SET status='success', runtime_status='success',
+				runtime_detail='Đã deploy thành công — cluster hiện phục vụ bản khác',
+				error_phase='', error_message='', updated_at=now(),
+				finished_at=COALESCE(finished_at, now())
+			WHERE id=$1`, d.ID)
+		reconcileDeploymentRow(d)
+		return
+	}
 	if stageStatus(d.BuildStatus) == "failed" {
 		reconcileDeploymentRow(d)
 		return
@@ -784,6 +1087,10 @@ func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d 
 	}
 	if strings.EqualFold(strings.TrimSpace(d.Status), "success") &&
 		strings.EqualFold(strings.TrimSpace(d.RuntimeStatus), "success") {
+		if h.isHistoricalDeploymentRow(ctx, p, d) {
+			d.Live = false
+			return
+		}
 		if live, _ := h.deploymentTrafficLive(ctx, p, d.Environment, d.ImageTag); !live {
 			h.applyTrafficGate(ctx, p, d)
 			reconcileDeploymentRow(d)
@@ -812,6 +1119,11 @@ func (h *Handler) refreshDeploymentRuntime(ctx context.Context, p projectRow, d 
 		return
 	}
 	v := h.assessRuntimeHealth(ctx, p, d)
+	if v.Status == "failed" && strings.EqualFold(strings.TrimSpace(d.Status), "success") && h.isHistoricalDeploymentRow(ctx, p, d) {
+		d.Live = false
+		reconcileDeploymentRow(d)
+		return
+	}
 	h.applyRuntimeVerdict(ctx, p, d, v)
 }
 
@@ -941,8 +1253,15 @@ func (h *Handler) deploymentRowFromRun(ctx context.Context, p projectRow, deploy
 	}
 	if bs == "success" {
 		d.RegistryStatus = "success"
+		runDone := strings.EqualFold(strings.TrimSpace(run.Status), "completed")
 		if !withRuntime {
-			d.Status = "in_progress"
+			if !runDone {
+				d.Status = "in_progress"
+				d.DeployStatus = "pending"
+				d.RuntimeStatus = "pending"
+				return d
+			}
+			d.Status = "success"
 			d.DeployStatus = "pending"
 			d.RuntimeStatus = "pending"
 			return d
@@ -989,7 +1308,7 @@ func deploymentMergeKey(d deploymentRow) string {
 	}
 	tag := strings.TrimSpace(d.ImageTag)
 	if tag != "" {
-		return env + ":" + tag
+		return env + ":" + strings.ToLower(tag)
 	}
 	if d.ID > 0 {
 		return env + ":id:" + strconv.FormatInt(d.ID, 10)
@@ -997,64 +1316,79 @@ func deploymentMergeKey(d deploymentRow) string {
 	return env + ":unknown"
 }
 
-func mergeDeploymentItems(dbItems, ghItems []deploymentRow) []deploymentRow {
-	byKey := map[string]deploymentRow{}
-	for _, d := range dbItems {
-		byKey[deploymentMergeKey(d)] = d
+func findDeploymentMergeKey(byKey map[string]deploymentRow, g deploymentRow) (string, deploymentRow, bool) {
+	key := deploymentMergeKey(g)
+	if existing, ok := byKey[key]; ok {
+		return key, existing, true
 	}
-	for _, g := range ghItems {
-		if g.ImageTag == "" {
+	env := strings.ToLower(strings.TrimSpace(g.Environment))
+	if env == "" {
+		env = "dev"
+	}
+	for k, existing := range byKey {
+		if !strings.HasPrefix(k, env+":") {
 			continue
 		}
-		key := deploymentMergeKey(g)
-		if existing, ok := byKey[key]; ok {
-			if existing.GitHubRunURL == "" {
-				existing.GitHubRunURL = g.GitHubRunURL
-			}
-			if existing.GitHubRunID == 0 {
-				existing.GitHubRunID = g.GitHubRunID
-			}
-			gBS := strings.ToLower(strings.TrimSpace(g.BuildStatus))
-			if gBS == "failed" || gBS == "cancelled" {
-				existing.BuildStatus = g.BuildStatus
-				existing.Status = "failed"
-				if strings.TrimSpace(existing.ErrorPhase) == "" {
-					existing.ErrorPhase = "build"
-				}
-				if strings.TrimSpace(existing.ErrorMessage) == "" && strings.TrimSpace(g.ErrorMessage) != "" {
-					existing.ErrorMessage = g.ErrorMessage
-				}
-				propagateSkippedDownstream(&existing)
-			} else if existing.BuildStatus == "pending" || existing.BuildStatus == "running" || existing.BuildStatus == "" {
-				existing.BuildStatus = g.BuildStatus
-			}
-			if g.Status == "in_progress" && !deploymentIsTerminal(existing) {
-				existing.Status = "in_progress"
-				existing.Live = true
-			}
-			if existing.RegistryStatus == "pending" && g.RegistryStatus == "success" {
-				existing.RegistryStatus = g.RegistryStatus
-			}
-			if existing.RuntimeDetail == "" {
-				existing.RuntimeDetail = g.RuntimeDetail
-			}
-			if existing.Status == "in_progress" && g.Status != "" && g.Status != "in_progress" {
-				existing.Status = g.Status
-			}
-			if deploymentIsTerminal(existing) {
-				existing.Live = false
-				normalizeStaleDeploymentRow(&existing)
-			}
-			byKey[key] = existing
-			continue
+		if imageTagsMatch(existing.ImageTag, g.ImageTag) {
+			return k, existing, true
 		}
-		byKey[key] = g
 	}
-	out := make([]deploymentRow, 0, len(byKey))
-	for _, d := range byKey {
-		out = append(out, d)
+	return key, deploymentRow{}, false
+}
+
+func mergeGhDeployment(existing, g deploymentRow) deploymentRow {
+	if strings.EqualFold(strings.TrimSpace(existing.Status), "success") && deploymentIsTerminal(existing) {
+		if existing.GitHubRunURL == "" {
+			existing.GitHubRunURL = g.GitHubRunURL
+		}
+		if existing.GitHubRunID == 0 {
+			existing.GitHubRunID = g.GitHubRunID
+		}
+		existing.Live = false
+		return existing
 	}
-	// sort by CreatedAt desc
+	if existing.GitHubRunURL == "" {
+		existing.GitHubRunURL = g.GitHubRunURL
+	}
+	if existing.GitHubRunID == 0 {
+		existing.GitHubRunID = g.GitHubRunID
+	}
+	gBS := strings.ToLower(strings.TrimSpace(g.BuildStatus))
+	if gBS == "failed" || gBS == "cancelled" {
+		existing.BuildStatus = g.BuildStatus
+		existing.Status = "failed"
+		if strings.TrimSpace(existing.ErrorPhase) == "" {
+			existing.ErrorPhase = "build"
+		}
+		if strings.TrimSpace(existing.ErrorMessage) == "" && strings.TrimSpace(g.ErrorMessage) != "" {
+			existing.ErrorMessage = g.ErrorMessage
+		}
+		propagateSkippedDownstream(&existing)
+	} else if existing.BuildStatus == "pending" || existing.BuildStatus == "running" || existing.BuildStatus == "" {
+		existing.BuildStatus = g.BuildStatus
+	}
+	if g.Status == "in_progress" && !deploymentIsTerminal(existing) {
+		existing.Status = "in_progress"
+		existing.Live = true
+	}
+	if existing.RegistryStatus == "pending" && g.RegistryStatus == "success" {
+		existing.RegistryStatus = g.RegistryStatus
+	}
+	if existing.RuntimeDetail == "" {
+		existing.RuntimeDetail = g.RuntimeDetail
+	}
+	if existing.Status == "in_progress" && g.Status != "" && g.Status != "in_progress" {
+		existing.Status = g.Status
+	}
+	if deploymentIsTerminal(existing) {
+		existing.Live = false
+		normalizeStaleDeploymentRow(&existing)
+	}
+	return existing
+}
+
+func deploymentItemsSorted(items []deploymentRow) []deploymentRow {
+	out := append([]deploymentRow(nil), items...)
 	for i := 0; i < len(out); i++ {
 		for j := i + 1; j < len(out); j++ {
 			if out[j].CreatedAt > out[i].CreatedAt {
@@ -1065,7 +1399,84 @@ func mergeDeploymentItems(dbItems, ghItems []deploymentRow) []deploymentRow {
 	return out
 }
 
-func (h *Handler) enrichDeploymentsFromGitHub(ctx context.Context, u auth.User, p projectRow, repo projectRepoRow, items []deploymentRow) []deploymentRow {
+func mergeDeploymentItems(dbItems, ghItems []deploymentRow) []deploymentRow {
+	byKey := map[string]deploymentRow{}
+	for _, d := range dbItems {
+		key := deploymentMergeKey(d)
+		existing, ok := byKey[key]
+		if !ok {
+			byKey[key] = d
+			continue
+		}
+		dRank := deploymentHistoryRank(d)
+		eRank := deploymentHistoryRank(existing)
+		if dRank > eRank || (dRank == eRank && d.ID > existing.ID) {
+			byKey[key] = d
+		}
+	}
+	for _, g := range ghItems {
+		if g.ImageTag == "" {
+			continue
+		}
+		key, existing, ok := findDeploymentMergeKey(byKey, g)
+		if ok {
+			byKey[key] = mergeGhDeployment(existing, g)
+			continue
+		}
+		byKey[key] = g
+	}
+	return deploymentItemsSorted(mapValuesDeployment(byKey))
+}
+
+func mergeDeploymentEnrichOnly(dbItems, ghItems []deploymentRow) []deploymentRow {
+	byKey := map[string]deploymentRow{}
+	for _, d := range dbItems {
+		key := deploymentMergeKey(d)
+		existing, ok := byKey[key]
+		if !ok {
+			byKey[key] = d
+			continue
+		}
+		dRank := deploymentHistoryRank(d)
+		eRank := deploymentHistoryRank(existing)
+		if dRank > eRank || (dRank == eRank && d.ID > existing.ID) {
+			byKey[key] = d
+		}
+	}
+	for _, g := range ghItems {
+		if g.ImageTag == "" {
+			continue
+		}
+		key, existing, ok := findDeploymentMergeKey(byKey, g)
+		if !ok {
+			continue
+		}
+		byKey[key] = mergeGhDeployment(existing, g)
+	}
+	return deploymentItemsSorted(mapValuesDeployment(byKey))
+}
+
+func mapValuesDeployment(m map[string]deploymentRow) []deploymentRow {
+	out := make([]deploymentRow, 0, len(m))
+	for _, d := range m {
+		out = append(out, d)
+	}
+	return out
+}
+
+func ghRunAfterProjectCreated(projectCreatedAt, runCreatedAt string) bool {
+	if strings.TrimSpace(projectCreatedAt) == "" || strings.TrimSpace(runCreatedAt) == "" {
+		return true
+	}
+	pc, err1 := time.Parse(time.RFC3339, projectCreatedAt)
+	rc, err2 := time.Parse(time.RFC3339, runCreatedAt)
+	if err1 != nil || err2 != nil {
+		return true
+	}
+	return !rc.Before(pc.Add(-2 * time.Minute))
+}
+
+func (h *Handler) enrichDeploymentsFromGitHub(ctx context.Context, u auth.User, p projectRow, repo projectRepoRow, items []deploymentRow, scope string) []deploymentRow {
 	if strings.TrimSpace(repo.GitHubOwner) == "" || strings.TrimSpace(repo.GitHubRepo) == "" {
 		return items
 	}
@@ -1079,7 +1490,25 @@ func (h *Handler) enrichDeploymentsFromGitHub(ctx context.Context, u auth.User, 
 	}
 	var ghItems []deploymentRow
 	for i, run := range runs {
-		ghItems = append(ghItems, h.deploymentRowFromRun(ctx, p, deployEnv, run, i == 0))
+		if !ghRunAfterProjectCreated(p.CreatedAt, run.CreatedAt) {
+			continue
+		}
+		matched := false
+		for _, it := range items {
+			if imageTagsMatch(it.ImageTag, run.HeadSHA) {
+				matched = true
+				break
+			}
+		}
+		inFlight := !strings.EqualFold(strings.TrimSpace(run.Status), "completed")
+		if !matched && !inFlight {
+			continue
+		}
+		withRuntime := matched || (i == 0 && inFlight)
+		ghItems = append(ghItems, h.deploymentRowFromRun(ctx, p, deployEnv, run, withRuntime))
+	}
+	if scope == "history" {
+		return mergeDeploymentEnrichOnly(items, ghItems)
 	}
 	return mergeDeploymentItems(items, ghItems)
 }
@@ -1342,7 +1771,19 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	items = h.enrichDeploymentsFromGitHub(r.Context(), u, p, repo, items)
+	h.sealSupersededDeploymentRows(r.Context(), p.ID, env)
+	items, err = h.listProjectDeployments(r.Context(), p.ID, env, listLimit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	items = dedupeDeploymentsByTag(items)
+	items = h.enrichDeploymentsFromGitHub(r.Context(), u, p, repo, items, scope)
+	items = dedupeDeploymentsByTag(items)
+	for i := range items {
+		_ = h.repairHistoricalDeploymentRow(r.Context(), p, &items[i])
+	}
+	items = dedupeDeploymentsByTag(items)
 	servingTag := h.clusterServingImageTag(r.Context(), p, env)
 	currentIdx := pickCurrentDeploymentIndex(items, env, servingTag)
 	var current *deploymentRow
@@ -1389,25 +1830,13 @@ func (h *Handler) GetProjectDeployActivity(w http.ResponseWriter, r *http.Reques
 		}
 	} else {
 		filtered = append(filtered, items...)
-		if current != nil {
-			found := false
-			for _, d := range filtered {
-				if d.ID == current.ID || (d.ImageTag != "" && d.ImageTag == current.ImageTag && d.Environment == current.Environment) {
-					found = true
-					break
-				}
-			}
-			if !found {
-				filtered = append([]deploymentRow{*current}, filtered...)
-			}
-		}
 	}
 	markServing := func(d *deploymentRow) {
 		if d == nil {
 			return
 		}
 		d.Serving = strings.EqualFold(d.Status, "success") && servingTag != "" &&
-			strings.TrimSpace(d.ImageTag) == servingTag
+			imageTagsMatch(d.ImageTag, servingTag)
 	}
 	markServing(current)
 	for i := range filtered {

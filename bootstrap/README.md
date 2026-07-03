@@ -5,7 +5,7 @@
 | Lớp | Thư mục | Runner | Mục đích |
 |-----|---------|--------|----------|
 | **Core** | `bootstrap/core/steps/` | `./bootstrap/run.sh` | RKE2, Ingress, Console (00–08) |
-| **Addon** | `bootstrap/addons/` | `./bootstrap/addons/run.sh` | Rancher, Harbor (tùy chọn) |
+| **Addon** | `bootstrap/addons/` | `./bootstrap/addons/run.sh` | Rancher, Harbor, Argo CD (tùy chọn) |
 
 State file dùng chung: `bootstrap/state/` (giữ tương thích VPS cũ).
 
@@ -38,6 +38,7 @@ Bật addon trong Console → `#/addons`, rồi trên VPS:
 ./bootstrap/addons/run.sh list
 ./bootstrap/addons/run.sh rancher
 ./bootstrap/addons/run.sh harbor
+./bootstrap/addons/run.sh argocd
 ```
 
 Hoặc:
@@ -49,9 +50,9 @@ bash bootstrap/addons/install-harbor.sh
 
 ## Backward compatible
 
-Script cũ `bootstrap/steps/09-rancher.sh` vẫn chạy được (wrapper → addon).
+Script cũ `bootstrap/steps/09-rancher.sh` và `bootstrap/steps/11-argocd.sh` vẫn chạy được (wrapper → addon).
 
-State cũ `09-rancher.done` / `10-harbor.done` vẫn được nhận.
+State cũ `09-rancher.done` / `10-harbor.done` / `11-argocd.done` vẫn được nhận.
 
 ## SSH disconnect
 

@@ -23,6 +23,7 @@ Addon (Rancher, Harbor…):
   ./bootstrap/addons/run.sh list
   ./bootstrap/addons/run.sh rancher
   ./bootstrap/addons/run.sh harbor
+  ./bootstrap/addons/run.sh argocd
 
 SSH rớt → tmux:
   tmux new -s k8s

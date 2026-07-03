@@ -43,7 +43,8 @@ func GitHubWorkflow(p Params) Workflow {
 		b.WriteString("      packages: write\n")
 	}
 	b.WriteString("    steps:\n")
-	b.WriteString("      - uses: actions/checkout@v4\n\n")
+	writeCheckoutStep(&b, p)
+	b.WriteString("\n")
 
 	if strings.TrimSpace(p.DeployHookURL) != "" {
 		env := strings.TrimSpace(p.DeployEnvironment)
@@ -53,10 +54,15 @@ func GitHubWorkflow(p Params) Workflow {
 		validateURL := strings.TrimRight(strings.TrimSpace(p.DeployHookURL), "/") + "/validate-config"
 		b.WriteString("      - name: Kiểm tra cấu hình env (Platform)\n")
 		b.WriteString("        run: |\n")
-		b.WriteString("          curl -fsS -X POST \"" + validateURL + "\" \\\n")
+		b.WriteString("          CODE=$(curl -sS -o /tmp/platform-validate.json -w '%{http_code}' -X POST \"" + validateURL + "\" \\\n")
 		b.WriteString("            -H \"Content-Type: application/json\" \\\n")
 		b.WriteString("            -H \"X-Platform-Deploy-Token: ${{ secrets." + p.deployTokenSecret() + " }}\" \\\n")
-		b.WriteString("            -d '{\"environment\":\"" + env + "\"}'\n\n")
+		b.WriteString("            -d '{\"environment\":\"" + env + "\"}')\n")
+		b.WriteString("          if [ \"$CODE\" != \"200\" ]; then\n")
+		b.WriteString("            echo \"Platform validate-config HTTP $CODE:\"\n")
+		b.WriteString("            cat /tmp/platform-validate.json\n")
+		b.WriteString("            exit 22\n")
+		b.WriteString("          fi\n\n")
 	}
 
 	if strings.TrimSpace(p.DeployHookURL) != "" {
@@ -155,6 +161,30 @@ func GitHubWorkflow(p Params) Workflow {
 		Filename:    filename,
 		Content:     b.String(),
 		SecretsHint: secrets,
+	}
+}
+
+func writeCheckoutStep(b *strings.Builder, p Params) {
+	b.WriteString("      - uses: actions/checkout@v4\n")
+	mode := NormalizeGitSubmodules(p.GitSubmodules)
+	if mode == "" {
+		return
+	}
+	b.WriteString("        with:\n")
+	b.WriteString("          submodules: " + mode + "\n")
+	b.WriteString("          token: ${{ secrets.GITHUB_TOKEN }}\n")
+}
+
+// NormalizeGitSubmodules chuẩn hóa giá trị lưu DB / contract cho checkout.
+func NormalizeGitSubmodules(raw string) string {
+	v := strings.ToLower(strings.TrimSpace(raw))
+	switch v {
+	case "true", "yes", "1", "on":
+		return "true"
+	case "recursive", "recurse":
+		return "recursive"
+	default:
+		return ""
 	}
 }
 

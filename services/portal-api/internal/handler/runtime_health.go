@@ -249,9 +249,9 @@ func mergeRuntimeHealth(k8sSt, k8sDetail, podName, k8sErr, smokeSt, smokeDetail,
 	return v
 }
 
-func (h *Handler) runtimeWorkload(ctx context.Context, p projectRow, env, tag string) (deployName, wantImage string) {
+func (h *Handler) runtimeWorkload(ctx context.Context, p projectRow, env, tag string, d *deploymentRow) (deployName, wantImage string) {
 	repo, _ := h.getProjectRepo(ctx, p.ID)
-	params := h.buildDeployParams(ctx, p, repo, env, tag, false)
+	params := h.deployParamsForHealthCheck(ctx, p, repo, env, tag, d)
 	primary := params.PrimaryService()
 	h.enrichProjectRegistry(ctx, &p)
 	if strings.TrimSpace(tag) == "" {
@@ -265,6 +265,28 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	if d == nil {
 		return runtimeHealthVerdict{Status: "pending"}
 	}
+	if h.argoEnabled() {
+		appName := h.argoAppName(p.Slug, d.Environment)
+		appSt, err := h.argoApplicationStatus(ctx, appName)
+		if err == nil {
+			st, detail, errMsg := argoRuntimeVerdict(appSt)
+			if link := h.argoDashboardURL(appName); link != "" {
+				detail = strings.TrimSpace(detail + " · " + link)
+			}
+			tiers := []runtimeSignalTier{{
+				ID:     "argocd",
+				Label:  "Argo CD Application",
+				Status: tierStatusFromStage(st),
+				Detail: detail,
+			}}
+			return runtimeHealthVerdict{
+				Status:   st,
+				Detail:   detail,
+				ErrorMsg: errMsg,
+				Tiers:    tiers,
+			}
+		}
+	}
 	h.enrichDeployClusterLog(ctx, p, d.Environment, d)
 	h.enrichRuntimeLogs(ctx, p, d.Environment, d)
 
@@ -273,12 +295,20 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	if tag == "" {
 		tag = "latest"
 	}
-	deployName, wantImage := h.runtimeWorkload(ctx, p, d.Environment, tag)
+	deployName, wantImage := h.runtimeWorkload(ctx, p, d.Environment, tag, d)
 
 	var k8sSt, k8sDetail, k8sErr string
-	var depDetail rancher.DeploymentDetail
-	var depErr error
-	if h.rancher != nil && h.rancher.Enabled() {
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	fleetParams := h.deployParamsForHealthCheck(ctx, p, repo, d.Environment, tag, d)
+	if fleetParams.IsMultiService() {
+		if fleetSt, fleetDetail, fleetErr := h.evaluateFleetRolloutForParams(ctx, p, fleetParams, tag); fleetSt != "" {
+			k8sSt, k8sDetail, k8sErr = fleetSt, fleetDetail, fleetErr
+		}
+	} else if fleetSt, fleetDetail, fleetErr := h.evaluateFleetRollout(ctx, p, d.Environment, tag); fleetSt != "" {
+		k8sSt, k8sDetail, k8sErr = fleetSt, fleetDetail, fleetErr
+	} else if h.rancher != nil && h.rancher.Enabled() {
+		var depDetail rancher.DeploymentDetail
+		var depErr error
 		depDetail, depErr = h.rancher.GetDeploymentDetail(ctx, "", ns, deployName)
 		if depErr != nil {
 			k8sSt = "running"
@@ -354,8 +384,8 @@ func (h *Handler) assessRuntimeHealth(ctx context.Context, p projectRow, d *depl
 	if stageStatus(k8sSt) == "success" {
 		host := h.primaryDomainHost(ctx, p.ID, d.Environment)
 		repo, _ := h.getProjectRepo(ctx, p.ID)
-		paths := h.smokePathsForProject(ctx, p.ID, repo)
-		smokeSt, smokeDetail = h.smokeCheckHTTP(ctx, host, paths)
+		paths := h.smokePathsForDeployment(ctx, p.ID, repo, d)
+		smokeSt, smokeDetail = h.smokeCheckHTTP(ctx, p, d.Environment, host, paths)
 		d.SmokeStatus = smokeSt
 		d.SmokeDetail = smokeDetail
 	} else {
@@ -415,7 +445,7 @@ func (h *Handler) matchedDeployPods(ctx context.Context, p projectRow, env, imag
 	return pods
 }
 
-func (h *Handler) applyRuntimeVerdict(ctx context.Context, d *deploymentRow, v runtimeHealthVerdict) {
+func (h *Handler) applyRuntimeVerdict(ctx context.Context, p projectRow, d *deploymentRow, v runtimeHealthVerdict) {
 	if d == nil {
 		return
 	}
@@ -427,6 +457,11 @@ func (h *Handler) applyRuntimeVerdict(ctx context.Context, d *deploymentRow, v r
 
 	switch v.Status {
 	case "failed":
+		if strings.EqualFold(strings.TrimSpace(d.Status), "success") && h.isHistoricalDeploymentRow(ctx, p, d) {
+			d.Live = false
+			reconcileDeploymentRow(d)
+			return
+		}
 		d.Status = "failed"
 		d.ErrorPhase = "runtime"
 		d.ErrorMessage = v.ErrorMsg
@@ -436,6 +471,10 @@ func (h *Handler) applyRuntimeVerdict(ctx context.Context, d *deploymentRow, v r
 				status='failed', error_phase='runtime', error_message=$2, updated_at=now(), finished_at=now()
 			WHERE id=$3`, d.RuntimeDetail, d.ErrorMessage, d.ID)
 	case "success":
+		if !h.applyTrafficGate(ctx, p, d) {
+			reconcileDeploymentRow(d)
+			return
+		}
 		d.Status = "success"
 		d.DeployStatus = "success"
 		d.RuntimeStatus = "success"
