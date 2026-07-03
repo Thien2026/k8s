@@ -3179,6 +3179,43 @@ tr.dns-row td {
   color: var(--muted);
   line-height: 1.45;
 }
+.layout-option-icon {
+  font-size: 20px;
+  line-height: 1;
+  margin-bottom: 2px;
+}
+.layout-example {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--muted);
+  opacity: 0.85;
+  margin-top: 2px;
+}
+.layout-picker-compact {
+  margin: 10px 0 8px;
+}
+.layout-create-section .field-label {
+  margin-bottom: 4px;
+}
+.layout-create-lead {
+  font-size: 12px;
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+.layout-create-foot {
+  font-size: 11px;
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+.repo-detect-banner {
+  font-size: 13px;
+}
+.repo-detect-hint {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(15, 20, 35, 0.45);
+  border: 1px dashed var(--border);
+}
 .layout-hint-panel {
   padding: 12px 14px;
   border-radius: 10px;

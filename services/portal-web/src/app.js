@@ -2323,14 +2323,15 @@ function openCreateProjectDialog(providers, defaultProvider, userItems) {
       '<div class="form-row">' + registrySelectHtml(providers, defaultProvider, defaultProvider) + "</div>" +
       '<div class="form-row"><label>Namespace dev<input name="namespace_dev" placeholder="acme-dev" /></label>' +
       '<label>Namespace prod<input name="namespace_prod" placeholder="acme-prod" /></label></div>' +
-      '<div class="form-section" style="margin-top:12px">' +
+      '<div class="form-section layout-create-section" style="margin-top:12px">' +
       '<span class="field-label">App chạy thế nào?</span>' +
+      '<p class="muted layout-create-lead">Chọn kiểu phù hợp — sau khi gắn GitHub, Console tự gợi ý lại từ <code>services.yaml</code> nếu repo có.</p>' +
       '<div class="layout-picker layout-picker-compact">' +
       '<label class="layout-option"><input type="radio" name="layout" value="single" checked />' +
-      '<div class="layout-option-body"><strong>Một website</strong><span>Một link duy nhất</span></div></label>' +
+      '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">🌐</span><strong>Một website</strong><span>Một link duy nhất, một app</span><em class="layout-example">Blog, landing, API đơn</em></div></label>' +
       '<label class="layout-option"><input type="radio" name="layout" value="multi" />' +
-      '<div class="layout-option-body"><strong>Web + API riêng</strong><span>Giao diện và API tách</span></div></label></div>' +
-      '<p class="muted" style="font-size:11px;margin:8px 0 0">Gắn GitHub sau — repo có <code>services.yaml</code> sẽ gợi ý tự động.</p></div>' +
+      '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">⚡</span><strong>Web + API riêng</strong><span>Giao diện và API tách path</span><em class="layout-example">Frontend + backend trong một repo</em></div></label></div>' +
+      '<p class="muted layout-create-foot">Đổi kiểu sau khi đã deploy? Dùng wizard <strong>Đổi kiểu chạy</strong> — không dùng rollback.</p></div>' +
       (memberOptions ? '<div class="member-picks compact"><span class="field-label">Thêm thành viên</span>' + memberOptions + "</div>" : "") +
       '<div class="ui-dialog-actions" style="margin-top:16px;padding-top:0;border:0">' +
       '<button type="button" class="btn-ghost ui-dialog-cancel">Huỷ</button>' +
@@ -3184,7 +3185,7 @@ function renderServicesContractBanner(contract, canEdit) {
   contract = contract || {};
   if (!contract.found) {
     return (
-      '<p class="muted" style="font-size:12px;margin:0 0 10px">Tip: thêm <code>.platform/services.yaml</code> trong repo — Console tự nhận layout + fleet (L4A).</p>'
+      '<p class="muted repo-detect-hint" style="font-size:12px;margin:0 0 10px">Chưa thấy <code>.platform/services.yaml</code> — Console quét Dockerfile để gợi ý build (Docker / Buildpack).</p>'
     );
   }
   if (contract.parse_error) {
@@ -3195,18 +3196,24 @@ function renderServicesContractBanner(contract, canEdit) {
     );
   }
   const svcs = contract.services || [];
+  const names = (contract.service_names || svcs.map(function (s) { return s.name; })).filter(Boolean);
   const synced = !!contract.in_sync;
+  const layoutLabel = layoutKindLabel(contract.suggested_layout || contract.layout || "single");
   let html =
-    '<div class="banner' +
+    '<div class="banner repo-detect-banner' +
     (synced ? "" : " warn") +
-    '" style="margin-bottom:8px"><strong>.platform/services.yaml</strong> · ' +
-    svcs.length +
-    " service · branch <code>" +
+    '" style="margin-bottom:8px"><strong>Repo gợi ý</strong> · ' +
+    esc(layoutLabel);
+  if (names.length) {
+    html += " · <code>" + esc(names.join(" + ")) + "</code>";
+  }
+  html +=
+    ' · branch <code>' +
     esc(contract.branch || "?") +
     "</code>";
   html += synced
-    ? ' — <span style="color:#15803d">đồng bộ Console</span>'
-    : ' — <span style="color:#b45309">khác Console</span>';
+    ? ' — <span style="color:#15803d">khớp Console</span>'
+    : ' — <span style="color:#b45309">chưa khớp Console</span>';
   const gitSub = (contract.git_submodules || "").trim();
   if (gitSub || contract.has_gitmodules) {
     const subLabel = gitSub || "recursive";
@@ -3220,7 +3227,7 @@ function renderServicesContractBanner(contract, canEdit) {
   html += "</div>";
   if (canEdit && !synced && !contract.parse_error) {
     html +=
-      '<button type="button" class="btn-ghost btn-sm" id="sync-services-contract" style="margin-bottom:10px">Áp dụng từ repo</button>';
+      '<button type="button" class="btn-ghost btn-sm" id="sync-services-contract" style="margin-bottom:10px">Áp dụng cấu hình từ repo</button>';
   }
   return html;
 }
@@ -3236,15 +3243,80 @@ function layoutKindLabel(layout) {
   return layout === "multi" ? "Web + API riêng" : "Một website";
 }
 
+function contractServiceToFormRow(s) {
+  s = s || {};
+  return {
+    name: s.name || "",
+    display_name: s.display_name || s.name || "",
+    build_mode: s.build_mode || "dockerfile",
+    stack: s.stack || "",
+    build_context: s.build_context || ".",
+    dockerfile_path: s.dockerfile_path || "Dockerfile",
+    ingress_path: s.ingress_path || "/",
+    expose_ingress: s.expose_ingress !== false,
+    health_path: s.health_path || "/health",
+    container_port: s.container_port || 8080,
+  };
+}
+
+function updatePipelineBuildHint(contract) {
+  const el = document.getElementById("pipeline-build-hint");
+  if (!el || !contract) return;
+  el.innerHTML = buildModeAutoHintHtml({
+    build_mode: contract.build_mode,
+    build_mode_detected_path: contract.build_mode_detected_path,
+  });
+}
+
 function applyRepoLayoutSuggestion(form, contract) {
-  if (!form || !contract || !contract.found || contract.parse_error) return;
-  if (state.pipelineLayoutUserTouched) return;
-  const suggested = contract.layout === "multi" ? "multi" : "single";
+  if (!form || !contract || contract.parse_error || !contract.found) return false;
+  if (state.pipelineLayoutUserTouched) return false;
+  const suggested = contract.suggested_layout || contract.layout || "single";
   const radio = form.querySelector('input[name="layout"][value="' + suggested + '"]');
-  if (!radio || radio.checked) return;
+  if (!radio || radio.checked) return false;
   radio.checked = true;
   radio.dispatchEvent(new Event("change", { bubbles: true }));
   toastSuccess("Repo gợi ý: " + layoutKindLabel(suggested) + " — đã chọn sẵn");
+  return true;
+}
+
+function applyRepoServicesSuggestion(form, contract) {
+  if (!form || !contract || contract.parse_error || !contract.found) return false;
+  if (state.pipelineServicesUserTouched) return false;
+  if ((contract.suggested_layout || contract.layout) !== "multi") return false;
+  const services = contract.services || [];
+  if (services.length < 2) return false;
+  const tbody = document.getElementById("project-services-tbody");
+  if (!tbody) return false;
+  const rows = services.map(contractServiceToFormRow);
+  tbody.innerHTML = rows
+    .map(function (s, idx) {
+      return buildServiceTableRowHtml(s, idx);
+    })
+    .join("");
+  toastSuccess("Đã điền " + rows.length + " service từ repo");
+  return true;
+}
+
+function applyRepoContractSuggestion(form, contract, opts) {
+  opts = opts || {};
+  const layoutChanged = applyRepoLayoutSuggestion(form, contract);
+  const servicesFilled = applyRepoServicesSuggestion(form, contract);
+  updatePipelineBuildHint(contract);
+  if ((layoutChanged || servicesFilled) && opts.onPrefilled) {
+    opts.onPrefilled({ layoutChanged: layoutChanged, servicesFilled: servicesFilled });
+  }
+  return layoutChanged || servicesFilled;
+}
+
+function refreshRepoDetectBanner(contract, canEdit) {
+  const panel = document.getElementById("repo-detect-banner-slot");
+  if (!panel) return;
+  panel.innerHTML = renderServicesContractBanner(contract, canEdit);
+  const syncBtn = document.getElementById("sync-services-contract");
+  if (syncBtn && state._repoDetectSyncHandler) {
+    syncBtn.onclick = state._repoDetectSyncHandler;
+  }
 }
 
 function renderPipelineCrosscheckHtml(repo, svcData, contract) {
@@ -3282,32 +3354,42 @@ function renderPipelineCrosscheckHtml(repo, svcData, contract) {
   return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ' + cls + '">' + lines.map(function (l) { return "• " + l; }).join("<br>") + "</div>";
 }
 
-async function refreshPipelineCrosscheck(slug, form, svcData, repo) {
+async function refreshPipelineCrosscheck(slug, form, svcData, repo, opts) {
+  opts = opts || {};
   const el = document.getElementById("pipeline-crosscheck");
-  if (!el || !form) return;
+  if (!el || !form) return null;
   const parsed = parseRepoFromForm(form);
   const branch = selectedGitHubBranch(repo && repo.branch);
   if (!parsed) {
     el.className = "pipeline-crosscheck warn";
-    el.innerHTML = "• Chọn repository và branch để kiểm tra khớp layout.";
-    return;
+    el.innerHTML = "• Chọn repository và branch — Console sẽ quét repo và gợi ý kiểu chạy.";
+    return null;
   }
   el.className = "pipeline-crosscheck";
-  el.innerHTML = '<span class="btn-spinner"></span> Đang kiểm tra branch…';
+  el.innerHTML = '<span class="btn-spinner"></span> Đang quét branch <code>' + esc(branch) + "</code>…";
   try {
     const contract = await api(
-      "/api/v1/projects/" + encodeURIComponent(slug) + "/services/detect" + qs({ branch: branch })
+      "/api/v1/projects/" +
+        encodeURIComponent(slug) +
+        "/services/detect" +
+        qs({ branch: branch, owner: parsed.owner, repo: parsed.repo })
     );
-    applyRepoLayoutSuggestion(form, contract);
-    const merged = Object.assign({}, svcData || {}, { repo_contract: contract, layout: collectProjectLayoutPayload(form).layout });
+    applyRepoContractSuggestion(form, contract, opts);
+    refreshRepoDetectBanner(contract, true);
+    const merged = Object.assign({}, svcData || {}, {
+      repo_contract: contract,
+      layout: collectProjectLayoutPayload(form).layout,
+    });
     const html = renderPipelineCrosscheckHtml(repo, merged, contract);
     const newEl = document.getElementById("pipeline-crosscheck");
     if (newEl) {
       newEl.outerHTML = html;
     }
+    return contract;
   } catch (err) {
     el.className = "pipeline-crosscheck warn";
-    el.innerHTML = "• Không kiểm tra được repo: " + esc(errorMessage(err));
+    el.innerHTML = "• Không quét được repo: " + esc(errorMessage(err));
+    return null;
   }
 }
 
@@ -3473,7 +3555,6 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
 
   const multiPanel =
     '<div id="layout-multi-panel"' + (!isMulti ? ' hidden' : "") + ">" +
-    contractBanner +
     conventionBanner +
     '<p class="muted" style="margin:0 0 10px">N service · public (Ingress) hoặc internal. Env discovery <code>SVC_&lt;TÊN&gt;_URL</code>.</p>' +
     '<div class="service-preview-grid" id="service-preview-grid">' +
@@ -3562,15 +3643,16 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     "</div>" +
     '<div class="pipeline-step">' +
     '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Kiểu chạy</div>' +
+    '<div id="repo-detect-banner-slot">' + (isMulti ? contractBanner : renderServicesContractBanner(repoContract, canEdit)) + "</div>" +
     '<p class="muted" style="margin:0 0 8px;font-size:12px">Chọn cách app chạy trên server. Đã deploy rồi mà muốn đổi? ' +
     '<button type="button" class="btn-link" id="open-change-layout-wizard" style="padding:0;font-size:inherit">Đổi kiểu chạy…</button></p>' +
     '<div class="layout-picker">' +
     '<label class="layout-option">' +
     '<input type="radio" name="layout" value="single"' + (!isMulti ? " checked" : "") + " />" +
-    '<div class="layout-option-body"><strong>Một website</strong><span>Một link duy nhất</span></div></label>' +
+    '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">🌐</span><strong>Một website</strong><span>Một link duy nhất</span></div></label>' +
     '<label class="layout-option">' +
     '<input type="radio" name="layout" value="multi"' + (isMulti ? " checked" : "") + " />" +
-    '<div class="layout-option-body"><strong>Web + API riêng</strong><span>Giao diện + API tách</span></div></label></div>' +
+    '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">⚡</span><strong>Web + API riêng</strong><span>Giao diện + API tách path</span></div></label></div>' +
     singleHint +
     multiPanel +
     "</div>" +
@@ -3597,6 +3679,7 @@ function selectedGitHubBranch(fallback) {
 function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken) {
   const form = document.getElementById("pipeline-setup-form");
   state.pipelineLayoutUserTouched = false;
+  state.pipelineServicesUserTouched = false;
   const singleHint = document.getElementById("layout-single-hint");
   const multiPanel = document.getElementById("layout-multi-panel");
   const previewGrid = document.getElementById("service-preview-grid");
@@ -3815,8 +3898,19 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     };
   }
 
+  function rebindServiceRows() {
+    listServiceRows().forEach(function (tr) {
+      bindRemoveRow(tr.getAttribute("data-svc-idx"));
+      bindCtxSelect(tr.getAttribute("data-svc-idx"));
+    });
+    refreshPreview();
+    if (currentLayout() === "multi") {
+      refreshGitHubDirs({ silent: true });
+    }
+  }
+
   function scheduleCrosscheck() {
-    refreshPipelineCrosscheck(slug, form, svcData, repo);
+    refreshPipelineCrosscheck(slug, form, svcData, repo, { onPrefilled: rebindServiceRows });
   }
 
   function togglePanels() {
@@ -3852,8 +3946,14 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     };
   }
   if (tbody) {
-    tbody.addEventListener("change", refreshPreview);
-    tbody.addEventListener("input", refreshPreview);
+    tbody.addEventListener("change", function () {
+      state.pipelineServicesUserTouched = true;
+      refreshPreview();
+    });
+    tbody.addEventListener("input", function () {
+      state.pipelineServicesUserTouched = true;
+      refreshPreview();
+    });
     listServiceRows().forEach(function (tr) {
       bindRemoveRow(tr.getAttribute("data-svc-idx"));
     });
@@ -3903,39 +4003,42 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   });
 
   const syncContractBtn = document.getElementById("sync-services-contract");
-  if (syncContractBtn) {
-    syncContractBtn.onclick = async function () {
-      syncContractBtn.disabled = true;
-      try {
-        const parsed = parseRepoFromForm(form);
-        if (ghStatus.connected && parsed) {
-          const fd = new FormData(form);
-          await runGitHubPipelineSetup(slug, {
-            owner: parsed.owner,
-            repo: parsed.repo,
-            branch: fd.get("branch") || selectedGitHubBranch(repo.branch || "main"),
-            environment: (fd.get("environment") || "dev").toString(),
-            apply_repo_contract: true,
-            progressEl: document.getElementById("github-setup-progress"),
-            submitBtn: document.getElementById("github-setup-submit"),
-            formRoot: form,
-          });
-          toastSuccess("Đã áp dụng services.yaml + đồng bộ workflow");
-          pageProjectHub(main, slug, "deploy");
-        } else {
-          await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services/sync-from-repo", {
-            method: "POST",
-            body: { branch: selectedGitHubBranch(repo.branch || "main") },
-          });
-          toastSuccess("Đã áp dụng services.yaml — chọn repo và bấm Lưu & đồng bộ GitHub");
-          pageProjectHub(main, slug, "deploy");
-        }
-      } catch (err) {
-        toastError(errorMessage(err));
-      } finally {
-        syncContractBtn.disabled = false;
+  state._repoDetectSyncHandler = async function () {
+    const btn = document.getElementById("sync-services-contract");
+    if (!btn) return;
+    btn.disabled = true;
+    try {
+      const parsed = parseRepoFromForm(form);
+      if (ghStatus.connected && parsed) {
+        const fd = new FormData(form);
+        await runGitHubPipelineSetup(slug, {
+          owner: parsed.owner,
+          repo: parsed.repo,
+          branch: fd.get("branch") || selectedGitHubBranch(repo.branch || "main"),
+          environment: (fd.get("environment") || "dev").toString(),
+          apply_repo_contract: true,
+          progressEl: document.getElementById("github-setup-progress"),
+          submitBtn: document.getElementById("github-setup-submit"),
+          formRoot: form,
+        });
+        toastSuccess("Đã áp dụng services.yaml + đồng bộ workflow");
+        pageProjectHub(main, slug, "deploy");
+      } else {
+        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services/sync-from-repo", {
+          method: "POST",
+          body: { branch: selectedGitHubBranch(repo.branch || "main") },
+        });
+        toastSuccess("Đã áp dụng services.yaml — chọn repo và bấm Lưu & đồng bộ GitHub");
+        pageProjectHub(main, slug, "deploy");
       }
-    };
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      btn.disabled = false;
+    }
+  };
+  if (syncContractBtn) {
+    syncContractBtn.onclick = state._repoDetectSyncHandler;
   }
 
   const changeLayoutBtn = document.getElementById("open-change-layout-wizard");

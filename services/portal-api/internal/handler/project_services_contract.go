@@ -13,17 +13,21 @@ import (
 )
 
 type servicesContractDetect struct {
-	Found               bool                                   `json:"found"`
-	Path                string                                 `json:"path,omitempty"`
-	Layout              string                                 `json:"layout,omitempty"`
-	Services            []deploy.ServiceDef                    `json:"services,omitempty"`
-	InSync              bool                                   `json:"in_sync"`
-	GitSubmodules       string                                 `json:"git_submodules,omitempty"`
-	GitSubmodulesInSync bool                                   `json:"git_submodules_in_sync,omitempty"`
-	HasGitmodules       bool                                   `json:"has_gitmodules,omitempty"`
-	ParseError          string                                 `json:"parse_error,omitempty"`
-	Issues              []platformcontract.ServicesDetectIssue `json:"issues,omitempty"`
-	Branch              string                                 `json:"branch,omitempty"`
+	Found                 bool                                   `json:"found"`
+	Path                  string                                 `json:"path,omitempty"`
+	Layout                string                                 `json:"layout,omitempty"`
+	SuggestedLayout       string                                 `json:"suggested_layout,omitempty"`
+	Services              []deploy.ServiceDef                    `json:"services,omitempty"`
+	ServiceNames          []string                               `json:"service_names,omitempty"`
+	InSync                bool                                   `json:"in_sync"`
+	GitSubmodules         string                                 `json:"git_submodules,omitempty"`
+	GitSubmodulesInSync   bool                                   `json:"git_submodules_in_sync,omitempty"`
+	HasGitmodules         bool                                   `json:"has_gitmodules,omitempty"`
+	ParseError            string                                 `json:"parse_error,omitempty"`
+	Issues                []platformcontract.ServicesDetectIssue `json:"issues,omitempty"`
+	Branch                string                                 `json:"branch,omitempty"`
+	BuildMode             string                                 `json:"build_mode,omitempty"`
+	BuildModeDetectedPath string                                 `json:"build_mode_detected_path,omitempty"`
 }
 
 func (h *Handler) loadServicesContractFromRepo(ctx context.Context, userID int64, repo projectRepoRow, branch string) (platformcontract.ServicesFile, bool, error) {
@@ -88,9 +92,17 @@ func (h *Handler) resolveGitSubmodules(ctx context.Context, userID int64, repo p
 }
 
 func (h *Handler) detectServicesContract(ctx context.Context, userID int64, p projectRow, repo projectRepoRow, branch string) servicesContractDetect {
-	out := servicesContractDetect{Branch: branch}
+	out := servicesContractDetect{Branch: branch, SuggestedLayout: deploy.LayoutSingle}
+	owner := strings.TrimSpace(repo.GitHubOwner)
+	ghRepo := strings.TrimSpace(repo.GitHubRepo)
 	f, found, err := h.loadServicesContractFromRepo(ctx, userID, repo, branch)
 	if !found {
+		if owner != "" && ghRepo != "" {
+			if mode, path, berr := h.previewBuildMode(ctx, userID, owner, ghRepo, branch, repo.DockerfilePath); berr == nil && mode != "" {
+				out.BuildMode = mode
+				out.BuildModeDetectedPath = path
+			}
+		}
 		return out
 	}
 	out.Found = true
@@ -100,8 +112,12 @@ func (h *Handler) detectServicesContract(ctx context.Context, userID int64, p pr
 		return out
 	}
 	out.Layout = f.Layout
+	out.SuggestedLayout = deploy.NormalizeLayout(f.Layout)
 	if f.Layout == deploy.LayoutMulti {
 		out.Services = deploy.ServiceDefsFromContract(f)
+		for _, s := range out.Services {
+			out.ServiceNames = append(out.ServiceNames, s.Name)
+		}
 		dbSvcs, layout := h.loadDeployServices(ctx, p.ID, repo)
 		out.InSync = layout == deploy.LayoutMulti && deploy.ServicesContractSameAsDB(f, dbSvcs)
 	}
@@ -109,6 +125,12 @@ func (h *Handler) detectServicesContract(ctx context.Context, userID int64, p pr
 	out.GitSubmodules = subMode
 	out.HasGitmodules = hasGitmodules
 	out.GitSubmodulesInSync = strings.TrimSpace(repo.GitSubmodules) == subMode
+	if owner != "" && ghRepo != "" && out.SuggestedLayout == deploy.LayoutSingle {
+		if mode, path, berr := h.previewBuildMode(ctx, userID, owner, ghRepo, branch, repo.DockerfilePath); berr == nil && mode != "" {
+			out.BuildMode = mode
+			out.BuildModeDetectedPath = path
+		}
+	}
 	return out
 }
 
@@ -145,6 +167,12 @@ func (h *Handler) DetectProjectServicesContract(w http.ResponseWriter, r *http.R
 	branch := strings.TrimSpace(r.URL.Query().Get("branch"))
 	if branch == "" {
 		branch = strings.TrimSpace(repo.Branch)
+	}
+	if owner := strings.TrimSpace(r.URL.Query().Get("owner")); owner != "" {
+		if ghRepo := strings.TrimSpace(r.URL.Query().Get("repo")); ghRepo != "" {
+			repo.GitHubOwner = owner
+			repo.GitHubRepo = ghRepo
+		}
 	}
 	writeJSON(w, http.StatusOK, h.detectServicesContract(r.Context(), u.ID, p, repo, branch))
 }
