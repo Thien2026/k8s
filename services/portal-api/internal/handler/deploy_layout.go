@@ -129,7 +129,7 @@ func (h *Handler) validateRollbackImages(ctx context.Context, p projectRow, para
 	)
 }
 
-// cleanupMultiServiceWorkloads — rollback về single-app: gỡ deployment api/web cũ trên cluster.
+// cleanupMultiServiceWorkloads — gỡ deployment/service multi cũ (rollback hoặc chuyển sang single).
 func (h *Handler) cleanupMultiServiceWorkloads(ctx context.Context, clusterID, namespace string, services []deploy.ServiceDef) {
 	if h.rancher == nil || !h.rancher.Enabled() {
 		return
@@ -146,6 +146,55 @@ func (h *Handler) cleanupMultiServiceWorkloads(ctx context.Context, clusterID, n
 		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/apis/apps/v1/deployments", namespace, name)
 		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/api/v1/services", namespace, name)
 	}
+}
+
+// cleanupClusterMultiWorkloads — khi deploy single: xóa mọi deployment ≠ app còn sót trên cluster.
+func (h *Handler) cleanupClusterMultiWorkloads(ctx context.Context, clusterID, namespace string) {
+	if h.rancher == nil || !h.rancher.Enabled() {
+		return
+	}
+	namespace = strings.TrimSpace(namespace)
+	if namespace == "" {
+		return
+	}
+	list, err := h.rancher.ListK8s(ctx, clusterID, "deployments", namespace, 1, 100)
+	if err != nil || len(list.Items) == 0 {
+		h.cleanupMultiServiceWorkloads(ctx, clusterID, namespace, deploy.DefaultMultiServices)
+		return
+	}
+	for _, item := range list.Items {
+		name := strings.TrimSpace(item.Name)
+		if name == "" || name == "app" {
+			continue
+		}
+		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/apis/apps/v1/deployments", namespace, name)
+		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/api/v1/services", namespace, name)
+	}
+}
+
+func (h *Handler) validatePromoteLayoutMatch(ctx context.Context, projectID int64, tag string) error {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	consoleLayout := h.getProjectLayout(ctx, projectID)
+	var deployLayout string
+	err := h.db.QueryRow(ctx, `
+		SELECT COALESCE(deploy_layout,'') FROM project_deployments
+		WHERE project_id=$1 AND environment='dev' AND image_tag=$2
+		ORDER BY id DESC LIMIT 1`, projectID, tag).Scan(&deployLayout)
+	if err != nil || strings.TrimSpace(deployLayout) == "" {
+		return nil
+	}
+	if deploy.NormalizeLayout(deployLayout) == deploy.NormalizeLayout(consoleLayout) {
+		return nil
+	}
+	return fmt.Errorf(
+		"tag %s là bản 「%s」 — Console hiện 「%s」. Chỉ promote bản dev cùng kiểu chạy (tag single mới sau khi đổi kiểu)",
+		shortImageTag(tag),
+		layoutUserLabel(deployLayout),
+		layoutUserLabel(consoleLayout),
+	)
 }
 
 func (h *Handler) harborHasArtifact(ctx context.Context, p projectRow, repoName, tag string) bool {

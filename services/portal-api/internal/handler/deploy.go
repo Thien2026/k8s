@@ -272,7 +272,9 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		_, _ = h.db.Exec(ctx, `UPDATE project_deployments SET deploy_status='success', runtime_status='running', updated_at=now() WHERE id=$1`, deployID)
 	}
 	domainWarnings := h.syncProjectDomainsForEnv(ctx, p, params.Environment, clusterID, &params, deployID)
-	if rollbackFromMulti {
+	if !params.IsMultiService() {
+		h.cleanupClusterMultiWorkloads(ctx, clusterID, params.Namespace)
+	} else if rollbackFromMulti {
 		h.cleanupMultiServiceWorkloads(ctx, clusterID, params.Namespace, multiServices)
 	}
 	if deployID > 0 {
@@ -461,6 +463,10 @@ func (h *Handler) PromoteProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{
 			"error": "Chỉ promote bản đã deploy dev thành công (status=success)",
 		})
+		return
+	}
+	if err := h.validatePromoteLayoutMatch(r.Context(), p.ID, tag); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
 	if !h.ensurePromoteReady(w, r, p) {
@@ -727,11 +733,13 @@ func (h *Handler) latestSuccessfulDeployTag(ctx context.Context, projectID int64
 	if env == "" {
 		env = "dev"
 	}
+	layout := h.getProjectLayout(ctx, projectID)
 	var tag string
 	_ = h.db.QueryRow(ctx, `
 		SELECT image_tag FROM project_deployments
 		WHERE project_id=$1 AND environment=$2 AND status='success'
-		ORDER BY id DESC LIMIT 1`, projectID, env).Scan(&tag)
+		  AND COALESCE(deploy_layout,'single')=$3
+		ORDER BY id DESC LIMIT 1`, projectID, env, layout).Scan(&tag)
 	return strings.TrimSpace(tag)
 }
 
