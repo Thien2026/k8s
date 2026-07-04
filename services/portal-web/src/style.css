@@ -3236,6 +3236,36 @@ tr.dns-row td {
   background: rgba(15, 20, 35, 0.45);
   border: 1px dashed var(--border);
 }
+.create-project-hint {
+  font-size: 12px;
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  line-height: 1.45;
+}
+.pipeline-policy-callout {
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: rgba(56, 139, 253, 0.06);
+  border: 1px solid rgba(56, 139, 253, 0.2);
+}
+.pipeline-policy-callout strong {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+.pipeline-policy-callout ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.pipeline-policy-callout li {
+  margin: 4px 0;
+}
 .layout-hint-panel {
   padding: 12px 14px;
   border-radius: 10px;

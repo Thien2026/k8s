@@ -268,10 +268,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	harborName := prov.HarborProject
 	warnings := []string{}
-	layout := deploy.NormalizeLayout(body.Layout)
-	if layout == "" {
-		layout = deploy.LayoutSingle
-	}
+	// Kiểu chạy chốt khi gắn GitHub (Deploy / Git), không lúc tạo project.
+	layout := deploy.LayoutSingle
 
 	var id int64
 	err = h.db.QueryRow(r.Context(), `

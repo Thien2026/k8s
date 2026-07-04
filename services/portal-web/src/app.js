@@ -1396,8 +1396,8 @@ function renderDeployPipelineItem(item, withLog, actions) {
           esc(item.deploy_layout || "") +
           '" data-git-branch="' +
           esc(item.git_branch || "") +
-          '" title="Deploy lại image tag này">Deploy lại</button>'
-        : '<span class="muted" style="font-size:11px" title="Bản này khác kiểu chạy với site hiện tại — không thể deploy lại">Khác kiểu chạy</span>'
+          '" title="Deploy lại image tag này (chỉ cùng kiểu chạy)">Deploy lại</button>'
+        : '<span class="muted" style="font-size:11px" title="Bản này khác kiểu chạy với site hiện tại — dùng wizard Đổi kiểu chạy, không Deploy lại">Khác kiểu chạy</span>'
       : "") +
     "</div>";
   const summaryPanel = withLog ? renderDeployHumanSummary(item) : "";
@@ -1720,7 +1720,7 @@ function renderDeployActivityCard(activity, opts) {
       "</strong>" +
       (hist.count ? " (" + hist.count + " bản)" : "") +
       '</summary><div class="deploy-history-body">' +
-      '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:11px">Mỗi commit = 1 tag. <strong>Deploy lại</strong> chỉ hoạt động với bản <em>cùng kiểu chạy</em> (Một website hoặc Web + API).</p>' +
+      '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:11px">Mỗi commit = 1 tag. <strong>Deploy lại</strong> = đổi tag, <em>cùng kiểu chạy</em>. Đổi single ↔ multi → dùng <strong>Đổi kiểu chạy</strong>, không rollback.</p>' +
       '<div id="deploy-history-list">' +
       hist.itemsHtml +
       "</div>" +
@@ -1885,18 +1885,21 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
       const cached = state.deployActivityCache[cacheKey] || {};
       const clusterP = cached.cluster_profile;
       if (clusterP && !rollbackLayoutAllowed({ deploy_layout: btn.dataset.deployLayout || "" }, clusterP)) {
-        toastError("Không thể deploy lại: bản này khác kiểu chạy với site hiện tại. Chọn bản cùng kiểu hoặc deploy bản mới.");
+        toastError("Không thể Deploy lại: bản này khác kiểu chạy. Dùng 「Đổi kiểu chạy…」 rồi deploy bản mới — rollback chỉ cùng kiểu.");
         return;
       }
-      const details = ["Không build lại trên GitHub — dùng image đã có trên Harbor"];
+      const details = [
+        "Khôi phục image đã build — không build lại trên GitHub",
+        "Chỉ hoạt động khi bản này cùng kiểu chạy với site hiện tại",
+      ];
       if (profile) details.push("Profile bản này: " + profile);
       if (branch) details.push("Branch lúc deploy: " + branch);
       if (clusterP && clusterP.profile_label && profile && clusterP.profile_label !== profile) {
         details.push("Cluster hiện: " + clusterP.profile_label + " → sau rollback: " + profile);
       }
       const ok = await uiConfirm({
-        title: "Deploy lại bản cũ",
-        message: "Deploy lại image " + tag.slice(0, 7) + " lên môi trường " + itemEnv.toUpperCase() + "?",
+        title: "Deploy lại (cùng kiểu chạy)",
+        message: "Khôi phục image " + tag.slice(0, 7) + " lên " + itemEnv.toUpperCase() + "?",
         details: details,
         confirmText: "Deploy lại",
       });
@@ -2323,15 +2326,7 @@ function openCreateProjectDialog(providers, defaultProvider, userItems) {
       '<div class="form-row">' + registrySelectHtml(providers, defaultProvider, defaultProvider) + "</div>" +
       '<div class="form-row"><label>Namespace dev<input name="namespace_dev" placeholder="acme-dev" /></label>' +
       '<label>Namespace prod<input name="namespace_prod" placeholder="acme-prod" /></label></div>' +
-      '<div class="form-section layout-create-section" style="margin-top:12px">' +
-      '<span class="field-label">App chạy thế nào?</span>' +
-      '<p class="muted layout-create-lead">Chọn kiểu phù hợp — sau khi gắn GitHub, Console tự gợi ý lại từ <code>services.yaml</code> nếu repo có.</p>' +
-      '<div class="layout-picker layout-picker-compact">' +
-      '<label class="layout-option"><input type="radio" name="layout" value="single" checked />' +
-      '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">🌐</span><strong>Một website</strong><span>Một link duy nhất, một app</span><em class="layout-example">Blog, landing, API đơn</em></div></label>' +
-      '<label class="layout-option"><input type="radio" name="layout" value="multi" />' +
-      '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">⚡</span><strong>Web + API riêng</strong><span>Giao diện và API tách path</span><em class="layout-example">Frontend + backend trong một repo</em></div></label></div>' +
-      '<p class="muted layout-create-foot">Đổi kiểu sau khi đã deploy? Dùng wizard <strong>Đổi kiểu chạy</strong> — không dùng rollback.</p></div>' +
+      '<p class="muted create-project-hint">Kiểu chạy (Một website / Web + API) chọn ở bước <strong>Deploy / Git</strong> sau khi gắn GitHub — Console tự gợi ý từ repo.</p>' +
       (memberOptions ? '<div class="member-picks compact"><span class="field-label">Thêm thành viên</span>' + memberOptions + "</div>" : "") +
       '<div class="ui-dialog-actions" style="margin-top:16px;padding-top:0;border:0">' +
       '<button type="button" class="btn-ghost ui-dialog-cancel">Huỷ</button>' +
@@ -2374,7 +2369,6 @@ function openCreateProjectDialog(providers, defaultProvider, userItems) {
       const submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       try {
-        const layoutEl = form.querySelector('input[name="layout"]:checked');
         const res = await api("/api/v1/projects", {
           method: "POST",
           body: {
@@ -2384,7 +2378,6 @@ function openCreateProjectDialog(providers, defaultProvider, userItems) {
             namespace_dev: fd.get("namespace_dev"),
             namespace_prod: fd.get("namespace_prod"),
             registry_provider: fd.get("registry_provider") || "ghcr",
-            layout: layoutEl ? layoutEl.value : "single",
             member_ids: memberIds,
           },
         });
@@ -2926,7 +2919,7 @@ async function pagePlatformProjects(main) {
         } else {
           toastSuccess("Đã tạo project " + res.slug);
         }
-        location.hash = "#/project/" + res.slug;
+        location.hash = "#/project/" + res.slug + "/deploy";
       };
     }
 
@@ -3349,7 +3342,7 @@ function renderPipelineCrosscheckHtml(repo, svcData, contract) {
     }
   }
   if (lines.length === 0) {
-    return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ok">✓ Branch và kiểu dự án nhất quán — sẵn sàng đồng bộ.</div>';
+    return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ok">✓ Repo và kiểu chạy nhất quán — sẵn sàng đồng bộ workflow.</div>';
   }
   return '<div id="pipeline-crosscheck" class="pipeline-crosscheck ' + cls + '">' + lines.map(function (l) { return "• " + l; }).join("<br>") + "</div>";
 }
@@ -3394,11 +3387,23 @@ async function refreshPipelineCrosscheck(slug, form, svcData, repo, opts) {
 }
 
 var PIPELINE_SETUP_STEPS = [
-  "Lưu kiểu dự án",
+  "Lưu kiểu chạy",
   "Lưu repo & branch",
   "Push workflow GitHub",
   "Inject secrets (Harbor + deploy token)",
 ];
+
+function renderPipelinePolicyCallout() {
+  return (
+    '<div class="pipeline-policy-callout">' +
+    "<strong>Quy tắc</strong>" +
+    "<ul>" +
+    "<li><strong>Deploy lại</strong> — đổi tag/image, <em>cùng</em> kiểu chạy (Một website hoặc Web + API).</li>" +
+    "<li><strong>Đổi kiểu chạy</strong> — đổi topology (single ↔ multi), deploy bản mới; <em>không</em> dùng rollback.</li>" +
+    "<li>Kiểu chạy chốt ở <strong>bước 2</strong> — Console gợi ý từ repo sau khi chọn branch.</li>" +
+    "</ul></div>"
+  );
+}
 
 function collectProjectLayoutPayload(form) {
   if (!form) return { layout: "single", services: [] };
@@ -3585,15 +3590,16 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
 
   if (!ghStatus.enabled) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
       '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p></div>'
     );
   }
 
   if (!ghStatus.connected) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
-      '<p class="muted">Một luồng từ trên xuống: kết nối GitHub → chọn repo/branch → kiểu dự án → đồng bộ workflow.</p>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+      renderPipelinePolicyCallout() +
+      '<p class="muted">Kết nối GitHub → chọn repo/branch → chốt kiểu chạy → đồng bộ workflow.</p>' +
       (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : "") +
       "</div>"
     );
@@ -3601,7 +3607,8 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
 
   if (!canEdit) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+      renderPipelinePolicyCallout() +
       statusChips +
       crosscheck +
       '<div class="meta-chips">' + chip("Repo", (repo.github_owner || "") + "/" + (repo.github_repo || "")) + chip("Branch", repo.branch || "main") + "</div>" +
@@ -3611,8 +3618,8 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   }
 
   return (
-    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · Git &amp; Kiểu dự án</h3>' +
-    '<p class="muted" style="margin-top:0">Một form — kiểm tra chéo branch ↔ layout trước khi đồng bộ workflow.</p>' +
+    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+    renderPipelinePolicyCallout() +
     statusChips +
     crosscheck +
     '<form id="pipeline-setup-form" class="login-form pipeline-wizard">' +
@@ -3642,10 +3649,10 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
       : "") +
     "</div>" +
     '<div class="pipeline-step">' +
-    '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Kiểu chạy</div>' +
+    '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Chốt kiểu chạy</div>' +
     '<div id="repo-detect-banner-slot">' + (isMulti ? contractBanner : renderServicesContractBanner(repoContract, canEdit)) + "</div>" +
-    '<p class="muted" style="margin:0 0 8px;font-size:12px">Chọn cách app chạy trên server. Đã deploy rồi mà muốn đổi? ' +
-    '<button type="button" class="btn-link" id="open-change-layout-wizard" style="padding:0;font-size:inherit">Đổi kiểu chạy…</button></p>' +
+    '<p class="muted" style="margin:0 0 8px;font-size:12px">Chọn <em>một lần</em> trước khi sync workflow. Đã deploy mà muốn đổi? ' +
+    '<button type="button" class="btn-link" id="open-change-layout-wizard" style="padding:0;font-size:inherit">Đổi kiểu chạy…</button> (không phải rollback)</p>' +
     '<div class="layout-picker">' +
     '<label class="layout-option">' +
     '<input type="radio" name="layout" value="single"' + (!isMulti ? " checked" : "") + " />" +
@@ -4048,12 +4055,12 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
       const targetLabel = current === "multi" ? "Một website" : "Web + API riêng";
       const ok = await uiConfirm({
         title: "Đổi kiểu chạy",
-        message: "Đổi cách app chạy trên server — không phải rollback về bản cũ.",
+        message: "Đổi topology trên cluster — không phải rollback về bản cũ.",
         details: [
           "Hiện tại: " + layoutKindLabel(current),
           "Sẽ chuyển sang: " + targetLabel,
-          "Sau khi đổi: cần Deploy bản mới lên cluster",
-          "Deploy lại bản cũ chỉ hoạt động trong cùng kiểu chạy",
+          "Bước tiếp: Lưu & đồng bộ GitHub → deploy bản mới",
+          "Deploy lại trong lịch sử chỉ hoạt động cùng kiểu chạy",
         ],
         confirmText: "Chuyển sang " + targetLabel,
       });
@@ -4077,7 +4084,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
           method: "PUT",
           body: Object.assign({ branch: selectedGitHubBranch(repo.branch || "main") }, payload),
         });
-        toastSuccess("Đã đổi kiểu — hãy Deploy bản mới để áp dụng lên cluster");
+        toastSuccess("Đã đổi kiểu — bấm 「Lưu & đồng bộ GitHub」 rồi deploy bản mới");
         pageProjectHub(main, slug, "deploy");
       } catch (err) {
         toastError(errorMessage(err));
@@ -4300,7 +4307,7 @@ async function pageProjectHub(main, slug, tab) {
         '<h4 style="margin:20px 0 10px">Các bản trước (' +
         hist.count +
         ")</h4>" +
-        '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:12px">Mỗi commit = 1 tag · badge profile = kiểu deploy lúc đó. <strong>Deploy lại</strong> khôi phục đúng profile đã lưu.</p>' +
+        '<p class="muted deploy-history-note" style="margin:0 0 10px;font-size:12px">Mỗi commit = 1 tag · badge = kiểu deploy lúc đó. <strong>Deploy lại</strong> chỉ cùng kiểu chạy. Đổi kiểu → tab Deploy / Git → <strong>Đổi kiểu chạy…</strong></p>' +
         '<div id="deploy-history-list">' +
         hist.itemsHtml +
         "</div>" +
