@@ -182,7 +182,7 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 				return nil, err
 			}
 		}
-	} else if err := h.requireMultiServiceImages(ctx, p, repo, params, imageTag); err != nil {
+	} else if err := h.validateDeployImagesMatchLayout(ctx, p, repo, params, imageTag); err != nil {
 		if deployID > 0 {
 			h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
 		}

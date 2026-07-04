@@ -84,6 +84,39 @@ func (h *Handler) requireMultiServiceImages(ctx context.Context, p projectRow, r
 	)
 }
 
+// validateDeployImagesMatchLayout — CI hook deploy thẳng prod/dev phải khớp kiểu chạy Console.
+func (h *Handler) validateDeployImagesMatchLayout(ctx context.Context, p projectRow, repo projectRepoRow, params deploy.Params, tag string) error {
+	if params.IsMultiService() {
+		return h.requireMultiServiceImages(ctx, p, repo, params, tag)
+	}
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return nil
+	}
+	if p.RegistryProvider != "harbor" || h.harbor == nil || !h.harbor.Enabled() {
+		return nil
+	}
+	if h.harborHasArtifact(ctx, p, "app", tag) {
+		return nil
+	}
+	branch := strings.TrimSpace(repo.Branch)
+	if branch == "" {
+		branch = "main"
+	}
+	if h.harborHasArtifact(ctx, p, "api", tag) {
+		return fmt.Errorf(
+			"Harbor có image multi (api:%s) nhưng Console đang 「Một website」 — workflow GitHub branch %s chưa cập nhật. Bấm 「Lưu & đồng bộ GitHub」 rồi push lại",
+			shortImageTag(tag),
+			branch,
+		)
+	}
+	return fmt.Errorf(
+		"thiếu image app:%s — build chưa xong hoặc workflow GitHub chưa build image app (branch %s)",
+		shortImageTag(tag),
+		branch,
+	)
+}
+
 // validateRollbackImages — rollback: báo rõ nếu tag single-app vs layout multi.
 func (h *Handler) validateRollbackImages(ctx context.Context, p projectRow, params deploy.Params, tag string) error {
 	if !params.IsMultiService() {

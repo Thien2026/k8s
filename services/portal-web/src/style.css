@@ -3263,8 +3263,14 @@ tr.dns-row td {
   margin: 0;
   padding-left: 18px;
 }
-.pipeline-policy-callout li {
-  margin: 4px 0;
+.pipeline-prod-warn {
+  font-size: 12px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid rgba(245, 158, 11, 0.25);
+  line-height: 1.45;
 }
 .layout-hint-panel {
   padding: 12px 14px;

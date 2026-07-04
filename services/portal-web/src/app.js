@@ -3637,10 +3637,13 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     selectWrapHtml(
       "",
       '<option value="dev"' + (repo.deploy_environment !== "prod" ? " selected" : "") + ">dev</option>" +
-        '<option value="prod"' + (repo.deploy_environment === "prod" ? " selected" : "") + ">prod</option>",
+        '<option value="prod"' + (repo.deploy_environment === "prod" ? " selected" : "") + ">prod (push → deploy thẳng)</option>",
       { name: "environment" }
     ) +
     "</label></div>" +
+    (repo.deploy_environment === "prod"
+      ? '<p class="muted pipeline-prod-warn">⚠ Deploy env = <strong>prod</strong> — mỗi push lên branch này build và deploy <em>trực tiếp</em> lên production (không qua dev).</p>'
+      : "") +
     '<div id="pipeline-build-hint">' + buildModeAutoHintHtml(repo) + "</div>" +
     (repo.workflow_synced_at
       ? '<label class="auto-deploy-toggle"><input type="checkbox" id="auto-deploy-toggle" ' +
@@ -4084,7 +4087,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
           method: "PUT",
           body: Object.assign({ branch: selectedGitHubBranch(repo.branch || "main") }, payload),
         });
-        toastSuccess("Đã đổi kiểu — bấm 「Lưu & đồng bộ GitHub」 rồi deploy bản mới");
+        toastSuccess("Đã đổi kiểu — bắt buộc bấm 「Lưu & đồng bộ GitHub」 rồi push/build lại (workflow cũ vẫn build kiểu cũ)");
         pageProjectHub(main, slug, "deploy");
       } catch (err) {
         toastError(errorMessage(err));
