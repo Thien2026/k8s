@@ -470,10 +470,8 @@ func (h *Handler) DeployValidateConfigHook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
-	if strings.TrimSpace(repo.WorkflowSyncedAt) == "" {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
-			"error": "Workflow chưa đồng bộ với Console — bấm 「Lưu & đồng bộ GitHub」 trên tab Deploy trước khi build",
-		})
+	if err := h.requireWorkflowReady(r.Context(), p.ID, repo); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
 	if err := h.requireDeployEnvReady(r.Context(), p, env); err != nil {

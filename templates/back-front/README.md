@@ -1,16 +1,16 @@
 # Template: Backend + Frontend (7mlabs Platform)
 
-Monorepo chuẩn platform — **1 domain**, web `/`, API `/api`.
+Monorepo chuẩn **micro thường (Phase 1)** — **1 domain**, web `/`, API `/api`, **2 image** (api + web).
 
 ## Cấu trúc
 
 ```
-backend/          # API — route dưới /api
-frontend/         # SPA — gọi VITE_API_BASE (/api)
+backend/          # API Go — route dưới /api
+frontend/         # SPA nginx — gọi VITE_API_BASE (/api)
 .platform/
-  build.yaml       # biến build (Console điền value)
-  runtime.yaml     # biến runtime pod
-  services.yaml    # fleet layout (L4A — Console tự nhận api + web)
+  services.yaml   # layout: multi — Console tự nhận api + web
+  build.yaml      # VITE_API_BASE required
+  runtime.yaml    # API_ROUTE_PREFIX (tùy chọn)
 ```
 
 ## Dev local
@@ -19,22 +19,38 @@ frontend/         # SPA — gọi VITE_API_BASE (/api)
 # Terminal 1 — backend :8080
 cd backend && go run .
 
-# Terminal 2 — frontend :5173, proxy /api → backend
-cd frontend && npm run dev
+# Terminal 2 — mở frontend/dist/index.html hoặc serve static
+# (prod dùng Docker; local có thể proxy qua vite — xem vite.config.js)
 ```
 
-Frontend **không** hardcode `localhost:8080` — dùng `/api` + proxy trong `vite.config`.
+Frontend **không** hardcode `localhost:8080` — prod dùng `/api` trên cùng domain.
 
-## Prod (platform)
+## Deploy trên Platform (4 bước)
 
-- Layout: **Backend + Frontend**
-- Console **Cấu hình app → Build (dev)**: `VITE_API_BASE=/api`
-- URL: `https://{project}-dev.{domain}/` và `.../api/...`
+1. **Deploy / Git** — chọn repo + branch, **Deploy env = dev**
+2. **Web + API riêng** — api `backend/`, web `frontend/`
+3. **Lưu & đồng bộ GitHub** — bắt buộc (workflow + services.yaml)
+4. **Push** → theo dõi deploy; kiểm tra `/` và `/api/health`
 
-## Copy vào repo mới
+Chi tiết: [DEPLOY.md](./DEPLOY.md) · [docs/MICRO_DEPLOY.md](../../docs/MICRO_DEPLOY.md)
+
+## Env
+
+| Biến | Scope | Giá trị |
+|------|--------|---------|
+| `VITE_API_BASE` | Build | `/api` |
+| `API_ROUTE_PREFIX` | Runtime | `/api` (mặc định) |
+
+## Copy vào repo
+
+```bash
+# Từ repo k8s
+./scripts/setup-back-front-pilot.sh /path/to/your-repo-clone
+git -C /path/to/your-repo-clone push -u origin back-front-pilot
+```
+
+Hoặc thủ công:
 
 ```bash
 cp -R templates/back-front/backend templates/back-front/frontend templates/back-front/.platform /path/to/your-repo/
 ```
-
-Sửa code mẫu theo stack của bạn, giữ contract env và prefix `/api`.

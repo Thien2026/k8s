@@ -30,6 +30,8 @@ chmod +x bootstrap/run.sh bootstrap/core/steps/*.sh bootstrap/addons/*.sh
 | 07 | PostgreSQL (metadata Console) |
 | 08 | Build + deploy portal-api & portal-web |
 
+**Deploy app khách (micro thường api+web):** [docs/MICRO_DEPLOY.md](../docs/MICRO_DEPLOY.md)
+
 ## Addon — sau khi Console chạy
 
 Bật addon trong Console → `#/addons`, rồi trên VPS:

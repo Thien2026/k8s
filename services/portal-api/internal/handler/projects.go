@@ -48,9 +48,13 @@ type projectRepoRow struct {
 	GitHubOwner       string `json:"github_owner,omitempty"`
 	GitHubRepo        string `json:"github_repo,omitempty"`
 	DeployEnvironment string `json:"deploy_environment,omitempty"`
-	WorkflowSyncedAt  string `json:"workflow_synced_at,omitempty"`
-	AutoDeployEnabled bool   `json:"auto_deploy_enabled"`
-	GitSubmodules     string `json:"git_submodules,omitempty"`
+	WorkflowSyncedAt     string `json:"workflow_synced_at,omitempty"`
+	WorkflowSyncLayout   string `json:"workflow_sync_layout,omitempty"`
+	WorkflowSyncServices string `json:"workflow_sync_services,omitempty"`
+	WorkflowStale        bool   `json:"workflow_stale,omitempty"`
+	WorkflowStaleReason  string `json:"workflow_stale_reason,omitempty"`
+	AutoDeployEnabled    bool   `json:"auto_deploy_enabled"`
+	GitSubmodules        string `json:"git_submodules,omitempty"`
 	EnvContractBuild  string `json:"-"`
 	EnvContractRuntime string `json:"-"`
 	UpdatedAt         string `json:"updated_at,omitempty"`
@@ -164,6 +168,7 @@ func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	}
 	members, _ := h.listProjectMembers(r.Context(), p.ID)
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
+	h.enrichRepoWorkflowStatus(r.Context(), p.ID, &repo)
 	services, _ := h.listProjectServices(r.Context(), p.ID)
 	if p.Layout == "" {
 		p.Layout = h.getProjectLayout(r.Context(), p.ID)
@@ -577,6 +582,7 @@ func (h *Handler) GetProjectRepo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	h.enrichRepoWorkflowStatus(r.Context(), p.ID, &repo)
 	writeJSON(w, http.StatusOK, repo)
 }
 
@@ -778,11 +784,13 @@ func (h *Handler) getProjectRepo(ctx context.Context, projectID int64) (projectR
 		SELECT git_url, branch, COALESCE(build_mode,'dockerfile'), dockerfile_path, build_context,
 		       COALESCE(github_owner,''), COALESCE(github_repo,''),
 		       COALESCE(deploy_environment,'dev'), workflow_synced_at, auto_deploy_enabled,
-		       COALESCE(git_submodules,''), COALESCE(env_contract_build,''), COALESCE(env_contract_runtime,''), updated_at
+		       COALESCE(git_submodules,''), COALESCE(env_contract_build,''), COALESCE(env_contract_runtime,''),
+		       COALESCE(workflow_sync_layout,''), COALESCE(workflow_sync_services,''), updated_at
 		FROM project_repos WHERE project_id = $1`, projectID).Scan(
 		&repo.GitURL, &repo.Branch, &repo.BuildMode, &repo.DockerfilePath, &repo.BuildContext,
 		&repo.GitHubOwner, &repo.GitHubRepo, &repo.DeployEnvironment, &synced, &repo.AutoDeployEnabled,
-		&repo.GitSubmodules, &repo.EnvContractBuild, &repo.EnvContractRuntime, &updated)
+		&repo.GitSubmodules, &repo.EnvContractBuild, &repo.EnvContractRuntime,
+		&repo.WorkflowSyncLayout, &repo.WorkflowSyncServices, &updated)
 	if err != nil {
 		return projectRepoRow{Branch: "main", BuildMode: "dockerfile", DockerfilePath: "Dockerfile", BuildContext: ".", DeployEnvironment: "dev"}, nil
 	}

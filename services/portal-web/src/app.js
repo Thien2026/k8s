@@ -2136,11 +2136,16 @@ function updateSidebarBrand(ctx) {
   }
 }
 
-function projectHeader(p, subtitle) {
+function projectHeader(p, subtitle, opts) {
+  opts = opts || {};
+  const helpBtn = opts.help === "deploy" ? renderDeployHelpButton("steps", "btn-help-header") : "";
   return (
-    '<div class="page-header project-header">' +
+    '<div class="page-header project-header page-header-row">' +
+    '<div class="page-header-text">' +
     "<h2 class=\"page-title\">" + esc(p.name) + "</h2>" +
-    '<p class="page-subtitle">' + esc(subtitle || p.slug) + "</p></div>"
+    '<p class="page-subtitle">' + esc(subtitle || p.slug) + "</p></div>" +
+    helpBtn +
+    "</div>"
   );
 }
 
@@ -3319,8 +3324,11 @@ function renderPipelineCrosscheckHtml(repo, svcData, contract) {
   const layout = (svcData.layout || "single");
   const lines = [];
   let cls = "ok";
-  if (!repo.workflow_synced_at) {
-    lines.push("Workflow chưa khớp Console — cần bấm 「Lưu & đồng bộ」.");
+  if (repo.workflow_stale && repo.workflow_stale_reason) {
+    lines.push(esc(repo.workflow_stale_reason));
+    cls = "warn";
+  } else if (!repo.workflow_synced_at) {
+    lines.push("Workflow chưa khớp Console — cần bấm 「Lưu & đồng bộ GitHub」.");
     cls = "warn";
   }
   if (contract.found && !contract.parse_error) {
@@ -3396,12 +3404,24 @@ var PIPELINE_SETUP_STEPS = [
 function renderPipelinePolicyCallout() {
   return (
     '<div class="pipeline-policy-callout">' +
+    '<div class="pipeline-policy-head">' +
     "<strong>Quy tắc</strong>" +
+    renderDeployHelpButton("rules", "btn-help-inline") +
+    "</div>" +
     "<ul>" +
     "<li><strong>Deploy lại</strong> — đổi tag/image, <em>cùng</em> kiểu chạy (Một website hoặc Web + API).</li>" +
     "<li><strong>Đổi kiểu chạy</strong> — đổi topology (single ↔ multi), deploy bản mới; <em>không</em> dùng rollback.</li>" +
     "<li>Kiểu chạy chốt ở <strong>bước 2</strong> — Console gợi ý từ repo sau khi chọn branch.</li>" +
     "</ul></div>"
+  );
+}
+
+function pipelineCardTitleHtml() {
+  return (
+    '<div class="card-title-row">' +
+    '<h3 style="margin:0">Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+    renderDeployHelpButton("steps") +
+    "</div>"
   );
 }
 
@@ -3579,25 +3599,27 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<div class="pipeline-status-chips">' +
     chip("Kiểu chạy", isMulti ? "Web + API riêng" : "Một website") +
     (ghStatus.connected ? chip("GitHub", "@" + (ghStatus.login || "?")) : "") +
-    (repo.workflow_synced_at && repo.auto_deploy_enabled
-      ? '<span class="badge ok">Workflow OK</span>'
-      : repo.workflow_synced_at
-        ? '<span class="badge warn">Workflow cũ</span>'
-        : '<span class="badge warn">Chưa đồng bộ</span>') +
+    (repo.workflow_stale
+      ? '<span class="badge warn" title="' + esc(repo.workflow_stale_reason || "") + '">Cần đồng bộ</span>'
+      : repo.workflow_synced_at && repo.auto_deploy_enabled
+        ? '<span class="badge ok">Workflow OK</span>'
+        : repo.workflow_synced_at
+          ? '<span class="badge warn">Workflow cũ</span>'
+          : '<span class="badge warn">Chưa đồng bộ</span>') +
     "</div>";
 
   const crosscheck = renderPipelineCrosscheckHtml(repo, svcData, repoContract);
 
   if (!ghStatus.enabled) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
       '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p></div>'
     );
   }
 
   if (!ghStatus.connected) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
       renderPipelinePolicyCallout() +
       '<p class="muted">Kết nối GitHub → chọn repo/branch → chốt kiểu chạy → đồng bộ workflow.</p>' +
       (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : "") +
@@ -3607,7 +3629,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
 
   if (!canEdit) {
     return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
       renderPipelinePolicyCallout() +
       statusChips +
       crosscheck +
@@ -3618,7 +3640,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   }
 
   return (
-    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card"><h3>Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
     renderPipelinePolicyCallout() +
     statusChips +
     crosscheck +
@@ -3654,8 +3676,12 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<div class="pipeline-step">' +
     '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Chốt kiểu chạy</div>' +
     '<div id="repo-detect-banner-slot">' + (isMulti ? contractBanner : renderServicesContractBanner(repoContract, canEdit)) + "</div>" +
-    '<p class="muted" style="margin:0 0 8px;font-size:12px">Chọn <em>một lần</em> trước khi sync workflow. Đã deploy mà muốn đổi? ' +
-    '<button type="button" class="btn-link" id="open-change-layout-wizard" style="padding:0;font-size:inherit">Đổi kiểu chạy…</button> (không phải rollback)</p>' +
+    '<div class="layout-change-row">' +
+    '<p class="muted pipeline-layout-hint">Chọn <em>một lần</em> trước khi sync workflow. Đã deploy mà muốn đổi topology?</p>' +
+    '<div class="layout-change-actions">' +
+    '<button type="button" class="btn-ghost btn-sm layout-change-btn" id="open-change-layout-wizard">↔ Đổi kiểu chạy</button>' +
+    '<span class="muted layout-change-note">Không phải rollback — cần sync workflow rồi deploy bản mới</span>' +
+    "</div></div>" +
     '<div class="layout-picker">' +
     '<label class="layout-option">' +
     '<input type="radio" name="layout" value="single"' + (!isMulti ? " checked" : "") + " />" +
@@ -3668,6 +3694,9 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     "</div>" +
     '<div class="pipeline-step">' +
     '<div class="pipeline-step-head"><span class="pipeline-step-num">3</span> Đồng bộ workflow</div>' +
+    (repo.workflow_stale
+      ? '<div class="banner warn" style="margin-bottom:10px">' + esc(repo.workflow_stale_reason || "Cần đồng bộ workflow trước khi push.") + "</div>"
+      : "") +
     '<div id="github-setup-progress" class="setup-progress" hidden></div>' +
     '<div class="form-actions" style="flex-wrap:wrap;gap:8px">' +
     '<button type="submit" class="btn-primary" id="github-setup-submit">Lưu &amp; đồng bộ GitHub</button>' +
@@ -4329,13 +4358,15 @@ async function pageProjectHub(main, slug, tab) {
   if (tab === "promote") {
     if (!canManagePlatformProjects()) {
       main.innerHTML =
-        projectHeader(p, "Promote Prod") +
+      projectHeader(p, "Promote Prod", { help: "deploy" }) +
         '<div class="card"><p class="error-text">Chỉ admin/tech_lead được promote lên prod.</p></div>';
+      bindDeployHelpTriggers(main);
       return;
     }
     main.innerHTML =
-      projectHeader(p, "Promote Prod") +
+      projectHeader(p, "Promote Prod", { help: "deploy" }) +
       '<div class="card" id="promote-page"><p class="loading">Đang kiểm tra checklist…</p></div>';
+    bindDeployHelpTriggers(main);
     try {
       const [readiness, activityDev] = await Promise.all([
         api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"),
@@ -4372,6 +4403,7 @@ async function pageProjectHub(main, slug, tab) {
         '<p class="muted" style="margin-top:14px;font-size:12px">Promote = cùng image tag lên prod, không chạy GitHub Actions. Theo dõi prod tại tab Deploy hoặc Runtime.</p>';
       document.getElementById("promote-page").innerHTML = html;
       bindPromotePrepLinks(slug);
+      bindDeployHelpTriggers(main);
       const promoteBtn = document.getElementById("deploy-promote-btn");
       if (promoteBtn) {
         promoteBtn.onclick = async function () {
@@ -4449,7 +4481,7 @@ async function pageProjectHub(main, slug, tab) {
     const ghReposPlaceholder = ghStatus.connected ? { items: null } : { items: [] };
 
     main.innerHTML =
-      projectHeader(p, "Deploy / Git") +
+      projectHeader(p, "Deploy / Git", { help: "deploy" }) +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "deploy"); }) +
       renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghReposPlaceholder, canWriteK8s()) +
       '<div class="card" style="margin-bottom:16px"><h3>Tóm tắt</h3>' +
@@ -4529,6 +4561,7 @@ async function pageProjectHub(main, slug, tab) {
 
     bindSnippetCopyButtons(main);
     bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken);
+    bindDeployHelpTriggers(main);
 
     Promise.all([
       ghStatus.connected
@@ -4703,7 +4736,7 @@ async function pageProjectHub(main, slug, tab) {
     bindEnvSuggestButtons(main, slug, env);
     } catch (err) {
       main.innerHTML =
-        projectHeader(p, "Deploy / Git") +
+        projectHeader(p, "Deploy / Git", { help: "deploy" }) +
         '<div class="card"><p class="error-text">Lỗi: ' +
         esc(errorMessage(err, "Không tải được trang Deploy")) +
         '</p><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></div>';

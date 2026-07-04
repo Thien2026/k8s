@@ -46,10 +46,8 @@ func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
-	if strings.TrimSpace(repo.WorkflowSyncedAt) == "" {
-		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{
-			"error": "Workflow chưa đồng bộ — bấm 「Lưu & đồng bộ GitHub」 trên Console trước khi deploy",
-		})
+	if err := h.requireWorkflowReady(r.Context(), p.ID, repo); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
 	if !repo.AutoDeployEnabled {
@@ -149,6 +147,7 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 			return
 		}
+		h.invalidateProjectWorkflow(r.Context(), p.ID)
 		if layout == deploy.LayoutMulti {
 			_, _ = h.ensureBackFrontConventions(r.Context(), p.ID)
 		}
@@ -209,6 +208,11 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không push workflow: " + err.Error()})
 		return
 	}
+	if err := h.syncProjectServicesYAMLToRepo(r.Context(), ghToken, owner, repo, branch, p.ID, repoRow); err != nil {
+		log.Printf("github setup services.yaml failed project=%s err=%v", p.Slug, err)
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không push services.yaml: " + err.Error()})
+		return
+	}
 	deploySecret := deploy.DeployTokenSecretName(p.Slug)
 	if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, deploySecret, deployToken); err != nil {
 		log.Printf("github setup secret failed project=%s repo=%s/%s err=%v", p.Slug, owner, repo, err)
@@ -250,8 +254,8 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 		log.Printf("github dispatch workflow failed project=%s repo=%s/%s branch=%s err=%v", p.Slug, owner, repo, branch, dispatchErr)
 	}
 
-	_, _ = h.db.Exec(r.Context(),
-		`UPDATE project_repos SET workflow_synced_at=now(), auto_deploy_enabled=true WHERE project_id=$1`, p.ID)
+	repoRow, _ = h.getProjectRepo(r.Context(), p.ID)
+	h.markWorkflowSynced(r.Context(), p.ID, repoRow)
 
 	resp := map[string]any{
 		"status":                   "ok",

@@ -3,7 +3,9 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CSS="$(cat "$DIR/src/style.css")"
+HELP="$(cat "$DIR/src/deploy_help.js")"
 JS="$(cat "$DIR/src/app.js")"
+JS="${HELP}"$'\n'"${JS}"
 # Tránh đóng thẻ <script> sớm khi nhúng inline
 JS="${JS//<\/script>/<\\/script>}"
 TMPJS="$(mktemp).js"

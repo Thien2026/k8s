@@ -76,6 +76,9 @@ func (h *Handler) syncProjectGitHubWorkflow(ctx context.Context, u auth.User, p 
 		"chore(platform): sync build config for "+p.Slug, wf.Content, repo.Branch); err != nil {
 		return fmt.Errorf("không cập nhật workflow: %w", err)
 	}
+	if err := h.syncProjectServicesYAMLToRepo(ctx, ghToken, repo.GitHubOwner, repo.GitHubRepo, repo.Branch, p.ID, repo); err != nil {
+		return fmt.Errorf("không cập nhật services.yaml: %w", err)
+	}
 	branch := strings.TrimSpace(repo.Branch)
 	if branch == "" {
 		branch = "main"
@@ -101,6 +104,7 @@ func (h *Handler) syncProjectGitHubWorkflow(ctx context.Context, u auth.User, p 
 			return fmt.Errorf("không cập nhật secret %s: %w", secretName, err)
 		}
 	}
+	h.markWorkflowSynced(ctx, p.ID, repo)
 	return nil
 }
 

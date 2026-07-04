@@ -64,8 +64,11 @@ k8s/
 │   ├── portal-api/
 │   └── portal-web/
 └── templates/
+    ├── back-front/       ← api + web monorepo (Phase 1 micro thường)
     └── new-project/      ← copy để thêm app mới
 ```
+
+**Deploy app khách (api + web):** [docs/MICRO_DEPLOY.md](docs/MICRO_DEPLOY.md)
 
 ## Workflow sau khi xong
 

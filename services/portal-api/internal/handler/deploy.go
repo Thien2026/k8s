@@ -101,6 +101,10 @@ func (h *Handler) ApplyProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
+	if err := h.requireWorkflowReady(r.Context(), p.ID, repo); err != nil {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+		return
+	}
 	result, err := h.applyProjectDeploy(r.Context(), p, body.Environment, body.ImageTag, body.ClusterID, true, false)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
@@ -616,6 +620,44 @@ func (h *Handler) promoteReadiness(ctx context.Context, p projectRow) ([]promote
 	}
 	markRequired(&buildItem)
 	items = append(items, buildItem)
+
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	wfItem := promoteReadinessItem{
+		ID:    "workflow_sync",
+		Label: "Workflow GitHub",
+		Group: "dev_image",
+		Tab:   "deploy",
+	}
+	if reason := h.workflowStaleReason(ctx, p.ID, repo); reason != "" {
+		wfItem.OK = false
+		wfItem.Detail = reason
+	} else {
+		layout := h.getProjectLayout(ctx, p.ID)
+		_, svcKey := h.currentWorkflowProfile(ctx, p.ID, repo)
+		wfItem.OK = true
+		wfItem.Detail = "Khớp Console · " + workflowProfileLabel(layout, svcKey)
+	}
+	markRequired(&wfItem)
+	items = append(items, wfItem)
+
+	if h.getProjectLayout(ctx, p.ID) == deploy.LayoutMulti {
+		multiItem := promoteReadinessItem{
+			ID:    "multi_fleet_dev",
+			Label: "Fleet dev (multi)",
+			Group: "dev_image",
+			Tab:   "deploy",
+		}
+		tag := h.latestSuccessfulDeployTag(ctx, p.ID, "dev")
+		if tag == "" {
+			multiItem.OK = false
+			multiItem.Detail = "Chưa có bản dev success — deploy multi lên dev trước"
+		} else {
+			multiItem.OK = true
+			multiItem.Detail = "Tag " + shortImageTag(tag) + " — promote sẽ đưa cả api+web cùng tag lên prod"
+		}
+		markRequired(&multiItem)
+		items = append(items, multiItem)
+	}
 
 	rtCheck, _ := h.evaluateRuntimeConfigCached(ctx, p, "prod")
 	rtItem := promoteReadinessItem{

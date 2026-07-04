@@ -117,5 +117,12 @@ func (h *Handler) applyServicesContractFromRepo(ctx context.Context, userID int6
 }
 
 func (h *Handler) invalidateProjectWorkflow(ctx context.Context, projectID int64) {
-	_, _ = h.db.Exec(ctx, `UPDATE project_repos SET workflow_synced_at=NULL, auto_deploy_enabled=false WHERE project_id=$1`, projectID)
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_repos SET
+			workflow_synced_at=NULL,
+			auto_deploy_enabled=false,
+			workflow_sync_layout='',
+			workflow_sync_services='',
+			updated_at=now()
+		WHERE project_id=$1`, projectID)
 }

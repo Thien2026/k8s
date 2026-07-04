@@ -224,9 +224,11 @@ func (h *Handler) serviceFleetRolloutStatus(ctx context.Context, p projectRow, n
 	if serviceName == "" {
 		return "failed", "tên service trống", ""
 	}
+	depFound := false
 	if h.rancher != nil && h.rancher.Enabled() {
 		dep, err := h.rancher.GetDeploymentDetail(ctx, "", ns, serviceName)
 		if err == nil {
+			depFound = true
 			wantImage := strings.TrimSpace(p.Registry.ImagePrefix) + "/" + serviceName + ":" + tag
 			rolloutSt, rolloutDetail, rolloutErr := evaluateDeploymentRollout(dep.DeploymentRolloutStatus)
 			imgSt, imgDetail := evaluateDeploymentImage(dep.ContainerImage, tag, wantImage, dep.DeploymentRolloutStatus)
@@ -237,6 +239,9 @@ func (h *Handler) serviceFleetRolloutStatus(ctx context.Context, p projectRow, n
 	// Fallback: pod list (khi không đọc được Deployment)
 	pods := h.listServicePods(ctx, p, envFromNamespace(p, ns), serviceName)
 	if len(pods) == 0 {
+		if !depFound {
+			return "failed", "không có pod", "Deployment " + serviceName + " không tồn tại trên cluster"
+		}
 		return "running", "không có pod", ""
 	}
 	healthyNew := 0
