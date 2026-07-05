@@ -3436,6 +3436,46 @@ tr.dns-row td {
   flex: 1;
   min-width: 180px;
 }
+.deploy-help-inline-card {
+  margin: 0 0 16px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgba(56, 139, 253, 0.07);
+  border: 1px solid rgba(56, 139, 253, 0.22);
+}
+.deploy-help-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.deploy-help-inline-steps {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.deploy-help-inline-steps li {
+  margin-bottom: 6px;
+}
+.deploy-help-inline-steps a {
+  color: var(--accent, #58a6ff);
+}
+.deploy-help-inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.deploy-help-checklist h4 {
+  margin: 14px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.deploy-help-checklist h4:first-child {
+  margin-top: 0;
+}
 .page-header-text {
   flex: 1;
   min-width: 0;

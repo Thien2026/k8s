@@ -30,7 +30,7 @@ Console project (vd. my-shop)
 
 ## 4 bước trên Console (junior nhớ flow này)
 
-> **Trên UI:** tab **Deploy / Git** hoặc **Promote Prod** → nút **`?`** (góc phải tiêu đề hoặc cạnh card Pipeline) → hướng dẫn tương tác ngay trong Console.
+> **Trên UI:** tab **Deploy / Git** — card **Hướng dẫn deploy** + nút **`?`** (dialog đầy đủ: 4 bước, Đừng làm, Lỗi…). Doc file: [KHACH_DEPLOY.md](./KHACH_DEPLOY.md).
 
 ### Bước 1 — Nguồn GitHub
 

@@ -3625,6 +3625,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   if (!ghStatus.enabled) {
     return (
       '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+      renderDeployHelpInlineCard(slug) +
       '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p></div>'
     );
   }
@@ -3632,6 +3633,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   if (!ghStatus.connected) {
     return (
       '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+      renderDeployHelpInlineCard(slug) +
       renderPipelinePolicyCallout() +
       '<p class="muted">Kết nối GitHub → chọn repo/branch → chốt kiểu chạy → đồng bộ workflow.</p>' +
       (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : "") +
@@ -3642,6 +3644,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   if (!canEdit) {
     return (
       '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+      renderDeployHelpInlineCard(slug) +
       renderPipelinePolicyCallout() +
       statusChips +
       crosscheck +
@@ -3653,6 +3656,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
 
   return (
     '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+    renderDeployHelpInlineCard(slug) +
     renderPipelinePolicyCallout() +
     statusChips +
     crosscheck +
