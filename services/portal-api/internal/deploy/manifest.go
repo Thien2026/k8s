@@ -64,7 +64,7 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 	name := svc.Name
 	replicas := deploymentReplicas(p)
 	port := svc.ContainerPort
-	health := svc.HealthPath
+	health := ContainerProbePath(svc)
 	allSvcs := p.EffectiveServices()
 	discoveryEnv := ServiceDiscoveryEnvVars(allSvcs, name)
 

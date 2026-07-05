@@ -57,6 +57,16 @@ func DefaultRuntimeEnvSeed() map[string]string {
 	}
 }
 
+// ContainerProbePath — path HTTP probe trên container (Deployment readiness/liveness).
+// Service api với ingress /api và route /health thực tế là /api/health trong app.
+func ContainerProbePath(s ServiceDef) string {
+	s = normalizeServiceDef(s)
+	if !s.ExposeIngress || IsInternalIngressMarker(s.IngressPath) {
+		return s.HealthPath
+	}
+	return PublicHealthPath(s.IngressPath, s.HealthPath)
+}
+
 // PublicHealthPath — URL công khai health check qua Ingress.
 func PublicHealthPath(ingressPath, healthPath string) string {
 	ip := strings.TrimSpace(ingressPath)
