@@ -33,7 +33,7 @@ frontend/dist/index.html    # hoặc build SPA vào dist/
 - [ ] **Deploy / Git** → repo + branch `back-front-pilot` (hoặc branch của bạn)
 - [ ] **Deploy env = dev**
 - [ ] Kiểu chạy: **Web + API riêng**
-- [ ] **Áp dụng từ repo** (nếu có banner services.yaml)
+- [ ] **Áp dụng api + web từ repo** (banner vàng trên Deploy / Git)
 - [ ] **Cấu hình app** → Build dev: `VITE_API_BASE` = `/api`
 - [ ] **Lưu & đồng bộ GitHub** → badge **Workflow OK**
 - [ ] Push commit nhỏ → đợi deploy success

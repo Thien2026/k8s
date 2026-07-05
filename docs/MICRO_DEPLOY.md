@@ -2,6 +2,8 @@
 
 Hướng dẫn **Phase 1** — monorepo **api + web** trong **một project Console**, một namespace mỗi môi trường.
 
+> **Gửi khách / junior:** [KHACH_DEPLOY.md](./KHACH_DEPLOY.md) — 4 bước ngắn, đừng làm gì hay lỗi.
+
 > **Chưa phải microservice phức tạp** (polyglot 5 service, GitOps, scale). Xem lộ trình đầy đủ ở cuối file.
 
 ---
@@ -112,6 +114,12 @@ git push
 ```
 
 Chi tiết pilot: [templates/back-front/DEPLOY.md](../templates/back-front/DEPLOY.md)
+
+Kiểm tra sau deploy:
+
+```bash
+./scripts/verify-back-front-deploy.sh my-shop dev
+```
 
 ---
 

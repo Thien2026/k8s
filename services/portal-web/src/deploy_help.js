@@ -5,9 +5,10 @@ var DEPLOY_HELP_SECTIONS = [
     title: "4 bước",
     html:
       '<p class="deploy-help-lead">Monorepo <strong>backend + frontend</strong> — một project Console, hai image <code>api</code> + <code>web</code>, một domain.</p>' +
+      '<p class="deploy-help-note" style="margin-bottom:12px"><strong>Lần đầu?</strong> Copy template: <code>./scripts/setup-back-front-pilot.sh /path/to/repo</code> · Doc khách: <code>docs/KHACH_DEPLOY.md</code></p>' +
       '<ol class="deploy-help-steps">' +
       "<li><strong>Nguồn GitHub</strong> — chọn repo + branch. <em>Deploy env = dev</em> (prod chỉ khi chủ đích deploy thẳng production).</li>" +
-      "<li><strong>Chốt kiểu chạy</strong> — chọn <strong>Web + API riêng</strong>. Có <code>.platform/services.yaml</code> → 「Áp dụng từ repo」.</li>" +
+      "<li><strong>Chốt kiểu chạy</strong> — chọn <strong>Web + API riêng</strong>. Có banner repo → 「<strong>Áp dụng api + web từ repo</strong>」.</li>" +
       "<li><strong>Lưu &amp; đồng bộ GitHub</strong> — bắt buộc sau mỗi lần đổi kiểu. Badge phải <strong>Workflow OK</strong>.</li>" +
       "<li><strong>Push</strong> — theo dõi 4 bước deploy; kiểm tra <code>/</code> và <code>/api/health</code>.</li>" +
       "</ol>" +

@@ -3224,8 +3224,20 @@ function renderServicesContractBanner(contract, canEdit) {
   }
   html += "</div>";
   if (canEdit && !synced && !contract.parse_error) {
+    const isMulti = (contract.suggested_layout || contract.layout) === "multi";
+    const btnClass = isMulti ? "btn-primary btn-sm" : "btn-ghost btn-sm";
+    const btnLabel = isMulti ? "Bước 2: Áp dụng api + web từ repo" : "Áp dụng cấu hình từ repo";
     html +=
-      '<button type="button" class="btn-ghost btn-sm" id="sync-services-contract" style="margin-bottom:10px">Áp dụng cấu hình từ repo</button>';
+      '<p class="muted repo-detect-action-hint" style="font-size:12px;margin:0 0 8px">' +
+      (isMulti
+        ? "Repo đã có <code>services.yaml</code> (api + web) — bấm nút dưới, rồi <strong>Lưu &amp; đồng bộ GitHub</strong> trước khi push."
+        : "Repo có cấu hình platform — áp dụng vào Console trước khi sync.") +
+      "</p>" +
+      '<button type="button" class="' +
+      btnClass +
+      '" id="sync-services-contract" style="margin-bottom:10px">' +
+      esc(btnLabel) +
+      "</button>";
   }
   return html;
 }

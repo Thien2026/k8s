@@ -68,7 +68,7 @@ k8s/
     └── new-project/      ← copy để thêm app mới
 ```
 
-**Deploy app khách (api + web):** [docs/MICRO_DEPLOY.md](docs/MICRO_DEPLOY.md)
+**Deploy app khách (api + web):** [docs/KHACH_DEPLOY.md](docs/KHACH_DEPLOY.md) · [docs/MICRO_DEPLOY.md](docs/MICRO_DEPLOY.md)
 
 ## Workflow sau khi xong
 
