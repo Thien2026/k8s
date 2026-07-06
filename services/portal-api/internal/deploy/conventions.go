@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/platformcontract"
@@ -65,6 +66,22 @@ func ContainerProbePath(s ServiceDef) string {
 		return s.HealthPath
 	}
 	return PublicHealthPath(s.IngressPath, s.HealthPath)
+}
+
+// ServiceExtraEnv — biến runtime gợi ý theo stack/service (polyglot).
+func ServiceExtraEnv(svc ServiceDef, port int) []map[string]any {
+	svc = normalizeServiceDef(svc)
+	var out []map[string]any
+	lowName := strings.ToLower(svc.Name)
+	lowCtx := strings.ToLower(svc.BuildContext)
+	stack := NormalizeStack(svc.Stack)
+	if stack == StackDotnet || strings.Contains(lowName, "dotnet") || strings.Contains(lowCtx, "dotnet") {
+		out = append(out,
+			map[string]any{"name": "DOTNET_USE_POLLING_FILE_WATCHER", "value": "true"},
+			map[string]any{"name": "ASPNETCORE_URLS", "value": fmt.Sprintf("http://+:%d", port)},
+		)
+	}
+	return out
 }
 
 // PublicHealthPath — URL công khai health check qua Ingress.

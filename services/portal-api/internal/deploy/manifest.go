@@ -116,9 +116,9 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 									"ports": []map[string]any{
 										{"containerPort": port, "name": "http"},
 									},
-									"env": append([]map[string]any{
+									"env": append(append([]map[string]any{
 										{"name": "PORT", "value": fmt.Sprintf("%d", port)},
-									}, discoveryEnv...),
+									}, ServiceExtraEnv(svc, port)...), discoveryEnv...),
 									"readinessProbe": map[string]any{
 										"httpGet": map[string]any{
 											"path": health,
