@@ -43,7 +43,10 @@ func ServicesContractSameAsDB(f platformcontract.ServicesFile, db []ServiceDef) 
 			a.BuildContext != b.BuildContext ||
 			a.DockerfilePath != b.DockerfilePath ||
 			a.IngressPath != b.IngressPath ||
-			a.ExposeIngress != b.ExposeIngress {
+			a.ExposeIngress != b.ExposeIngress ||
+			NormalizeBuildMode(a.BuildMode) != NormalizeBuildMode(b.BuildMode) ||
+			NormalizeStack(a.Stack) != NormalizeStack(b.Stack) ||
+			a.HealthPath != b.HealthPath {
 			return false
 		}
 	}

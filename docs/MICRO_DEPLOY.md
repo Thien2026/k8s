@@ -128,6 +128,6 @@ Kiểm tra sau deploy:
 | Phase | Nội dung |
 |-------|----------|
 | **1** ✅ | Micro thường api+web, workflow profile, doc |
-| **2** | Polyglot fleet (node, python, dotnet…) — dev pilot |
-| **3** | Build theo path (chỉ service đổi) |
+| **2** ✅ | Polyglot fleet — [POLYglot_DEPLOY.md](./POLYglot_DEPLOY.md), path-filter CI, `polyglot-e2e.sh` |
+| **3** | Build theo path nâng cao (matrix job) |
 | **4** | ArgoCD GitOps, HPA/KEDA |

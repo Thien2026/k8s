@@ -3139,6 +3139,13 @@ function stackLabel(stack, mode) {
   return "";
 }
 
+function defaultHealthPath(s) {
+  s = s || {};
+  const ingress = (s.ingress_path || "/").trim();
+  if (ingress === "/" || ingress === "") return "/";
+  return s.health_path || "/health";
+}
+
 function buildServiceTableRowHtml(s, idx) {
   const pub = serviceRowIsPublic(s);
   const stack = s.stack || "";
@@ -3160,6 +3167,7 @@ function buildServiceTableRowHtml(s, idx) {
     '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
     '<td><label class="svc-public-label"><input type="checkbox" name="svc_public_' + idx + '"' + (pub ? " checked" : "") + ' /> Public</label></td>' +
     '<td><input name="svc_ingress_' + idx + '" value="' + esc(pub ? (s.ingress_path || "/") : "-") + '" placeholder="/ hoặc /api" /></td>' +
+    '<td><input type="hidden" name="svc_health_' + idx + '" value="' + esc(s.health_path || defaultHealthPath(s)) + '" /></td>' +
     '<td><button type="button" class="btn-ghost btn-sm svc-remove-row" data-idx="' + idx + '">×</button></td>' +
     "</tr>"
   );
@@ -3225,8 +3233,13 @@ function renderServicesContractBanner(contract, canEdit) {
   html += "</div>";
   if (canEdit && !synced && !contract.parse_error) {
     const isMulti = (contract.suggested_layout || contract.layout) === "multi";
+    const svcCount = (contract.service_names || names).length;
     const btnClass = isMulti ? "btn-primary btn-sm" : "btn-ghost btn-sm";
-    const btnLabel = isMulti ? "Bước 2: Áp dụng api + web từ repo" : "Áp dụng cấu hình từ repo";
+    const btnLabel = isMulti && svcCount > 2
+      ? "Bước 2: Áp dụng fleet từ repo (" + svcCount + " service)"
+      : isMulti
+        ? "Bước 2: Áp dụng api + web từ repo"
+        : "Áp dụng cấu hình từ repo";
     html +=
       '<p class="muted repo-detect-action-hint" style="font-size:12px;margin:0 0 8px">' +
       (isMulti
@@ -3465,16 +3478,20 @@ function collectProjectLayoutPayload(form) {
         } else if (ctxSel && ctxSel.value && ctxSel.value !== "__custom__") {
           buildContext = ctxSel.value;
         }
+        const healthEl = form.querySelector('[name="svc_health_' + idx + '"]');
+        const ingressVal = pub ? (ingressEl ? ingressEl.value : "/") : "-";
+        let healthPath = healthEl ? healthEl.value : "/health";
+        if (pub && (ingressVal === "/" || ingressVal === "") && !healthEl) healthPath = "/";
         services.push({
           name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || "",
           build_mode: modeEl ? modeEl.value : "dockerfile",
           stack: stackEl ? stackEl.value : "",
           build_context: buildContext,
           dockerfile_path: (form.querySelector('[name="svc_df_' + idx + '"]') || {}).value || "Dockerfile",
-          ingress_path: ingress,
+          ingress_path: ingressVal,
           expose_ingress: expose,
           container_port: 8080,
-          health_path: "/health",
+          health_path: healthPath,
           sort_order: parseInt(idx, 10) || 0,
         });
       });

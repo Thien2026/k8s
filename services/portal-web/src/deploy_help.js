@@ -33,6 +33,19 @@ var DEPLOY_HELP_SECTIONS = [
       '<p class="muted deploy-help-note">Repo mới: copy template <code>templates/back-front/</code> hoặc script <code>setup-back-front-pilot.sh</code> (team nội bộ).</p>',
   },
   {
+    id: "polyglot",
+    title: "Polyglot",
+    html:
+      '<p class="deploy-help-lead"><strong>Phase 2</strong> — fleet 3+ service (api, web, worker, node…).</p>' +
+      "<ol class=\"deploy-help-steps\">" +
+      "<li>Branch có <code>.platform/services.yaml</code> (layout multi, N service).</li>" +
+      "<li><strong>Web + API riêng</strong> → 「Áp dụng fleet từ repo」.</li>" +
+      "<li><strong>Lưu &amp; đồng bộ GitHub</strong> → push.</li>" +
+      "<li>CI path-filter: sửa 1 thư mục → chỉ build service đó (còn lại retag).</li>" +
+      "</ol>" +
+      '<p class="muted">Chi tiết: doc <strong>POLYglot_DEPLOY</strong> trên repo platform.</p>',
+  },
+  {
     id: "dont",
     title: "Đừng làm",
     html:

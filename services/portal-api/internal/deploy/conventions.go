@@ -90,32 +90,37 @@ func PublicHealthPath(ingressPath, healthPath string) string {
 	return ip + hp
 }
 
-// SmokeCheckPaths — đường dẫn HTTPS smoke theo layout.
+// SmokeCheckPaths — đường dẫn HTTPS smoke theo layout (mọi service public trên Ingress).
 func SmokeCheckPaths(layout string, services []ServiceDef) []string {
 	if NormalizeLayout(layout) != LayoutMulti {
 		return []string{"/health", "/"}
 	}
-	paths := []string{"/"}
-	seen := map[string]bool{"/": true}
+	var paths []string
+	seen := map[string]bool{}
 	for _, s := range services {
 		s = normalizeServiceDef(s)
-		if !s.ExposeIngress {
-			continue
-		}
-		if s.Name != "api" && s.IngressPath != ConventionAPIBasePath {
+		if !s.ExposeIngress || IsInternalIngressMarker(s.IngressPath) {
 			continue
 		}
 		hp := PublicHealthPath(s.IngressPath, s.HealthPath)
-		if !seen[hp] {
-			paths = append([]string{hp}, paths...)
-			seen[hp] = true
+		if hp == "" || seen[hp] {
+			continue
+		}
+		paths = append(paths, hp)
+		seen[hp] = true
+	}
+	if !seen["/"] {
+		for _, s := range services {
+			s = normalizeServiceDef(s)
+			if s.ExposeIngress && !IsInternalIngressMarker(s.IngressPath) && s.IngressPath == "/" {
+				paths = append(paths, "/")
+				seen["/"] = true
+				break
+			}
 		}
 	}
-	if !seen["/api/health"] && !seen[PublicHealthPath(ConventionAPIBasePath, "/health")] {
-		fallback := PublicHealthPath(ConventionAPIBasePath, "/health")
-		if !seen[fallback] {
-			paths = append([]string{fallback}, paths...)
-		}
+	if len(paths) == 0 {
+		paths = []string{"/"}
 	}
 	return paths
 }

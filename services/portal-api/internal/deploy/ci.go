@@ -45,6 +45,7 @@ func GitHubWorkflow(p Params) Workflow {
 	b.WriteString("    steps:\n")
 	writeCheckoutStep(&b, p)
 	b.WriteString("\n")
+	writePathsFilterStep(&b, svcs)
 
 	if strings.TrimSpace(p.DeployHookURL) != "" {
 		env := strings.TrimSpace(p.DeployEnvironment)
@@ -113,6 +114,13 @@ func GitHubWorkflow(p Params) Workflow {
 		b.WriteString("        uses: buildpacks/github-actions/setup-pack@v5.12.5\n\n")
 	}
 
+	multiPathFilter := len(svcs) > 1
+	if multiPathFilter {
+		for _, svc := range svcs {
+			writeRetagServiceStep(&b, svc, p.imageRefFor(svc))
+		}
+	}
+
 	for _, svc := range svcs {
 		sp := serviceParams(p, svc)
 		image := p.imageRefFor(svc)
@@ -120,7 +128,12 @@ func GitHubWorkflow(p Params) Workflow {
 		if svc.DisplayName != "" {
 			stepName = svc.DisplayName
 		}
-		b.WriteString("      - name: Build and push " + stepName + "\n")
+		if multiPathFilter {
+			b.WriteString("      - name: Build and push " + stepName + "\n")
+			b.WriteString("        if: " + serviceBuildIf(svc.Name) + "\n")
+		} else {
+			b.WriteString("      - name: Build and push " + stepName + "\n")
+		}
 		if sp.usesBuildpack() {
 			writeBuildpackBuildStep(&b, sp, image)
 		} else {

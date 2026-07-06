@@ -92,6 +92,29 @@ func TestGitHubWorkflowDockerfile(t *testing.T) {
 	}
 }
 
+func TestGitHubWorkflowPathFilter(t *testing.T) {
+	wf := GitHubWorkflow(Params{
+		ProjectSlug:      "shop",
+		Branch:           "main",
+		Layout:           LayoutMulti,
+		Services:         DefaultMultiServices,
+		RegistryProvider: registry.Harbor,
+		Registry: registry.ProjectRegistry{
+			ImagePrefix: "harbor.example.com/shop",
+		},
+		HarborHost: "harbor.example.com",
+	})
+	if !strings.Contains(wf.Content, "dorny/paths-filter@v3") {
+		t.Fatal("expected paths-filter for multi-service")
+	}
+	if !strings.Contains(wf.Content, "Retag api (unchanged)") {
+		t.Fatal("expected retag step for api")
+	}
+	if !strings.Contains(wf.Content, "if: steps.changes.outputs.api == 'true'") {
+		t.Fatal("expected conditional build for api")
+	}
+}
+
 func TestNormalizeBuildMode(t *testing.T) {
 	if NormalizeBuildMode("buildpack") != "buildpack" {
 		t.Fatal("buildpack")

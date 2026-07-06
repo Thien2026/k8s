@@ -1,0 +1,29 @@
+version: 1
+layout: multi
+# Polyglot fleet mẫu — copy vào repo hoặc dùng branch multi-polyglot-full trên test-k8s
+services:
+  - name: api
+    path: backend
+    ingress: /api
+    health: /health
+    build_mode: dockerfile
+  - name: web
+    path: frontend
+    ingress: /
+    health: /
+    build_mode: dockerfile
+  - name: worker
+    path: worker
+    expose: false
+    stack: python
+    build_mode: buildpack
+  - name: node
+    path: backend-node
+    expose: false
+    stack: node
+    build_mode: buildpack
+  - name: dotnet
+    path: backend-dotnet
+    expose: false
+    stack: dotnet
+    build_mode: buildpack
