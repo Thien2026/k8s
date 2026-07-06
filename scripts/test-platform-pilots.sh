@@ -44,20 +44,20 @@ else
 fi
 echo ""
 
-# Console
+# Console (DOMAIN = host Console, vd. platform.7mlabs.com)
 echo "── Console ──"
-CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://platform.${DOMAIN}/health" 2>/dev/null || echo 000)"
+CODE="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://${DOMAIN}/health" 2>/dev/null || echo 000)"
 if [[ "${CODE}" == "200" ]]; then
-  pass "platform.${DOMAIN}/health → ${CODE}"
+  pass "${DOMAIN}/health → ${CODE}"
 else
-  fail "platform.${DOMAIN}/health → ${CODE}"
+  fail "${DOMAIN}/health → ${CODE}"
 fi
 
 echo ""
 if [[ "${FAIL}" -eq 0 ]]; then
   echo "════════════════════════════════════════"
   echo " OK — sẵn sàng test"
-  echo " Console: https://platform.${DOMAIN}"
+  echo " Console: https://${DOMAIN}"
   echo " Phase 1: https://back-front-demo-dev.${DOMAIN}/"
   echo " Phase 2: https://polyglot-demo-dev.${DOMAIN}/"
   echo " Pilot:   https://test-harbor-dev.${DOMAIN}/"
