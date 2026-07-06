@@ -22,6 +22,10 @@ func DeployTokenSecretName(projectSlug string) string {
 	return "PLATFORM_DEPLOY_TOKEN_" + SecretSlugSuffix(projectSlug)
 }
 
+func GitOpsTokenSecretName() string {
+	return "PLATFORM_GITOPS_TOKEN"
+}
+
 func HarborUsernameSecretName(projectSlug string) string {
 	return "HARBOR_USERNAME_" + SecretSlugSuffix(projectSlug)
 }

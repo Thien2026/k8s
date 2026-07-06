@@ -123,3 +123,29 @@ func TestNormalizeBuildMode(t *testing.T) {
 		t.Fatal("default dockerfile")
 	}
 }
+
+func TestGitHubWorkflowGitOpsSyncStep(t *testing.T) {
+	wf := GitHubWorkflow(Params{
+		ProjectSlug:      "shop",
+		Branch:           "main",
+		Layout:           LayoutMulti,
+		Services:         DefaultMultiServices,
+		RegistryProvider: registry.GHCR,
+		Registry: registry.ProjectRegistry{
+			ImagePrefix: "ghcr.io/org/shop",
+		},
+		DeployEnvironment: "dev",
+		GitOpsRepoURL:     "https://github.com/org/company-gitops",
+		GitOpsRepoBranch:  "main",
+		GitOpsBasePath:    "apps",
+	})
+	if !strings.Contains(wf.Content, "Sync image tag to GitOps repo") {
+		t.Fatal("expected gitops sync step in workflow")
+	}
+	if !strings.Contains(wf.Content, "PLATFORM_GITOPS_TOKEN") {
+		t.Fatal("expected gitops token secret hint in workflow")
+	}
+	if !strings.Contains(wf.Content, "apps/shop/overlays/dev/kustomization.yaml") {
+		t.Fatal("expected gitops overlay path")
+	}
+}

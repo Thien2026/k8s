@@ -169,12 +169,99 @@ func GitHubWorkflow(p Params) Workflow {
 		b.WriteString("            -d '{\"image_tag\":\"'\"${{ github.sha }}\"'\",\"environment\":\"" + env + "\"}'\n")
 		secrets = append(secrets, p.deployTokenSecret()+" — riêng từng project (monorepo an toàn)")
 	}
+	if gitOpsWorkflowEnabled(p) {
+		writeGitOpsSyncStep(&b, p, svcs)
+		secrets = append(secrets,
+			p.gitOpsTokenSecret()+" — PAT có quyền ghi repo GitOps",
+		)
+	}
 
 	return Workflow{
 		Filename:    filename,
 		Content:     b.String(),
 		SecretsHint: secrets,
 	}
+}
+
+func gitOpsWorkflowEnabled(p Params) bool {
+	return strings.TrimSpace(p.GitOpsRepoURL) != "" &&
+		strings.TrimSpace(p.GitOpsRepoBranch) != "" &&
+		strings.TrimSpace(p.GitOpsBasePath) != ""
+}
+
+func writeGitOpsSyncStep(b *strings.Builder, p Params, svcs []ServiceDef) {
+	branch := strings.TrimSpace(p.GitOpsRepoBranch)
+	if branch == "" {
+		branch = "main"
+	}
+	env := strings.TrimSpace(p.DeployEnvironment)
+	if env == "" {
+		env = "dev"
+	}
+	overlayPath := strings.Trim(strings.TrimSpace(p.GitOpsBasePath), "/") + "/" + strings.TrimSpace(p.ProjectSlug) + "/overlays/" + env + "/kustomization.yaml"
+	b.WriteString("      - name: Sync image tag to GitOps repo\n")
+	b.WriteString("        env:\n")
+	b.WriteString("          GITOPS_REPO_URL: " + p.GitOpsRepoURL + "\n")
+	b.WriteString("          GITOPS_REPO_BRANCH: " + branch + "\n")
+	b.WriteString("          GITOPS_FILE: " + overlayPath + "\n")
+	b.WriteString("          GITOPS_TOKEN: ${{ secrets." + p.gitOpsTokenSecret() + " }}\n")
+	b.WriteString("        run: |\n")
+	b.WriteString("          set -euo pipefail\n")
+	b.WriteString("          tmp_dir=\"$(mktemp -d)\"\n")
+	b.WriteString("          git -c init.defaultBranch=main clone --depth 1 --branch \"$GITOPS_REPO_BRANCH\" \"https://x-access-token:${GITOPS_TOKEN}@${GITOPS_REPO_URL#https://}\" \"$tmp_dir/gitops\"\n")
+	b.WriteString("          cd \"$tmp_dir/gitops\"\n")
+	b.WriteString("          if [ ! -f \"$GITOPS_FILE\" ]; then\n")
+	b.WriteString("            echo \"GitOps file not found: $GITOPS_FILE\" >&2\n")
+	b.WriteString("            exit 2\n")
+	b.WriteString("          fi\n")
+	b.WriteString("          export GITOPS_FILE\n")
+	b.WriteString("          export NEW_TAG=\"${{ github.sha }}\"\n")
+	for _, svc := range svcs {
+		b.WriteString("          export IMG_" + strings.ToUpper(svc.Name) + "=" + p.imageRefFor(svc) + "\n")
+	}
+	b.WriteString("          python3 - <<'PY'\n")
+	b.WriteString("from pathlib import Path\n")
+	b.WriteString("import os\n")
+	b.WriteString("f = Path(os.environ['GITOPS_FILE'])\n")
+	b.WriteString("lines = f.read_text().splitlines()\n")
+	b.WriteString("new_tag = os.environ['NEW_TAG']\n")
+	b.WriteString("targets = {\n")
+	for _, svc := range svcs {
+		b.WriteString("    os.environ['IMG_" + strings.ToUpper(svc.Name) + "']: True,\n")
+	}
+	b.WriteString("}\n")
+	b.WriteString("for i, line in enumerate(lines):\n")
+	b.WriteString("    s = line.strip()\n")
+	b.WriteString("    if not s.startswith('name:'):\n")
+	b.WriteString("        continue\n")
+	b.WriteString("    name = s.split(':', 1)[1].strip()\n")
+	b.WriteString("    if name not in targets:\n")
+	b.WriteString("        continue\n")
+	b.WriteString("    indent = line[:len(line)-len(line.lstrip())]\n")
+	b.WriteString("    j = i + 1\n")
+	b.WriteString("    replaced = False\n")
+	b.WriteString("    while j < len(lines):\n")
+	b.WriteString("        cur = lines[j].strip()\n")
+	b.WriteString("        if cur.startswith('- name:') or (cur.startswith('name:') and lines[j].startswith(indent)):\n")
+	b.WriteString("            break\n")
+	b.WriteString("        if cur.startswith('newTag:'):\n")
+	b.WriteString("            lines[j] = indent + '  newTag: ' + new_tag\n")
+	b.WriteString("            replaced = True\n")
+	b.WriteString("            break\n")
+	b.WriteString("        j += 1\n")
+	b.WriteString("    if not replaced:\n")
+	b.WriteString("        lines.insert(i + 1, indent + '  newTag: ' + new_tag)\n")
+	b.WriteString("f.write_text('\\n'.join(lines) + '\\n')\n")
+	b.WriteString("PY\n")
+	b.WriteString("          git config user.name \"platform-bot\"\n")
+	b.WriteString("          git config user.email \"platform-bot@users.noreply.github.com\"\n")
+	b.WriteString("          git add \"$GITOPS_FILE\"\n")
+	b.WriteString("          if git diff --cached --quiet; then\n")
+	b.WriteString("            echo \"No GitOps change\"\n")
+	b.WriteString("            exit 0\n")
+	b.WriteString("          fi\n")
+	b.WriteString("          git commit -m \"chore(gitops): " + p.ProjectSlug + " " + env + " -> ${GITHUB_SHA::12}\"\n")
+	b.WriteString("          git push origin \"HEAD:$GITOPS_REPO_BRANCH\"\n\n")
 }
 
 func writeCheckoutStep(b *strings.Builder, p Params) {

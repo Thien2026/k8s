@@ -221,6 +221,15 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	secretsProvisioned := []string{deploySecret}
+	if strings.TrimSpace(h.cfg.GitOpsPushToken) != "" && strings.TrimSpace(h.cfg.GitOpsRepoURL) != "" {
+		gitOpsSecret := deploy.GitOpsTokenSecretName()
+		if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, gitOpsSecret, strings.TrimSpace(h.cfg.GitOpsPushToken)); err != nil {
+			log.Printf("github gitops token secret failed project=%s err=%v", p.Slug, err)
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo " + gitOpsSecret + ": " + err.Error()})
+			return
+		}
+		secretsProvisioned = append(secretsProvisioned, gitOpsSecret)
+	}
 	if p.RegistryProvider == "harbor" {
 		harborUser, harborPass, err := h.ensureHarborCIRobot(r.Context(), p)
 		if err != nil {
@@ -311,6 +320,9 @@ func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo proj
 		BuildContext:     repo.BuildContext,
 		ImageTag:         imageTag,
 		HarborHost:       harborHost,
+		GitOpsRepoURL:    strings.TrimSpace(h.cfg.GitOpsRepoURL),
+		GitOpsRepoBranch: strings.TrimSpace(h.cfg.GitOpsRepoBranch),
+		GitOpsBasePath:   strings.TrimSpace(h.cfg.GitOpsBasePath),
 	}
 	services, layout := h.loadDeployServices(ctx, p.ID, repo)
 	params.Layout = layout
@@ -320,6 +332,7 @@ func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo proj
 		params.DeployEnvironment = deployEnv
 	}
 	params.DeployTokenSecret = deploy.DeployTokenSecretName(p.Slug)
+	params.GitOpsTokenSecret = deploy.GitOpsTokenSecretName()
 	params.HarborUserSecret = deploy.HarborUsernameSecretName(p.Slug)
 	params.HarborPassSecret = deploy.HarborPasswordSecretName(p.Slug)
 	if includeHook && ctx != nil {

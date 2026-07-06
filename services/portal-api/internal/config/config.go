@@ -45,6 +45,7 @@ type Config struct {
 	GitOpsRepoURL        string
 	GitOpsRepoBranch     string
 	GitOpsBasePath       string
+	GitOpsPushToken      string
 }
 
 func readSecretFile(path string) string {
@@ -134,6 +135,7 @@ func Load() Config {
 		GitOpsRepoURL:      firstNonEmpty(os.Getenv("GITOPS_REPO_URL"), os.Getenv("GITHUB_GITOPS_REPO")),
 		GitOpsRepoBranch:   firstNonEmpty(os.Getenv("GITOPS_REPO_BRANCH"), "main"),
 		GitOpsBasePath:     firstNonEmpty(os.Getenv("GITOPS_BASE_PATH"), "apps"),
+		GitOpsPushToken:    os.Getenv("GITOPS_PUSH_TOKEN"),
 	}
 }
 

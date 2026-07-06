@@ -164,6 +164,9 @@ fi
 if [[ -n "${GITOPS_BASE_PATH:-}" ]]; then
   SECRET_ARGS+=(--from-literal=GITOPS_BASE_PATH="${GITOPS_BASE_PATH}")
 fi
+if [[ -n "${GITOPS_PUSH_TOKEN:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GITOPS_PUSH_TOKEN="${GITOPS_PUSH_TOKEN}")
+fi
 if [[ -n "${GITHUB_CLIENT_ID:-}" ]]; then
   SECRET_ARGS+=(--from-literal=GITHUB_CLIENT_ID="${GITHUB_CLIENT_ID}")
 fi

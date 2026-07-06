@@ -30,6 +30,10 @@ type Params struct {
 	DeployHookURL       string
 	DeployEnvironment   string
 	DeployTokenSecret   string
+	GitOpsRepoURL       string
+	GitOpsRepoBranch    string
+	GitOpsBasePath      string
+	GitOpsTokenSecret   string
 	HarborUserSecret    string
 	HarborPassSecret    string
 	BuildArgs           []BuildArg
@@ -121,6 +125,13 @@ func (p Params) harborUserSecret() string {
 		return s
 	}
 	return HarborUsernameSecretName(p.ProjectSlug)
+}
+
+func (p Params) gitOpsTokenSecret() string {
+	if s := strings.TrimSpace(p.GitOpsTokenSecret); s != "" {
+		return s
+	}
+	return GitOpsTokenSecretName()
 }
 
 func (p Params) harborPassSecret() string {
