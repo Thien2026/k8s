@@ -24,6 +24,16 @@ type promResponse struct {
 	} `json:"data"`
 }
 
+type promRangeResponse struct {
+	Status string `json:"status"`
+	Data   struct {
+		ResultType string `json:"resultType"`
+		Result     []struct {
+			Values [][]any `json:"values"`
+		} `json:"result"`
+	} `json:"data"`
+}
+
 func (h *Handler) prometheusBaseURL() string {
 	// Dùng endpoint nội bộ trong cluster để tránh lộ credentials ra client.
 	return defaultPrometheusURL
@@ -71,6 +81,59 @@ func (h *Handler) queryPrometheusInstant(r *http.Request, expr string) (float64,
 	return v, nil
 }
 
+func (h *Handler) queryPrometheusRange(r *http.Request, expr string, start, end time.Time, step time.Duration) ([][2]float64, error) {
+	base := strings.TrimRight(h.prometheusBaseURL(), "/")
+	u, err := url.Parse(base + "/api/v1/query_range")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("query", expr)
+	q.Set("start", strconv.FormatInt(start.Unix(), 10))
+	q.Set("end", strconv.FormatInt(end.Unix(), 10))
+	q.Set("step", fmt.Sprintf("%.0f", step.Seconds()))
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("prometheus status %d", resp.StatusCode)
+	}
+
+	var out promRangeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.Status != "success" || len(out.Data.Result) == 0 {
+		return [][2]float64{}, nil
+	}
+	points := make([][2]float64, 0, len(out.Data.Result[0].Values))
+	for _, row := range out.Data.Result[0].Values {
+		if len(row) < 2 {
+			continue
+		}
+		ts, okTS := row[0].(float64)
+		raw, okV := row[1].(string)
+		if !okTS || !okV {
+			continue
+		}
+		v, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			continue
+		}
+		points = append(points, [2]float64{ts, v})
+	}
+	return points, nil
+}
+
 func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	p, ok := h.requireProjectAccess(w, r, slug)
@@ -96,6 +159,11 @@ func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 	memBytes, memErr := h.queryPrometheusInstant(r, memExpr)
 	restarts, restErr := h.queryPrometheusInstant(r, restartExpr)
 	runningPods, podErr := h.queryPrometheusInstant(r, podExpr)
+	end := time.Now().UTC()
+	start := end.Add(-6 * time.Hour)
+	step := 5 * time.Minute
+	cpuSeries, cpuSeriesErr := h.queryPrometheusRange(r, cpuExpr, start, end, step)
+	memSeries, memSeriesErr := h.queryPrometheusRange(r, memExpr, start, end, step)
 
 	payload := map[string]any{
 		"env":            env,
@@ -108,9 +176,11 @@ func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 		"grafana_url":    trimURL(h.cfg.GrafanaURL),
 		"dashboard_url":  grafanaNamespaceDashboardURL(h.cfg.GrafanaURL, namespace),
 		"prometheus_url": trimURL(h.prometheusBaseURL()),
+		"cpu_series":     cpuSeries,
+		"memory_series":  memSeries,
 	}
 
-	if cpuErr != nil || memErr != nil || restErr != nil || podErr != nil {
+	if cpuErr != nil || memErr != nil || restErr != nil || podErr != nil || cpuSeriesErr != nil || memSeriesErr != nil {
 		payload["warning"] = "Một số metric chưa sẵn sàng"
 	}
 	writeJSON(w, http.StatusOK, payload)

@@ -4506,6 +4506,8 @@ async function pageProjectHub(main, slug, tab) {
     const memMiB = Number(metrics.memory_mib || 0);
     const restarts = Number(metrics.restarts_1h || 0);
     const pods = Number(metrics.running_pods || 0);
+    const cpuSeries = monitoringPoints(metrics.cpu_series, 1);
+    const memSeries = monitoringPoints(metrics.memory_series, 1024 * 1024);
     main.innerHTML =
       projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
@@ -4523,6 +4525,12 @@ async function pageProjectHub(main, slug, tab) {
       (activeUrl
         ? '<div class="card detail-card"><h3>Dashboard nhanh</h3><p class="muted">Namespace hiện tại: <strong>' + esc(metrics.namespace || ns) + '</strong> · nguồn metrics: Prometheus nội bộ.</p><div class="meta-chips"><a class="chip chip-link" href="' + esc(activeUrl) + '" target="_blank" rel="noopener">Mở dashboard namespace hiện tại</a></div></div>'
         : "") +
+      '<div class="card detail-card"><h3>CPU timeline (6h)</h3>' +
+      sparkline(cpuSeries, "#46d6ff") +
+      '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
+      '<div class="card detail-card"><h3>Memory timeline (6h)</h3>' +
+      sparkline(memSeries, "#c084fc") +
+      '<p class="muted">Nguồn: container_memory_working_set_bytes · đơn vị MiB.</p></div>' +
       (metrics.warning ? '<div class="card detail-card"><p class="muted">' + esc(metrics.warning) + "</p></div>" : "") +
       '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
       chip("Dev", p.namespace_dev) +
@@ -5770,6 +5778,44 @@ function statBox(n, label, grad) {
   return (
     '<div class="stat-box ' + (grad || "g1") + '">' +
     '<div class="lbl">' + esc(label) + '</div><div class="num">' + n + "</div></div>"
+  );
+}
+
+function monitoringPoints(values, divisor) {
+  if (!Array.isArray(values)) return [];
+  return values.map(function (row) {
+    if (!Array.isArray(row) || row.length < 2) return null;
+    const x = Number(row[0]) || 0;
+    let y = Number(row[1]) || 0;
+    if (divisor) y = y / divisor;
+    return [x, y];
+  }).filter(Boolean);
+}
+
+function sparkline(points, color) {
+  if (!points.length) {
+    return '<div class="muted">Chưa có dữ liệu timeline</div>';
+  }
+  const w = 520;
+  const h = 120;
+  const pad = 8;
+  let min = points[0][1];
+  let max = points[0][1];
+  points.forEach(function (p) {
+    if (p[1] < min) min = p[1];
+    if (p[1] > max) max = p[1];
+  });
+  const span = Math.max(max - min, 0.000001);
+  const step = (w - pad * 2) / Math.max(points.length - 1, 1);
+  const path = points.map(function (p, i) {
+    const x = pad + i * step;
+    const y = h - pad - ((p[1] - min) / span) * (h - pad * 2);
+    return (i === 0 ? "M" : "L") + x.toFixed(2) + " " + y.toFixed(2);
+  }).join(" ");
+  return (
+    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:140px;display:block">' +
+    '<path d="' + path + '" fill="none" stroke="' + (color || "#6EE7FF") + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+    "</svg>"
   );
 }
 
