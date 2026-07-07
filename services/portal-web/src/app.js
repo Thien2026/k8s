@@ -4490,6 +4490,9 @@ async function pageProjectHub(main, slug, tab) {
   if (tab === "monitoring") {
     const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
     const mon = ov.monitoring || {};
+    const metrics = await api(
+      "/api/v1/projects/" + encodeURIComponent(slug) + "/monitoring" + projectQs({ env: env })
+    ).catch(function () { return {}; });
     let grafanaBase = mon.grafana_url || "";
     if (!grafanaBase) {
       const infra = await api("/api/v1/infra/links").catch(function () { return { items: [] }; });
@@ -4498,14 +4501,29 @@ async function pageProjectHub(main, slug, tab) {
     }
     const devUrl = mon.dev_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_dev);
     const prodUrl = mon.prod_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_prod);
+    const activeUrl = env === "prod" ? prodUrl : devUrl;
+    const cpu = Number(metrics.cpu_cores_5m || 0);
+    const memMiB = Number(metrics.memory_mib || 0);
+    const restarts = Number(metrics.restarts_1h || 0);
+    const pods = Number(metrics.running_pods || 0);
     main.innerHTML =
       projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
+      '<div class="stat-grid">' +
+      statBox(pods.toFixed(0), "Running Pods", "g1") +
+      statBox(cpu.toFixed(2), "CPU cores (5m)", "g2") +
+      statBox(memMiB.toFixed(0) + " MiB", "Memory", "g3") +
+      statBox(restarts.toFixed(0), "Restarts (1h)", "g4") +
+      "</div>" +
       '<div class="card detail-card"><h3>Grafana</h3><p class="muted">Mở dashboard namespace ngay từ Platform. Nếu chưa đăng nhập Grafana, dùng card Hạ tầng để login một lần.</p><div class="meta-chips">' +
       (devUrl ? '<a class="chip chip-link" href="' + esc(devUrl) + '" target="_blank" rel="noopener">Mở dashboard Dev</a>' : "") +
       (prodUrl ? '<a class="chip chip-link" href="' + esc(prodUrl) + '" target="_blank" rel="noopener">Mở dashboard Prod</a>' : "") +
       (grafanaBase ? '<a class="chip chip-link" href="' + esc(grafanaBase) + '" target="_blank" rel="noopener">Mở Grafana full</a>' : "") +
       "</div></div>" +
+      (activeUrl
+        ? '<div class="card detail-card"><h3>Dashboard nhanh</h3><p class="muted">Namespace hiện tại: <strong>' + esc(metrics.namespace || ns) + '</strong> · nguồn metrics: Prometheus nội bộ.</p><div class="meta-chips"><a class="chip chip-link" href="' + esc(activeUrl) + '" target="_blank" rel="noopener">Mở dashboard namespace hiện tại</a></div></div>'
+        : "") +
+      (metrics.warning ? '<div class="card detail-card"><p class="muted">' + esc(metrics.warning) + "</p></div>" : "") +
       '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
       chip("Dev", p.namespace_dev) +
       chip("Prod", p.namespace_prod) +
