@@ -4535,10 +4535,12 @@ async function pageProjectHub(main, slug, tab) {
       '<div class="card detail-card"><h3>CPU timeline (' + esc(win) + ')</h3>' +
       sparkline(cpuSeries, "#46d6ff") +
       timelineStatsChips(cpuStats, "cores", 3) +
+      timelinePeakText(cpuStats, "cores", 3) +
       '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
       '<div class="card detail-card"><h3>Memory timeline (' + esc(win) + ')</h3>' +
       sparkline(memSeries, "#c084fc") +
       timelineStatsChips(memStats, "MiB", 1) +
+      timelinePeakText(memStats, "MiB", 1) +
       '<p class="muted">Nguồn: container_memory_working_set_bytes · đơn vị MiB.</p></div>' +
       '<div class="dash-grid-bottom">' +
       '<div class="card detail-card"><h3>Top Pods CPU</h3>' +
@@ -5853,15 +5855,23 @@ function sparkline(points, color) {
 
 function timelineStats(points) {
   if (!points.length) {
-    return { current: 0, min: 0, max: 0, avg: 0 };
+    return { current: 0, min: 0, max: 0, avg: 0, minTs: 0, maxTs: 0 };
   }
   let min = points[0][1];
   let max = points[0][1];
+  let minTs = points[0][0];
+  let maxTs = points[0][0];
   let sum = 0;
   points.forEach(function (p) {
     const v = Number(p[1]) || 0;
-    if (v < min) min = v;
-    if (v > max) max = v;
+    if (v < min) {
+      min = v;
+      minTs = Number(p[0]) || 0;
+    }
+    if (v > max) {
+      max = v;
+      maxTs = Number(p[0]) || 0;
+    }
     sum += v;
   });
   return {
@@ -5869,6 +5879,8 @@ function timelineStats(points) {
     min: min,
     max: max,
     avg: sum / points.length,
+    minTs: minTs,
+    maxTs: maxTs,
   };
 }
 
@@ -5878,9 +5890,26 @@ function timelineStatsChips(stats, unit, digits) {
     '<div class="meta-chips monitor-stats">' +
     chip("Current", Number(stats.current).toFixed(d) + " " + unit) +
     chip("Avg", Number(stats.avg).toFixed(d) + " " + unit) +
-    chip("Min", Number(stats.min).toFixed(d) + " " + unit) +
-    chip("Max", Number(stats.max).toFixed(d) + " " + unit) +
+    chip("Đáy", Number(stats.min).toFixed(d) + " " + unit) +
+    chip("Đỉnh", Number(stats.max).toFixed(d) + " " + unit) +
     "</div>"
+  );
+}
+
+function fmtClockFromUnix(tsSec) {
+  const d = new Date((Number(tsSec) || 0) * 1000);
+  if (isNaN(d.getTime())) return "--:--";
+  return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+function timelinePeakText(stats, unit, digits) {
+  const d = digits == null ? 2 : digits;
+  return (
+    '<p class="muted">Đỉnh: <strong>' + esc(Number(stats.max).toFixed(d) + " " + unit) + "</strong> lúc " +
+    esc(fmtClockFromUnix(stats.maxTs)) +
+    ' · Đáy: <strong>' + esc(Number(stats.min).toFixed(d) + " " + unit) + "</strong> lúc " +
+    esc(fmtClockFromUnix(stats.minTs)) +
+    "</p>"
   );
 }
 
