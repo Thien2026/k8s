@@ -3413,6 +3413,24 @@ function renderSingleResourcesPanel(s) {
   );
 }
 
+function renderServiceResourcesCard(s, idx) {
+  const mode = (s && s.resources_mode) || "platform";
+  const custom = mode === "custom";
+  const dis = custom ? "" : " disabled";
+  return (
+    '<div class="service-resources-card" data-svc-res-idx="' + idx + '">' +
+    '<div class="service-resources-card-head"><strong>' + esc((s && (s.display_name || s.name)) || ("Service " + idx)) + "</strong></div>" +
+    '<div class="svc-res-row">' +
+    resourcesModeSelectHtml("svc_res_mode_" + idx, mode, idx) +
+    '<div class="svc-res-grid">' +
+    '<input name="svc_cpu_req_' + idx + '" class="svc-res-input" value="' + esc((s && s.cpu_request) || "") + '" placeholder="CPU req" title="CPU request (vd. 100m)"' + dis + " />" +
+    '<input name="svc_mem_req_' + idx + '" class="svc-res-input" value="' + esc((s && s.memory_request) || "") + '" placeholder="RAM req" title="Memory request (vd. 128Mi)"' + dis + " />" +
+    '<input name="svc_cpu_lim_' + idx + '" class="svc-res-input" value="' + esc((s && s.cpu_limit) || "") + '" placeholder="CPU lim" title="CPU limit (vd. 500m)"' + dis + " />" +
+    '<input name="svc_mem_lim_' + idx + '" class="svc-res-input" value="' + esc((s && s.memory_limit) || "") + '" placeholder="RAM lim" title="Memory limit (vd. 768Mi)"' + dis + " />" +
+    "</div></div></div>"
+  );
+}
+
 function buildServiceTableRowHtml(s, idx) {
   const pub = serviceRowIsPublic(s);
   const stack = s.stack || "";
@@ -3434,13 +3452,6 @@ function buildServiceTableRowHtml(s, idx) {
     '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
     '<td><label class="svc-public-label"><input type="checkbox" name="svc_public_' + idx + '"' + (pub ? " checked" : "") + ' /> Public</label></td>' +
     '<td><input name="svc_ingress_' + idx + '" value="' + esc(pub ? (s.ingress_path || "/") : "-") + '" placeholder="/ hoặc /api" /></td>' +
-    '<td>' + resourcesModeSelectHtml("svc_res_mode_" + idx, s.resources_mode || "platform", idx) + "</td>" +
-    '<td><div class="svc-res-grid">' +
-    '<input name="svc_cpu_req_' + idx + '" class="svc-res-input" value="' + esc(s.cpu_request || "") + '" placeholder="CPU req"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
-    '<input name="svc_mem_req_' + idx + '" class="svc-res-input" value="' + esc(s.memory_request || "") + '" placeholder="RAM req"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
-    '<input name="svc_cpu_lim_' + idx + '" class="svc-res-input" value="' + esc(s.cpu_limit || "") + '" placeholder="CPU lim"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
-    '<input name="svc_mem_lim_' + idx + '" class="svc-res-input" value="' + esc(s.memory_limit || "") + '" placeholder="RAM lim"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
-    "</div></td>" +
     '<td><input type="hidden" name="svc_health_' + idx + '" value="' + esc(s.health_path || defaultHealthPath(s)) + '" /></td>' +
     '<td><button type="button" class="btn-ghost btn-sm svc-remove-row" data-idx="' + idx + '">×</button></td>' +
     "</tr>"
@@ -3757,9 +3768,9 @@ function collectProjectLayoutPayload(form) {
           buildContext = ctxSel.value;
         }
         const healthEl = form.querySelector('[name="svc_health_' + idx + '"]');
-        const ingressVal = pub ? (ingressEl ? ingressEl.value : "/") : "-";
+        const ingressVal = expose ? (ingressEl ? ingressEl.value : "/") : "-";
         let healthPath = healthEl ? healthEl.value : "/health";
-        if (pub && (ingressVal === "/" || ingressVal === "") && !healthEl) healthPath = "/";
+        if (expose && (ingressVal === "/" || ingressVal === "") && !healthEl) healthPath = "/";
         services.push({
           name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || "",
           build_mode: modeEl ? modeEl.value : "dockerfile",
@@ -3895,10 +3906,16 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<div class="service-preview-grid" id="service-preview-grid">' +
     multiItems.map(renderServicePreviewCard).join("") +
     "</div>" +
-    '<details class="layout-advanced-details"><summary>Tùy chỉnh service (dev)</summary>' +
+    '<div class="service-resources-panel" id="service-resources-panel">' +
+    "<h4>CPU / RAM từng service</h4>" +
+    '<p class="muted" style="margin:0 0 10px;font-size:12px">Chọn <strong>Mặc định platform</strong> (an toàn) · <strong>Không set</strong> (không limit) · <strong>Tùy chỉnh</strong> để nhập CPU/RAM. Lưu nháp rồi deploy lại để áp dụng.</p>' +
+    '<div class="service-resources-grid" id="service-resources-grid">' +
+    multiItems.map(function (s, idx) { return renderServiceResourcesCard(s, idx); }).join("") +
+    "</div></div>" +
+    '<details class="layout-advanced-details"><summary>Tùy chỉnh service (dev) — build path, ingress</summary>' +
     '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục build theo branch đã chọn ở bước 1.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
-    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th>Resources</th><th>CPU/RAM</th><th></th></tr></thead>' +
+    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
     '<tbody id="project-services-tbody">' +
     multiItems.map(function (s, idx) { return buildServiceTableRowHtml(s, idx); }).join("") +
     "</tbody></table>" +
@@ -4036,6 +4053,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   const singleHint = document.getElementById("layout-single-hint");
   const multiPanel = document.getElementById("layout-multi-panel");
   const previewGrid = document.getElementById("service-preview-grid");
+  const resGrid = document.getElementById("service-resources-grid");
   const tbody = document.getElementById("project-services-tbody");
   const dirHint = document.getElementById("github-dir-hint");
   const refreshDirsBtn = document.getElementById("refresh-github-dirs");
@@ -4220,28 +4238,44 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   }
 
   function refreshPreview() {
-    if (!previewGrid || currentLayout() !== "multi") return;
-    const list = servicesFromForm();
-    previewGrid.innerHTML = list
-      .map(function (s) {
-        const pub = s.expose_ingress !== false && s.ingress_path !== "-";
-        return (
-          '<div class="service-preview-card"><h4>' +
-          esc(s.display_name || s.name) +
-          ' <span class="badge">' +
-          esc(buildModeLabel(s.build_mode)) +
-          "</span></h4><p>Thư mục <code>" +
-          esc(s.build_context) +
-          "</code> → image <code>" +
-          esc(s.name) +
-          "</code><br>" +
-          (pub
-            ? "URL: <code>" + esc(s.ingress_path) + "*</code>"
-            : '<span class="badge warn">Internal</span>') +
-          "</p></div>"
-        );
-      })
-      .join("");
+    if (currentLayout() !== "multi") return;
+    const rows = listServiceRows();
+    const list = rows.map(function (tr) {
+      return serviceFromRow(tr.getAttribute("data-svc-idx"), {});
+    });
+    if (previewGrid) {
+      previewGrid.innerHTML = list
+        .map(function (s) {
+          const pub = s.expose_ingress !== false && s.ingress_path !== "-";
+          return (
+            '<div class="service-preview-card"><h4>' +
+            esc(s.display_name || s.name) +
+            ' <span class="badge">' +
+            esc(buildModeLabel(s.build_mode)) +
+            "</span></h4><p>Thư mục <code>" +
+            esc(s.build_context) +
+            "</code> → image <code>" +
+            esc(s.name) +
+            "</code><br>" +
+            (pub
+              ? "URL: <code>" + esc(s.ingress_path) + "*</code>"
+              : '<span class="badge warn">Internal</span>') +
+            "</p></div>"
+          );
+        })
+        .join("");
+    }
+    if (resGrid) {
+      resGrid.innerHTML = rows
+        .map(function (tr, i) {
+          const idx = tr.getAttribute("data-svc-idx");
+          return renderServiceResourcesCard(list[i], idx);
+        })
+        .join("");
+      rows.forEach(function (tr) {
+        bindResModeSelect(tr.getAttribute("data-svc-idx"));
+      });
+    }
   }
 
   function appendServiceRow(s) {

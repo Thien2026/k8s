@@ -2310,6 +2310,37 @@ tr.dns-row td {
   border-top: 1px solid var(--border);
 }
 
+.service-resources-panel {
+  margin: 14px 0 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+  border-radius: 12px;
+  background: rgba(139, 92, 246, 0.06);
+}
+
+.service-resources-panel h4 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.service-resources-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.service-resources-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.service-resources-card-head {
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
 .chart-interactive {
   position: relative;
   width: 100%;
