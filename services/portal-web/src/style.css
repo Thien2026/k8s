@@ -3847,6 +3847,72 @@ tr.dns-row td {
   color: var(--muted);
   line-height: 1.45;
 }
+.deploy-collapsible {
+  padding: 0;
+  overflow: hidden;
+}
+
+.deploy-collapsible-summary {
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.deploy-collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.deploy-collapsible-summary-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 16px;
+}
+
+.deploy-collapsible-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.deploy-collapsible-summary-chips {
+  margin-top: 4px;
+}
+
+.deploy-collapsible-summary-actions {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.deploy-collapsible-chev::before {
+  content: "▸";
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.deploy-collapsible[open] > .deploy-collapsible-summary .deploy-collapsible-chev::before {
+  content: "▾";
+}
+
+.deploy-collapsible-body {
+  padding: 0 16px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.deploy-collapsible-body > .pipeline-status-chips:first-child,
+.deploy-collapsible-body > .pipeline-crosscheck:first-child {
+  margin-top: 12px;
+}
+
+.pipeline-setup-collapsible .deploy-collapsible-summary-inner .pipeline-status-chips {
+  margin: 0;
+}
+
 .layout-advanced-details {
   margin-top: 8px;
   font-size: 13px;

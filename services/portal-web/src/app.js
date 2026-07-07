@@ -2853,6 +2853,96 @@ async function pageAddons(main) {
   });
 }
 
+function deploySectionStorageKey(slug, sectionId) {
+  return "deploy-section-" + String(slug || "") + "-" + sectionId;
+}
+
+function isDeploySectionOpen(slug, sectionId, defaultOpen) {
+  try {
+    var v = localStorage.getItem(deploySectionStorageKey(slug, sectionId));
+    if (v === "0") return false;
+    if (v === "1") return true;
+  } catch (e) {}
+  return defaultOpen !== false;
+}
+
+function setDeploySectionOpen(slug, sectionId, open) {
+  try {
+    localStorage.setItem(deploySectionStorageKey(slug, sectionId), open ? "1" : "0");
+  } catch (e) {}
+}
+
+function renderDeployCollapsibleCard(slug, sectionId, summaryHtml, bodyHtml, defaultOpen, opts) {
+  opts = opts || {};
+  var open = isDeploySectionOpen(slug, sectionId, defaultOpen);
+  var extraClass = opts.extraClass ? " " + opts.extraClass : "";
+  var idAttr = opts.id ? ' id="' + esc(opts.id) + '"' : "";
+  var style = opts.style || "margin-bottom:16px";
+  return (
+    '<details class="card deploy-collapsible' +
+    extraClass +
+    '"' +
+    (open ? " open" : "") +
+    idAttr +
+    ' style="' +
+    esc(style) +
+    '" data-deploy-section="' +
+    esc(sectionId) +
+    '" data-deploy-slug="' +
+    esc(slug) +
+    '">' +
+    '<summary class="deploy-collapsible-summary">' +
+    summaryHtml +
+    "</summary>" +
+    '<div class="deploy-collapsible-body">' +
+    bodyHtml +
+    "</div></details>"
+  );
+}
+
+function bindDeployCollapsibleCards(root, slug) {
+  if (!root) return;
+  root.querySelectorAll(".deploy-collapsible[data-deploy-section]").forEach(function (el) {
+    var sid = el.getAttribute("data-deploy-section");
+    var sslug = el.getAttribute("data-deploy-slug") || slug;
+    el.addEventListener("toggle", function () {
+      setDeploySectionOpen(sslug, sid, el.open);
+    });
+  });
+  root.querySelectorAll(".deploy-collapsible-no-toggle").forEach(function (el) {
+    el.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+  });
+  root.querySelectorAll(".deploy-collapsible-summary-actions").forEach(function (el) {
+    el.addEventListener("click", function (e) {
+      e.stopPropagation();
+    });
+  });
+}
+
+function pipelineCollapsibleSummaryHtml(summaryExtras) {
+  summaryExtras = summaryExtras || "";
+  return (
+    '<div class="deploy-collapsible-summary-inner">' +
+    '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+    '<div class="card-title-row deploy-collapsible-title-row">' +
+    '<h3 style="margin:0">Pipeline · GitHub &amp; Kiểu chạy</h3>' +
+    '<span class="deploy-collapsible-no-toggle">' +
+    renderDeployHelpButton("steps") +
+    "</span></div>" +
+    summaryExtras +
+    "</div>"
+  );
+}
+
+function wrapPipelineSetupCard(slug, bodyHtml, summaryExtras, defaultOpen) {
+  return renderDeployCollapsibleCard(slug, "pipeline", pipelineCollapsibleSummaryHtml(summaryExtras), bodyHtml, defaultOpen !== false, {
+    id: "pipeline-setup-card",
+    extraClass: "pipeline-setup-collapsible",
+  });
+}
+
 function canManageGitOps() {
   return state.user && state.user.role === "admin";
 }
@@ -2861,12 +2951,18 @@ function renderGitOpsProjectCard(slug, pub, status, canScaffold) {
   pub = pub || {};
   status = status || {};
   if (!pub.enabled && !pub.configured) {
-    return (
-      '<div class="card gitops-project-card" style="margin-bottom:16px">' +
-      '<h3>GitOps <span class="badge muted">Chưa bật</span></h3>' +
+    return renderDeployCollapsibleCard(
+      slug,
+      "gitops",
+      '<div class="deploy-collapsible-summary-inner">' +
+        '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+        '<div class="deploy-collapsible-title-row"><h3 style="margin:0">GitOps <span class="badge muted">Chưa bật</span></h3></div>' +
+        "</div>",
       '<p class="muted">Admin chưa cấu hình repo GitOps — vẫn deploy bình thường qua Rancher. ' +
-      (canManageGitOps() ? '<a href="#/gitops">Cấu hình GitOps →</a>' : "Hỏi admin nếu cần Argo CD.") +
-      "</p></div>"
+        (canManageGitOps() ? '<a href="#/gitops">Cấu hình GitOps →</a>' : "Hỏi admin nếu cần Argo CD.") +
+        "</p>",
+      false,
+      { extraClass: "gitops-project-card" }
     );
   }
   const devBadge = status.dev_scaffolded
@@ -2889,19 +2985,38 @@ function renderGitOpsProjectCard(slug, pub, status, canScaffold) {
     canScaffold && pub.configured
       ? '<button type="button" class="btn-primary btn-sm" id="gitops-scaffold-btn">Tạo scaffold GitOps</button>'
       : "";
-  return (
-    '<div class="card gitops-project-card" style="margin-bottom:16px">' +
-    '<div class="gitops-card-head">' +
-    "<h3>GitOps " +
+  const needsAttention = !status.dev_scaffolded || !status.prod_scaffolded;
+  const summary =
+    '<div class="deploy-collapsible-summary-inner">' +
+    '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+    '<div class="deploy-collapsible-title-row">' +
+    "<h3 style=\"margin:0\">GitOps " +
     (pub.configured ? '<span class="badge ok">Đã cấu hình</span>' : '<span class="badge warn">Thiếu PAT</span>') +
     "</h3>" +
+  '<div class="meta-chips deploy-collapsible-summary-chips">' +
+    devBadge +
+    prodBadge +
+    "</div></div>" +
+    '<div class="deploy-collapsible-summary-actions">' +
     scaffoldBtn +
-    "</div>" +
-    '<p class="muted">Repo: <code>' + esc(pub.repo_url || status.repo_url || "—") + "</code> · branch <code>" + esc(pub.repo_branch || "main") + "</code></p>" +
-    '<div class="meta-chips" style="margin-top:8px">' + devBadge + prodBadge + "</div>" +
+    "</div></div>";
+  const body =
+    '<p class="muted">Repo: <code>' +
+    esc(pub.repo_url || status.repo_url || "—") +
+    "</code> · branch <code>" +
+    esc(pub.repo_branch || "main") +
+    "</code></p>" +
     argoHtml +
-    '<p class="muted" style="margin-top:8px;font-size:12px">Scaffold tạo <code>apps/' + esc(slug) + '/overlays/dev|prod</code> trên repo GitOps + đăng ký Argo CD (nếu bật).</p>' +
-    "</div>"
+    '<p class="muted" style="margin-top:8px;font-size:12px">Scaffold tạo <code>apps/' +
+    esc(slug) +
+    "/overlays/dev|prod</code> trên repo GitOps + đăng ký Argo CD (nếu bật).</p>";
+  return renderDeployCollapsibleCard(
+    slug,
+    "gitops",
+    summary,
+    body,
+    needsAttention,
+    { extraClass: "gitops-project-card" }
   );
 }
 
@@ -4292,42 +4407,48 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
   const crosscheck = renderPipelineCrosscheckHtml(repo, svcData, repoContract);
 
   if (!ghStatus.enabled) {
-    return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
-      renderDeployHelpInlineCard(slug) +
-      '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p></div>'
+    return wrapPipelineSetupCard(
+      slug,
+      renderDeployHelpInlineCard(slug) + '<p class="muted">GitHub OAuth chưa cấu hình trên VPS.</p>',
+      "",
+      true
     );
   }
 
   if (!ghStatus.connected) {
-    return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+    return wrapPipelineSetupCard(
+      slug,
       renderDeployHelpInlineCard(slug) +
-      renderPipelinePolicyCallout() +
-      '<p class="muted">Kết nối GitHub → chọn repo/branch → chốt kiểu chạy → đồng bộ workflow.</p>' +
-      (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : "") +
-      "</div>"
+        renderPipelinePolicyCallout() +
+        '<p class="muted">Kết nối GitHub → chọn repo/branch → chốt kiểu chạy → đồng bộ workflow.</p>' +
+        (canEdit ? '<button type="button" class="btn-primary" id="github-connect-btn">① Kết nối GitHub</button>' : ""),
+      "",
+      true
     );
   }
 
   if (!canEdit) {
-    return (
-      '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+    return wrapPipelineSetupCard(
+      slug,
       renderDeployHelpInlineCard(slug) +
-      renderPipelinePolicyCallout() +
-      statusChips +
-      crosscheck +
-      '<div class="meta-chips">' + chip("Repo", (repo.github_owner || "") + "/" + (repo.github_repo || "")) + chip("Branch", repo.branch || "main") + "</div>" +
-      (isMulti ? '<div class="service-preview-grid" style="margin-top:12px">' + multiItems.map(renderServicePreviewCard).join("") + "</div>" : singleHint) +
-      "</div>"
+        renderPipelinePolicyCallout() +
+        crosscheck +
+        '<div class="meta-chips">' +
+        chip("Repo", (repo.github_owner || "") + "/" + (repo.github_repo || "")) +
+        chip("Branch", repo.branch || "main") +
+        "</div>" +
+        (isMulti
+          ? '<div class="service-preview-grid" style="margin-top:12px">' + multiItems.map(renderServicePreviewCard).join("") + "</div>"
+          : singleHint),
+      statusChips,
+      true
     );
   }
 
-  return (
-    '<div class="card" style="margin-bottom:16px" id="pipeline-setup-card">' + pipelineCardTitleHtml() +
+  return wrapPipelineSetupCard(
+    slug,
     renderDeployHelpInlineCard(slug) +
     renderPipelinePolicyCallout() +
-    statusChips +
     crosscheck +
     '<form id="pipeline-setup-form" class="login-form pipeline-wizard">' +
     '<div class="pipeline-step">' +
@@ -4388,7 +4509,9 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<button type="button" class="btn-ghost btn-sm" id="pipeline-save-draft">Chỉ lưu Console</button>' +
     '<button type="button" class="btn-ghost btn-sm" id="github-disconnect-btn">Ngắt GitHub</button>' +
     "</div></div>" +
-    "</form></div>"
+    "</form>",
+    statusChips,
+    true
   );
 }
 
@@ -5488,6 +5611,7 @@ async function pageProjectHub(main, slug, tab) {
     bindSnippetCopyButtons(main);
     bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken);
     bindGitOpsProjectCard(main, slug);
+    bindDeployCollapsibleCards(main, slug);
     bindDeployHelpTriggers(main);
 
     Promise.all([
