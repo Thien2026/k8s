@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
@@ -40,6 +41,11 @@ func (h *Handler) enrichPluginStatus(r *http.Request, list []plugins.Plugin) []p
 			script: "bootstrap/addons/install-harbor.sh",
 			prereq: "Core 08 xong — Ingress + cert-manager OK",
 		},
+		plugins.Monitoring: {
+			chart:  "69.2.4",
+			script: "bootstrap/addons/install-monitoring.sh",
+			prereq: "Core 08 xong — metrics-server khuyến nghị (bước 03b)",
+		},
 	}
 
 	for i := range list {
@@ -61,6 +67,17 @@ func (h *Handler) enrichPluginStatus(r *http.Request, list []plugins.Plugin) []p
 				list[i].ReadyHint = "Đã bật — chạy lệnh cài bên dưới trên VPS (tmux)"
 			} else {
 				list[i].ReadyHint = "Tùy chọn — GHCR mặc định nếu không cần on-prem"
+			}
+		case plugins.Monitoring:
+			if h.monitoringConfigured() && strings.TrimSpace(h.cfg.GrafanaAdminPassword) != "" {
+				list[i].Ready = true
+				list[i].ReadyHint = "GRAFANA_URL + admin password OK"
+			} else if h.monitoringConfigured() {
+				list[i].ReadyHint = "GRAFANA_URL có — thiếu password trong portal-api-env"
+			} else if list[i].Enabled {
+				list[i].ReadyHint = "Đã bật — chạy install-monitoring.sh trên VPS"
+			} else {
+				list[i].ReadyHint = "Phase 8 — Prometheus + Grafana"
 			}
 		case plugins.GHCR:
 			list[i].Ready = list[i].Enabled

@@ -16,10 +16,11 @@ Addon bootstrap (pin version, preflight):
   ./bootstrap/addons/run.sh check rancher   # chỉ kiểm tra RAM/disk/chart — không cài
   ./bootstrap/addons/run.sh check harbor
   ./bootstrap/addons/run.sh check argocd
+  ./bootstrap/addons/run.sh check monitoring
   ./bootstrap/addons/run.sh rancher    # cài Rancher (+ backup)
   ./bootstrap/addons/run.sh harbor     # cài Harbor
   ./bootstrap/addons/run.sh argocd     # cài Argo CD
-  ./bootstrap/addons/run.sh rancher --force
+  ./bootstrap/addons/run.sh monitoring # Prometheus + Grafana
 
 Bỏ qua kiểm tra tài nguyên: SKIP_RESOURCE_CHECK=1
 Cài dù thiếu RAM/disk:      FORCE_RESOURCE=1
@@ -27,13 +28,14 @@ Cài dù thiếu RAM/disk:      FORCE_RESOURCE=1
 Hoặc entry ngắn:
   bash bootstrap/addons/install-rancher.sh
   bash bootstrap/addons/install-harbor.sh
+  bash bootstrap/addons/install-monitoring.sh
 
 Yêu cầu: core bootstrap xong (06 + 08).
 EOF
 }
 
 list_addons() {
-  for name in rancher harbor argocd; do
+  for name in rancher harbor argocd monitoring; do
     if is_addon_done "$name"; then
       echo "[x] ${name}"
     else
@@ -71,8 +73,14 @@ run_addon() {
       fi
       bash "${ADDONS_DIR}/install-argocd.sh"
       ;;
+    monitoring)
+      if [[ "$force" == "true" ]]; then
+        export FORCE_VERSION=1
+      fi
+      bash "${ADDONS_DIR}/install-monitoring.sh"
+      ;;
     *)
-      echo "Addon không tồn tại: ${name} (rancher | harbor | argocd)" >&2
+      echo "Addon không tồn tại: ${name} (rancher | harbor | argocd | monitoring)" >&2
       exit 1
       ;;
   esac
@@ -89,10 +97,10 @@ case "${cmd}" in
     ;;
   check)
     name="${1:-}"
-    [[ -z "$name" ]] && { echo "Dùng: ./bootstrap/addons/run.sh check rancher|harbor|argocd" >&2; exit 1; }
+    [[ -z "$name" ]] && { echo "Dùng: ./bootstrap/addons/run.sh check rancher|harbor|argocd|monitoring" >&2; exit 1; }
     run_check "$name"
     ;;
-  rancher|harbor|argocd)
+  rancher|harbor|argocd|monitoring)
     run_addon "$cmd" "$force"
     ;;
   ""|help|-h|--help)

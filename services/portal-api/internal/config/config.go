@@ -42,6 +42,9 @@ type Config struct {
 	QuickLoginPassword   string
 	ArgoCDURL            string
 	ArgoCDNamespace      string
+	GrafanaURL           string
+	GrafanaAdminUser     string
+	GrafanaAdminPassword string
 	GitOpsRepoURL        string
 	GitOpsRepoBranch     string
 	GitOpsBasePath       string
@@ -95,6 +98,12 @@ func Load() Config {
 			argocdURL = "https://" + host
 		}
 	}
+	grafanaURL := strings.TrimSpace(os.Getenv("GRAFANA_URL"))
+	if grafanaURL == "" {
+		if host := strings.TrimSpace(os.Getenv("GRAFANA_HOST")); host != "" {
+			grafanaURL = "https://" + host
+		}
+	}
 
 	return Config{
 		Port:                 port,
@@ -132,6 +141,9 @@ func Load() Config {
 		QuickLoginPassword: firstNonEmpty(os.Getenv("QUICK_LOGIN_PASSWORD"), os.Getenv("PLATFORM_ADMIN_PASSWORD")),
 		ArgoCDURL:          argocdURL,
 		ArgoCDNamespace:    firstNonEmpty(os.Getenv("ARGOCD_NAMESPACE"), "argocd"),
+		GrafanaURL:           grafanaURL,
+		GrafanaAdminUser:     firstNonEmpty(os.Getenv("GRAFANA_ADMIN_USER"), "admin"),
+		GrafanaAdminPassword: firstNonEmpty(os.Getenv("GRAFANA_ADMIN_PASSWORD"), readSecretFile("/etc/grafana/admin_password")),
 		GitOpsRepoURL:      firstNonEmpty(os.Getenv("GITOPS_REPO_URL"), os.Getenv("GITHUB_GITOPS_REPO")),
 		GitOpsRepoBranch:   firstNonEmpty(os.Getenv("GITOPS_REPO_BRANCH"), "main"),
 		GitOpsBasePath:     firstNonEmpty(os.Getenv("GITOPS_BASE_PATH"), "apps"),

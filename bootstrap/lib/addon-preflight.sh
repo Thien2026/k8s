@@ -34,6 +34,10 @@ addon_resource_defaults() {
       ADDON_MIN_MEM_MB="${ADDON_ARGOCD_MIN_MEM_MB:-1536}"
       ADDON_MIN_DISK_GB="${ADDON_ARGOCD_MIN_DISK_GB:-10}"
       ;;
+    monitoring)
+      ADDON_MIN_MEM_MB="${ADDON_MONITORING_MIN_MEM_MB:-1536}"
+      ADDON_MIN_DISK_GB="${ADDON_MONITORING_MIN_DISK_GB:-12}"
+      ;;
     *)
       ADDON_MIN_MEM_MB="${ADDON_DEFAULT_MIN_MEM_MB:-2048}"
       ADDON_MIN_DISK_GB="${ADDON_DEFAULT_MIN_DISK_GB:-20}"
@@ -140,6 +144,7 @@ addon_check_resources_only() {
     rancher) addon_preflight_rancher_chart_only ;;
     harbor)  addon_preflight_harbor_chart_only ;;
     argocd)  addon_preflight_argocd_chart_only ;;
+    monitoring) addon_preflight_monitoring_chart_only ;;
     *) log "Addon không hỗ trợ check: ${addon}"; exit 1 ;;
   esac
   addon_check_resources "$addon"
@@ -163,6 +168,11 @@ addon_preflight_harbor_chart_only() {
 addon_preflight_argocd_chart_only() {
   addon_assert_chart_pinned ARGOCD_CHART_VERSION ArgoCD
   addon_assert_helm_chart_match argocd argocd "${ARGOCD_CHART_VERSION}"
+}
+
+addon_preflight_monitoring_chart_only() {
+  addon_assert_chart_pinned PROMETHEUS_STACK_CHART_VERSION kube-prometheus-stack
+  addon_assert_helm_chart_match kube-prometheus-stack monitoring "${PROMETHEUS_STACK_CHART_VERSION}"
 }
 
 addon_require_core_bootstrap() {
@@ -231,4 +241,9 @@ addon_preflight_harbor() {
 addon_preflight_argocd() {
   addon_check_resources argocd
   addon_preflight_argocd_chart_only
+}
+
+addon_preflight_monitoring() {
+  addon_check_resources monitoring
+  addon_preflight_monitoring_chart_only
 }

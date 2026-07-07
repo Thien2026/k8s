@@ -62,6 +62,7 @@ addon_legacy_done() {
     rancher) echo "${STATE_DIR}/09-rancher.done" ;;
     harbor)  echo "${STATE_DIR}/10-harbor.done" ;;
     argocd)  echo "${STATE_DIR}/11-argocd.done" ;;
+    monitoring) echo "${STATE_DIR}/12-monitoring.done" ;;
     *)       echo "" ;;
   esac
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
@@ -21,7 +22,7 @@ import (
 
 func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Client) http.Handler {
 	pluginStore := plugins.NewStore(db)
-	_ = pluginStore.ApplyEnvHints(context.Background(), rancherClient.Enabled(), cfg.HarborURL != "" && cfg.HarborPassword != "")
+	_ = pluginStore.ApplyEnvHints(context.Background(), rancherClient.Enabled(), cfg.HarborURL != "" && cfg.HarborPassword != "", strings.TrimSpace(cfg.GrafanaURL) != "")
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID, middleware.RealIP, middleware.Logger, middleware.Recoverer)

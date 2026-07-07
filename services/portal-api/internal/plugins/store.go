@@ -12,6 +12,7 @@ const (
 	GHCR    = "ghcr"
 	Rancher = "rancher"
 	Harbor  = "harbor"
+	Monitoring = "monitoring"
 )
 
 type Plugin struct {
@@ -98,8 +99,8 @@ func (s *Store) SetEnabled(ctx context.Context, name string, enabled bool) error
 }
 
 // ApplyEnvHints bật plugin lần đầu nếu engine đã cấu hình (VPS cũ sau migrate).
-func (s *Store) ApplyEnvHints(ctx context.Context, rancherConfigured, harborConfigured bool) error {
-	hints := map[string]bool{Rancher: rancherConfigured, Harbor: harborConfigured}
+func (s *Store) ApplyEnvHints(ctx context.Context, rancherConfigured, harborConfigured, monitoringConfigured bool) error {
+	hints := map[string]bool{Rancher: rancherConfigured, Harbor: harborConfigured, Monitoring: monitoringConfigured}
 	for name, ok := range hints {
 		if !ok {
 			continue

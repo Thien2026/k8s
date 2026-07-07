@@ -154,6 +154,20 @@ if [[ -n "${ARGOCD_HOST:-}" ]]; then
   SECRET_ARGS+=(--from-literal=ARGOCD_HOST="${ARGOCD_HOST}")
   SECRET_ARGS+=(--from-literal=ARGOCD_URL="https://${ARGOCD_HOST}")
 fi
+if [[ -f "${ROOT_DIR}/config/grafana.env" ]]; then
+  # shellcheck source=/dev/null
+  source "${ROOT_DIR}/config/grafana.env"
+fi
+if [[ -n "${GRAFANA_HOST:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GRAFANA_HOST="${GRAFANA_HOST}")
+  SECRET_ARGS+=(--from-literal=GRAFANA_URL="https://${GRAFANA_HOST}")
+fi
+if [[ -n "${GRAFANA_ADMIN_USER:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER}")
+fi
+if [[ -n "${GRAFANA_ADMIN_PASSWORD:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}")
+fi
 SECRET_ARGS+=(--from-literal=ARGOCD_NAMESPACE="${ARGOCD_NAMESPACE:-argocd}")
 if [[ -n "${GITOPS_REPO_URL:-}" ]]; then
   SECRET_ARGS+=(--from-literal=GITOPS_REPO_URL="${GITOPS_REPO_URL}")

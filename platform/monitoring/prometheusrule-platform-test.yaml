@@ -1,0 +1,21 @@
+# Alert test — luôn firing (severity=info) để verify Alertmanager pipeline.
+# Gỡ sau khi test: kubectl -n monitoring delete prometheusrule platform-monitoring-test
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-monitoring-test
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: platform.monitoring.test
+      rules:
+        - alert: PlatformMonitoringStackOK
+          expr: vector(1)
+          for: 2m
+          labels:
+            severity: info
+          annotations:
+            summary: "Monitoring stack hoạt động (alert test)"
+            description: "Prometheus + Alertmanager đang scrape. Xóa PrometheusRule platform-monitoring-test khi không cần."

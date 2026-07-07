@@ -4432,6 +4432,19 @@ async function pageProjectHub(main, slug, tab) {
     const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
     const dev = ov.dev || {};
     const prod = ov.prod || {};
+    const mon = ov.monitoring || {};
+    let monHtml = "";
+    if (mon.grafana_url && (mon.dev_dashboard_url || mon.prod_dashboard_url)) {
+      monHtml =
+        '<div class="card detail-card"><h3>Monitoring</h3><p class="muted">Metric theo namespace trên Grafana (đăng nhập qua card Hạ tầng nếu cần).</p><div class="meta-chips">' +
+        (mon.dev_dashboard_url
+          ? '<a class="chip chip-link" href="' + esc(mon.dev_dashboard_url) + '" target="_blank" rel="noopener">Grafana · Dev</a>'
+          : "") +
+        (mon.prod_dashboard_url
+          ? '<a class="chip chip-link" href="' + esc(mon.prod_dashboard_url) + '" target="_blank" rel="noopener">Grafana · Prod</a>'
+          : "") +
+        "</div></div>";
+    }
     main.innerHTML =
       projectHeader(p, p.description || "Tổng quan project") +
       '<div class="stat-grid">' +
@@ -4445,6 +4458,7 @@ async function pageProjectHub(main, slug, tab) {
       chip("Prod", p.namespace_prod) +
       (p.registry && p.registry.image_prefix ? chip(p.registry.label || "Registry", p.registry.image_prefix) : "") +
       "</div></div>" +
+      monHtml +
       '<div class="card detail-card"><p class="muted">Pipeline Git → image → deploy: cấu hình tại tab <strong>Deploy / Git</strong>, theo dõi workload tại <strong>Runtime</strong>.</p></div>';
     return;
   }

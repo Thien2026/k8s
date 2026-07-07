@@ -177,14 +177,17 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ## Phase 8 — Monitoring & Grafana (ưu tiên sau GitOps)
 
-> Gộp “Grafana” + “monitor” — một stack.
+> Gộp “Grafana” + “monitor” — một stack. Script: `bootstrap/addons/install-monitoring.sh`
 
-- [ ] Addon kube-prometheus-stack + `grafana.{domain}`
-- [ ] Dashboard node / namespace / ingress; Alertmanager cơ bản
-- [ ] Console link Grafana + widget theo project namespace
-- [ ] Retention Prometheus ngắn (7d) — tiết kiệm RAM VPS
+- [ ] `PROMETHEUS_STACK_CHART_VERSION` trong `config/env.sh`
+- [ ] `./bootstrap/addons/run.sh check monitoring` → `./bootstrap/addons/run.sh monitoring`
+- [ ] `grafana.{domain}` + TLS; `config/grafana.env` (password)
+- [ ] `FORCE_BUILD=1 ./bootstrap/run.sh 08 --force` — portal link Grafana
+- [ ] `./scripts/test-monitoring-pilot.sh` — smoke pass
+- [ ] Alert test: PrometheusRule `platform-monitoring-test` → Alertmanager
+- [ ] Console: card Hạ tầng Grafana + link dashboard namespace trên project overview
 
-**Xong khi:** Grafana có metric + 1 alert test.
+**Xong khi:** Grafana có metric + 1 alert test + smoke script pass.
 
 ---
 

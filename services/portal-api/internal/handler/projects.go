@@ -198,6 +198,13 @@ func (h *Handler) ProjectOverview(w http.ResponseWriter, r *http.Request) {
 		"dev":     map[string]any{"namespace": p.NamespaceDev},
 		"prod":    map[string]any{"namespace": p.NamespaceProd},
 	}
+	if h.monitoringConfigured() {
+		out["monitoring"] = map[string]any{
+			"grafana_url": trimURL(h.cfg.GrafanaURL),
+			"dev_dashboard_url":  grafanaNamespaceDashboardURL(h.cfg.GrafanaURL, p.NamespaceDev),
+			"prod_dashboard_url": grafanaNamespaceDashboardURL(h.cfg.GrafanaURL, p.NamespaceProd),
+		}
+	}
 	if h.rancher != nil && h.rancher.Enabled() {
 		cid := r.URL.Query().Get("cluster_id")
 		if pods, err := h.rancher.ListK8s(r.Context(), cid, "pods", p.NamespaceDev, 1, 500); err == nil {

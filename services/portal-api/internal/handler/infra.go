@@ -64,5 +64,25 @@ func (h *Handler) GetInfraLinks(w http.ResponseWriter, r *http.Request) {
 		items = append(items, lnk)
 	}
 
+	if h.monitoringConfigured() {
+		gURL := trimURL(h.cfg.GrafanaURL)
+		user := strings.TrimSpace(h.cfg.GrafanaAdminUser)
+		if user == "" {
+			user = "admin"
+		}
+		monOn, _ := h.plugins.Enabled(r.Context(), plugins.Monitoring)
+		lnk := infraLink{
+			Key:      "grafana",
+			Label:    "Grafana",
+			URL:      gURL,
+			LoginURL: gURL + "/login",
+			Username: user,
+			Password: strings.TrimSpace(h.cfg.GrafanaAdminPassword),
+			Enabled:  monOn || h.monitoringConfigured(),
+			Note:     "Metrics & dashboards — Prometheus + Alertmanager",
+		}
+		items = append(items, lnk)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
