@@ -2265,6 +2265,135 @@ tr.dns-row td {
   margin: 8px 0 10px;
 }
 
+.svc-res-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 8px;
+}
+
+.svc-res-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(72px, 1fr));
+  gap: 6px;
+  min-width: 160px;
+}
+
+.svc-res-input {
+  width: 100%;
+  min-width: 0;
+  padding: 5px 7px;
+  font-size: 11px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+}
+
+.svc-res-input:disabled {
+  opacity: 0.45;
+}
+
+.svc-res-mode {
+  min-width: 148px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.single-resources-panel {
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.chart-interactive {
+  position: relative;
+  width: 100%;
+  margin: 4px 0 2px;
+}
+
+.chart-interactive .chart-svg {
+  width: 100%;
+  height: 260px;
+  display: block;
+  pointer-events: none;
+}
+
+.chart-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.chart-crosshair-v,
+.chart-crosshair-h,
+.chart-focus-dot,
+.chart-interactive .chart-tooltip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.chart-interactive.is-hovering .chart-crosshair-v,
+.chart-interactive.is-hovering .chart-crosshair-h,
+.chart-interactive.is-hovering .chart-focus-dot,
+.chart-interactive.is-hovering .chart-tooltip {
+  opacity: 1;
+}
+
+.chart-crosshair-v {
+  width: 1px;
+  background: rgba(255, 255, 255, 0.62);
+  will-change: transform;
+}
+
+.chart-crosshair-h {
+  height: 1px;
+  background: rgba(255, 255, 255, 0.28);
+  will-change: transform;
+}
+
+.chart-focus-dot {
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  will-change: transform;
+}
+
+.chart-interactive .chart-tooltip {
+  z-index: 6;
+  min-width: 108px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  background: rgba(12, 16, 28, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42);
+  transform: translate(-50%, -100%);
+  will-change: left, top;
+}
+
+.chart-interactive .chart-tooltip .tt-time {
+  color: rgba(200, 210, 230, 0.78);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+
+.chart-interactive .chart-tooltip .tt-val {
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
 .port-list {
   color: var(--muted);
   font-size: 13px;

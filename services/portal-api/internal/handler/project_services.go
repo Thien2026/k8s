@@ -24,6 +24,11 @@ type projectServiceRow struct {
 	IngressPath    string `json:"ingress_path"`
 	ExposeIngress  *bool  `json:"expose_ingress,omitempty"`
 	SortOrder      int    `json:"sort_order"`
+	ResourcesMode  string `json:"resources_mode,omitempty"`
+	CPURequest     string `json:"cpu_request,omitempty"`
+	MemoryRequest  string `json:"memory_request,omitempty"`
+	CPULimit       string `json:"cpu_limit,omitempty"`
+	MemoryLimit    string `json:"memory_limit,omitempty"`
 }
 
 func serviceRowExposeIngress(r projectServiceRow) bool {
@@ -43,7 +48,9 @@ func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]p
 	rows, err := h.db.Query(ctx, `
 		SELECT name, COALESCE(display_name,''), build_context, COALESCE(build_mode,'dockerfile'),
 		       dockerfile_path, container_port, health_path, ingress_path, expose_ingress,
-		       COALESCE(stack,''), sort_order
+		       COALESCE(stack,''), sort_order,
+		       COALESCE(resources_mode,'platform'), COALESCE(cpu_request,''), COALESCE(memory_request,''),
+		       COALESCE(cpu_limit,''), COALESCE(memory_limit,'')
 		FROM project_services
 		WHERE project_id=$1 AND enabled=true
 		ORDER BY sort_order, name`, projectID)
@@ -56,7 +63,8 @@ func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]p
 		var s projectServiceRow
 		var expose bool
 		if err := rows.Scan(&s.Name, &s.DisplayName, &s.BuildContext, &s.BuildMode,
-			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &expose, &s.Stack, &s.SortOrder); err != nil {
+			&s.DockerfilePath, &s.ContainerPort, &s.HealthPath, &s.IngressPath, &expose, &s.Stack, &s.SortOrder,
+			&s.ResourcesMode, &s.CPURequest, &s.MemoryRequest, &s.CPULimit, &s.MemoryLimit); err != nil {
 			return nil, err
 		}
 		s.ExposeIngress = &expose
@@ -68,30 +76,70 @@ func (h *Handler) listProjectServices(ctx context.Context, projectID int64) ([]p
 	return list, rows.Err()
 }
 
+func serviceRowToServiceDef(r projectServiceRow) deploy.ServiceDef {
+	svc := deploy.ServiceDef{
+		Name:           r.Name,
+		DisplayName:    r.DisplayName,
+		BuildContext:   r.BuildContext,
+		BuildMode:      r.BuildMode,
+		Stack:          r.Stack,
+		DockerfilePath: r.DockerfilePath,
+		ContainerPort:  r.ContainerPort,
+		HealthPath:     r.HealthPath,
+		IngressPath:    r.IngressPath,
+		ExposeIngress:  serviceRowExposeIngress(r),
+		SortOrder:      r.SortOrder,
+		ResourcesMode:  r.ResourcesMode,
+		CPURequest:     r.CPURequest,
+		MemoryRequest:  r.MemoryRequest,
+		CPULimit:       r.CPULimit,
+		MemoryLimit:    r.MemoryLimit,
+	}
+	return deploy.NormalizeServiceDef(svc)
+}
+
 func (h *Handler) loadDeployServices(ctx context.Context, projectID int64, repo projectRepoRow) ([]deploy.ServiceDef, string) {
 	layout := h.getProjectLayout(ctx, projectID)
 	if layout != deploy.LayoutMulti {
-		return nil, deploy.LayoutSingle
+		res, _ := h.loadRepoAppResources(ctx, projectID)
+		return []deploy.ServiceDef{serviceRowToServiceDef(projectServiceRow{
+			Name:           "app",
+			DisplayName:    "App",
+			BuildContext:   repo.BuildContext,
+			BuildMode:      repo.BuildMode,
+			DockerfilePath: repo.DockerfilePath,
+			ContainerPort:  8080,
+			HealthPath:     "/health",
+			IngressPath:    "/",
+			ResourcesMode:  res.ResourcesMode,
+			CPURequest:     res.CPURequest,
+			MemoryRequest:  res.MemoryRequest,
+			CPULimit:       res.CPULimit,
+			MemoryLimit:    res.MemoryLimit,
+		})}, deploy.LayoutSingle
 	}
 	rows, err := h.listProjectServices(ctx, projectID)
 	if err != nil || len(rows) == 0 {
-		return nil, deploy.LayoutSingle
+		res, _ := h.loadRepoAppResources(ctx, projectID)
+		return []deploy.ServiceDef{serviceRowToServiceDef(projectServiceRow{
+			Name:           "app",
+			DisplayName:    "App",
+			BuildContext:   repo.BuildContext,
+			BuildMode:      repo.BuildMode,
+			DockerfilePath: repo.DockerfilePath,
+			ContainerPort:  8080,
+			HealthPath:     "/health",
+			IngressPath:    "/",
+			ResourcesMode:  res.ResourcesMode,
+			CPURequest:     res.CPURequest,
+			MemoryRequest:  res.MemoryRequest,
+			CPULimit:       res.CPULimit,
+			MemoryLimit:    res.MemoryLimit,
+		})}, deploy.LayoutSingle
 	}
 	out := make([]deploy.ServiceDef, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, deploy.ServiceDef{
-			Name:           r.Name,
-			DisplayName:    r.DisplayName,
-			BuildContext:   r.BuildContext,
-			BuildMode:      r.BuildMode,
-			Stack:          r.Stack,
-			DockerfilePath: r.DockerfilePath,
-			ContainerPort:  r.ContainerPort,
-			HealthPath:     r.HealthPath,
-			IngressPath:    r.IngressPath,
-			ExposeIngress:  serviceRowExposeIngress(r),
-			SortOrder:      r.SortOrder,
-		})
+		out = append(out, serviceRowToServiceDef(r))
 	}
 	return out, deploy.LayoutMulti
 }
@@ -128,6 +176,13 @@ func (h *Handler) GetProjectServices(w http.ResponseWriter, r *http.Request) {
 			HealthPath:     "/health",
 			IngressPath:    "/",
 		}}
+		if res, err := h.loadRepoAppResources(r.Context(), p.ID); err == nil {
+			items[0].ResourcesMode = res.ResourcesMode
+			items[0].CPURequest = res.CPURequest
+			items[0].MemoryRequest = res.MemoryRequest
+			items[0].CPULimit = res.CPULimit
+			items[0].MemoryLimit = res.MemoryLimit
+		}
 	}
 	u, _ := auth.UserFromContext(r.Context())
 	contract := h.detectServicesContract(r.Context(), u.ID, p, repo, repo.Branch)

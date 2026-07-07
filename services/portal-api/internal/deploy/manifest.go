@@ -143,6 +143,9 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 										{"secretRef": map[string]string{"name": secretName}},
 									}
 								}
+								if res := ContainerResources(svc); res != nil {
+									c["resources"] = res
+								}
 								return c
 							}(),
 						},

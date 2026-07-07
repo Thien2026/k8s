@@ -3333,6 +3333,86 @@ function defaultHealthPath(s) {
   return s.health_path || "/health";
 }
 
+function resourcesModeSelectHtml(name, mode, idx) {
+  mode = mode || "platform";
+  const idxAttr = idx != null && idx !== "" ? ' data-idx="' + idx + '"' : "";
+  return (
+    '<select name="' + name + '" class="svc-res-mode"' + idxAttr + ">" +
+    '<option value="platform"' + (mode === "platform" ? " selected" : "") + ">Mặc định platform</option>" +
+    '<option value="none"' + (mode === "none" ? " selected" : "") + ">Không set</option>" +
+    '<option value="custom"' + (mode === "custom" ? " selected" : "") + ">Tùy chỉnh</option>" +
+    "</select>"
+  );
+}
+
+function serviceResourcesInputsHtml(s, fieldPrefix) {
+  s = s || {};
+  fieldPrefix = fieldPrefix || "svc";
+  const mode = s.resources_mode || "platform";
+  const custom = mode === "custom";
+  const dis = custom ? "" : " disabled";
+  return (
+    '<div class="svc-res-grid">' +
+    '<input name="' + fieldPrefix + '_cpu_req" class="svc-res-input" value="' + esc(s.cpu_request || "") + '" placeholder="CPU req" title="CPU request (vd. 100m)"' + dis + " />" +
+    '<input name="' + fieldPrefix + '_mem_req" class="svc-res-input" value="' + esc(s.memory_request || "") + '" placeholder="RAM req" title="Memory request (vd. 128Mi)"' + dis + " />" +
+    '<input name="' + fieldPrefix + '_cpu_lim" class="svc-res-input" value="' + esc(s.cpu_limit || "") + '" placeholder="CPU lim" title="CPU limit (vd. 500m)"' + dis + " />" +
+    '<input name="' + fieldPrefix + '_mem_lim" class="svc-res-input" value="' + esc(s.memory_limit || "") + '" placeholder="RAM lim" title="Memory limit (vd. 512Mi)"' + dis + " />" +
+    "</div>"
+  );
+}
+
+function readServiceResourcesFromForm(form, idx) {
+  if (!form) return { resources_mode: "platform", cpu_request: "", memory_request: "", cpu_limit: "", memory_limit: "" };
+  if (idx === "app") {
+    return {
+      resources_mode: (form.querySelector('[name="app_res_mode"]') || {}).value || "platform",
+      cpu_request: (form.querySelector('[name="app_cpu_req"]') || {}).value || "",
+      memory_request: (form.querySelector('[name="app_mem_req"]') || {}).value || "",
+      cpu_limit: (form.querySelector('[name="app_cpu_lim"]') || {}).value || "",
+      memory_limit: (form.querySelector('[name="app_mem_lim"]') || {}).value || "",
+    };
+  }
+  return {
+    resources_mode: (form.querySelector('[name="svc_res_mode_' + idx + '"]') || {}).value || "platform",
+    cpu_request: (form.querySelector('[name="svc_cpu_req_' + idx + '"]') || {}).value || "",
+    memory_request: (form.querySelector('[name="svc_mem_req_' + idx + '"]') || {}).value || "",
+    cpu_limit: (form.querySelector('[name="svc_cpu_lim_' + idx + '"]') || {}).value || "",
+    memory_limit: (form.querySelector('[name="svc_mem_lim_' + idx + '"]') || {}).value || "",
+  };
+}
+
+function toggleServiceResourceInputs(form, idx) {
+  if (!form) return;
+  if (idx === "app") {
+    const mode = (form.querySelector('[name="app_res_mode"]') || {}).value || "platform";
+    const custom = mode === "custom";
+    form.querySelectorAll('[name="app_cpu_req"],[name="app_mem_req"],[name="app_cpu_lim"],[name="app_mem_lim"]').forEach(function (el) {
+      el.disabled = !custom;
+    });
+    return;
+  }
+  const modeEl = form.querySelector('[name="svc_res_mode_' + idx + '"]');
+  const custom = modeEl && modeEl.value === "custom";
+  ["svc_cpu_req_", "svc_mem_req_", "svc_cpu_lim_", "svc_mem_lim_"].forEach(function (prefix) {
+    const el = form.querySelector('[name="' + prefix + idx + '"]');
+    if (el) el.disabled = !custom;
+  });
+}
+
+function renderSingleResourcesPanel(s) {
+  s = s || {};
+  const mode = s.resources_mode || "platform";
+  return (
+    '<div class="single-resources-panel" style="margin-top:12px">' +
+    "<strong>CPU / RAM</strong>" +
+    '<p class="muted" style="margin:6px 0 8px;font-size:12px">Mặc định platform = preset an toàn · Không set = không inject limits (Grafana % có thể trống)</p>' +
+    '<div class="svc-res-row">' +
+    resourcesModeSelectHtml("app_res_mode", mode, "app") +
+    serviceResourcesInputsHtml(s, "app") +
+    "</div></div>"
+  );
+}
+
 function buildServiceTableRowHtml(s, idx) {
   const pub = serviceRowIsPublic(s);
   const stack = s.stack || "";
@@ -3354,6 +3434,13 @@ function buildServiceTableRowHtml(s, idx) {
     '<td><input name="svc_df_' + idx + '" value="' + esc(s.dockerfile_path || "Dockerfile") + '" placeholder="Dockerfile" /></td>' +
     '<td><label class="svc-public-label"><input type="checkbox" name="svc_public_' + idx + '"' + (pub ? " checked" : "") + ' /> Public</label></td>' +
     '<td><input name="svc_ingress_' + idx + '" value="' + esc(pub ? (s.ingress_path || "/") : "-") + '" placeholder="/ hoặc /api" /></td>' +
+    '<td>' + resourcesModeSelectHtml("svc_res_mode_" + idx, s.resources_mode || "platform", idx) + "</td>" +
+    '<td><div class="svc-res-grid">' +
+    '<input name="svc_cpu_req_' + idx + '" class="svc-res-input" value="' + esc(s.cpu_request || "") + '" placeholder="CPU req"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
+    '<input name="svc_mem_req_' + idx + '" class="svc-res-input" value="' + esc(s.memory_request || "") + '" placeholder="RAM req"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
+    '<input name="svc_cpu_lim_' + idx + '" class="svc-res-input" value="' + esc(s.cpu_limit || "") + '" placeholder="CPU lim"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
+    '<input name="svc_mem_lim_' + idx + '" class="svc-res-input" value="' + esc(s.memory_limit || "") + '" placeholder="RAM lim"' + ((s.resources_mode || "platform") === "custom" ? "" : " disabled") + ' />' +
+    "</div></td>" +
     '<td><input type="hidden" name="svc_health_' + idx + '" value="' + esc(s.health_path || defaultHealthPath(s)) + '" /></td>' +
     '<td><button type="button" class="btn-ghost btn-sm svc-remove-row" data-idx="' + idx + '">×</button></td>' +
     "</tr>"
@@ -3642,6 +3729,10 @@ function collectProjectLayoutPayload(form) {
   const checked = form.querySelector('input[name="layout"]:checked');
   const layout = checked ? checked.value : "single";
   const services = [];
+  if (layout === "single") {
+    const res = readServiceResourcesFromForm(form, "app");
+    services.push(Object.assign({ name: "app", container_port: 8080, health_path: "/health", ingress_path: "/" }, res));
+  }
   if (layout === "multi") {
     const tbody = document.getElementById("project-services-tbody");
     if (tbody) {
@@ -3681,6 +3772,8 @@ function collectProjectLayoutPayload(form) {
           health_path: healthPath,
           sort_order: parseInt(idx, 10) || 0,
         });
+        const res = readServiceResourcesFromForm(form, idx);
+        Object.assign(services[services.length - 1], res);
       });
     }
   }
@@ -3792,6 +3885,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
         (repo.build_mode_detected_path ? " · <code>" + esc(repo.build_mode_detected_path) + "</code>" : "") +
         " · listen <code>8080</code>"
       : "Chọn branch → kiểm tra tự động bên trên.") +
+    renderSingleResourcesPanel((items[0] || {})) +
     "</div>";
 
   const multiPanel =
@@ -3804,7 +3898,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<details class="layout-advanced-details"><summary>Tùy chỉnh service (dev)</summary>' +
     '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục build theo branch đã chọn ở bước 1.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
-    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th></th></tr></thead>' +
+    '<table class="data-table"><thead><tr><th>Tên</th><th>Build</th><th>Stack</th><th>Thư mục</th><th>Dockerfile</th><th>Public</th><th>Ingress</th><th>Resources</th><th>CPU/RAM</th><th></th></tr></thead>' +
     '<tbody id="project-services-tbody">' +
     multiItems.map(function (s, idx) { return buildServiceTableRowHtml(s, idx); }).join("") +
     "</tbody></table>" +
@@ -3995,6 +4089,24 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     }
   }
 
+  function bindResModeSelect(idx) {
+    if (idx === "app") {
+      const sel = form.querySelector('[name="app_res_mode"]');
+      if (!sel) return;
+      sel.onchange = function () {
+        toggleServiceResourceInputs(form, "app");
+      };
+      toggleServiceResourceInputs(form, "app");
+      return;
+    }
+    const sel = form.querySelector('[name="svc_res_mode_' + idx + '"]');
+    if (!sel) return;
+    sel.onchange = function () {
+      toggleServiceResourceInputs(form, idx);
+    };
+    toggleServiceResourceInputs(form, idx);
+  }
+
   async function loadGitHubDirs() {
     const parsed = parseRepoFromForm(form);
     const owner = parsed ? parsed.owner : (repo.github_owner || "").trim();
@@ -4079,7 +4191,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     let ingress = ingressEl ? ingressEl.value : defaults.ingress_path || "/";
     if (!expose) ingress = "-";
     const stackEl = form.querySelector('[name="svc_stack_' + idx + '"]');
-    return {
+    const row = {
       name: (form.querySelector('[name="svc_name_' + idx + '"]') || {}).value || defaults.name || "",
       build_mode: modeEl ? modeEl.value : defaults.build_mode || "dockerfile",
       stack: stackEl ? stackEl.value : defaults.stack || "",
@@ -4092,6 +4204,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
       sort_order: parseInt(idx, 10) || 0,
       display_name: defaults.display_name || "",
     };
+    return Object.assign(row, readServiceResourcesFromForm(form, idx));
   }
 
   function listServiceRows() {
@@ -4137,6 +4250,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     const idx = String(nextSvcIdx);
     tbody.insertAdjacentHTML("beforeend", buildServiceTableRowHtml(s || { name: "worker", build_context: ".", expose_ingress: false, ingress_path: "-" }, idx));
     bindCtxSelect(idx);
+    bindResModeSelect(idx);
     syncCtxHidden(idx);
     bindRemoveRow(idx);
     refreshPreview();
@@ -4161,7 +4275,9 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     listServiceRows().forEach(function (tr) {
       bindRemoveRow(tr.getAttribute("data-svc-idx"));
       bindCtxSelect(tr.getAttribute("data-svc-idx"));
+      bindResModeSelect(tr.getAttribute("data-svc-idx"));
     });
+    bindResModeSelect("app");
     refreshPreview();
     if (currentLayout() === "multi") {
       refreshGitHubDirs({ silent: true });
@@ -4186,9 +4302,11 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     if (multi) {
       template.forEach(function (_s, idx) {
         bindCtxSelect(idx);
+        bindResModeSelect(idx);
       });
       refreshGitHubDirs({ silent: true });
     }
+    bindResModeSelect("app");
     refreshPreview();
     scheduleCrosscheck();
   }
@@ -4227,6 +4345,7 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     bindCtxSelect(String(idx));
     bindRemoveRow(String(idx));
   });
+  rebindServiceRows();
   if (currentLayout() === "multi") {
     refreshGitHubDirs({ silent: true });
   }
@@ -4328,7 +4447,8 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
       if (newLayout === "multi" && (!payload.services || payload.services.length < 2)) {
         payload = { layout: "multi", services: defaultMultiTemplate(svcData) };
       } else if (newLayout === "single") {
-        payload = { layout: "single", services: [] };
+        const cur = collectProjectLayoutPayload(form);
+        payload = { layout: "single", services: cur.services && cur.services.length ? cur.services : [{ name: "app", resources_mode: "platform" }] };
       }
       try {
         changeLayoutBtn.disabled = true;
@@ -4570,6 +4690,7 @@ async function pageProjectHub(main, slug, tab) {
       chip("Dev", p.namespace_dev) +
       chip("Prod", p.namespace_prod) +
       "</div></div>";
+    bindInteractiveCharts(main);
     return;
   }
 
@@ -5826,14 +5947,10 @@ function monitoringPoints(values, divisor) {
   }).filter(Boolean);
 }
 
-function lineChart(points, opts) {
-  opts = opts || {};
-  const color = opts.color || "#6EE7FF";
-  const unit = opts.unit || "";
-  const digits = opts.digits == null ? 2 : opts.digits;
-  if (!points.length) {
-    return '<div class="muted">Chưa có dữ liệu timeline</div>';
-  }
+const chartRegistry = new Map();
+let chartSeq = 0;
+
+function lineChartLayout(points) {
   const w = 980;
   const h = 250;
   const m = { top: 14, right: 16, bottom: 34, left: 52 };
@@ -5856,6 +5973,25 @@ function lineChart(points, opts) {
   function xPos(i) {
     return m.left + i * step;
   }
+  return { w: w, h: h, m: m, cw: cw, ch: ch, min: min, max: max, span: span, step: step, yPos: yPos, xPos: xPos };
+}
+
+function lineChart(points, opts) {
+  opts = opts || {};
+  const color = opts.color || "#6EE7FF";
+  const unit = opts.unit || "";
+  const digits = opts.digits == null ? 2 : opts.digits;
+  if (!points.length) {
+    return '<div class="muted">Chưa có dữ liệu timeline</div>';
+  }
+  const layout = lineChartLayout(points);
+  const w = layout.w;
+  const h = layout.h;
+  const m = layout.m;
+  const cw = layout.cw;
+  const ch = layout.ch;
+  const yPos = layout.yPos;
+  const xPos = layout.xPos;
   const path = points.map(function (p, i) {
     const x = xPos(i);
     const y = yPos(p[1]);
@@ -5870,7 +6006,7 @@ function lineChart(points, opts) {
   const yGrid = [];
   for (let i = 0; i <= yTicks; i++) {
     const ratio = i / yTicks;
-    const val = max - ratio * (max - min);
+    const val = layout.max - ratio * (layout.max - layout.min);
     const y = m.top + ratio * ch;
     yGrid.push({ y: y, val: val });
   }
@@ -5884,20 +6020,12 @@ function lineChart(points, opts) {
   const last = points[points.length - 1];
   const lastX = xPos(points.length - 1);
   const lastY = yPos(last[1]);
-  const hoverDots = points.map(function (p, i) {
-    const ts = Number(p[0]) || 0;
-    const val = Number(p[1]) || 0;
-    const x = xPos(i);
-    const y = yPos(val);
-    return (
-      '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="8" fill="transparent">' +
-      "<title>" + esc(fmtClockFromUnix(ts) + " · " + val.toFixed(digits) + (unit ? " " + unit : "")) + "</title>" +
-      "</circle>"
-    );
-  }).join("");
+  const chartId = "chart-" + (++chartSeq);
+  chartRegistry.set(chartId, { points: points, color: color, unit: unit, digits: digits, layout: layout });
 
   return (
-    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:260px;display:block">' +
+    '<div class="chart-interactive" data-chart-id="' + chartId + '">' +
+    '<svg viewBox="0 0 ' + w + " " + h + '" class="chart-svg" aria-hidden="true">' +
     yGrid.map(function (g) {
       return (
         '<line x1="' + m.left + '" y1="' + g.y.toFixed(2) + '" x2="' + (m.left + cw) + '" y2="' + g.y.toFixed(2) + '" stroke="rgba(255,255,255,0.08)" stroke-width="1"></line>' +
@@ -5911,10 +6039,133 @@ function lineChart(points, opts) {
     }).join("") +
     '<path d="' + area + '" fill="' + color + '" opacity="0.12"></path>' +
     '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>' +
-    hoverDots +
-    '<circle cx="' + lastX.toFixed(2) + '" cy="' + lastY.toFixed(2) + '" r="3.5" fill="' + color + '"></circle>' +
-    "</svg>"
+    '<circle class="chart-last-dot" cx="' + lastX.toFixed(2) + '" cy="' + lastY.toFixed(2) + '" r="3.5" fill="' + color + '"></circle>' +
+    "</svg>" +
+    '<div class="chart-overlay">' +
+    '<div class="chart-crosshair-v"></div>' +
+    '<div class="chart-crosshair-h"></div>' +
+    '<div class="chart-focus-dot" style="background:' + color + ';box-shadow:0 0 0 2px #fff"></div>' +
+    '<div class="chart-tooltip" role="tooltip"><div class="tt-time"></div><div class="tt-val"></div></div>' +
+    "</div>" +
+    "</div>"
   );
+}
+
+function fmtChartDateTime(tsSec) {
+  const d = new Date((Number(tsSec) || 0) * 1000);
+  if (isNaN(d.getTime())) return "--:--";
+  const pad = function (n) {
+    return n < 10 ? "0" + n : String(n);
+  };
+  return (
+    pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + " " +
+    pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds())
+  );
+}
+
+function bindInteractiveCharts(root) {
+  (root || document).querySelectorAll(".chart-interactive").forEach(function (wrap) {
+    if (wrap.dataset.chartBound === "1") return;
+    const chartId = wrap.getAttribute("data-chart-id");
+    const meta = chartRegistry.get(chartId);
+    if (!meta) return;
+    wrap.dataset.chartBound = "1";
+
+    const overlay = wrap.querySelector(".chart-overlay");
+    const crosshairV = wrap.querySelector(".chart-crosshair-v");
+    const crosshairH = wrap.querySelector(".chart-crosshair-h");
+    const dot = wrap.querySelector(".chart-focus-dot");
+    const lastDot = wrap.querySelector(".chart-last-dot");
+    const tooltip = wrap.querySelector(".chart-tooltip");
+    const ttTime = wrap.querySelector(".tt-time");
+    const ttVal = wrap.querySelector(".tt-val");
+    if (!overlay || !crosshairV || !crosshairH || !dot || !tooltip || !ttTime || !ttVal) return;
+
+    const points = meta.points;
+    const layout = meta.layout;
+    const m = layout.m;
+    const cw = layout.cw;
+    const ch = layout.ch;
+    const unitSuffix = meta.unit ? " " + meta.unit : "";
+    let geom = null;
+    let pxCache = null;
+    let lastIdx = -1;
+
+    function rebuildGeom() {
+      const ow = overlay.clientWidth;
+      const oh = overlay.clientHeight;
+      if (!ow || !oh) return;
+      geom = {
+        left: (m.left / layout.w) * ow,
+        top: (m.top / layout.h) * oh,
+        width: (cw / layout.w) * ow,
+        height: (ch / layout.h) * oh,
+      };
+      crosshairV.style.top = geom.top.toFixed(1) + "px";
+      crosshairV.style.height = geom.height.toFixed(1) + "px";
+      crosshairH.style.left = "0px";
+      crosshairH.style.width = ow.toFixed(1) + "px";
+      pxCache = points.map(function (p, i) {
+        const xNorm = i / Math.max(points.length - 1, 1);
+        const yNorm = (p[1] - layout.min) / layout.span;
+        return {
+          px: geom.left + xNorm * geom.width,
+          py: geom.top + geom.height * (1 - yNorm),
+          time: fmtChartDateTime(p[0]),
+          val: Number(p[1]).toFixed(meta.digits) + unitSuffix,
+        };
+      });
+    }
+
+    function hideHover() {
+      lastIdx = -1;
+      wrap.classList.remove("is-hovering");
+      if (lastDot) lastDot.style.opacity = "1";
+    }
+
+    function pointIndexFromEvent(evt) {
+      if (!geom) rebuildGeom();
+      if (!geom || !geom.width) return 0;
+      const rect = overlay.getBoundingClientRect();
+      const mouseX = evt.clientX - rect.left - geom.left;
+      let idx = Math.round((mouseX / geom.width) * (points.length - 1));
+      if (idx < 0) idx = 0;
+      if (idx >= points.length) idx = points.length - 1;
+      return idx;
+    }
+
+    function showHover(idx) {
+      if (!pxCache) rebuildGeom();
+      if (!pxCache || !pxCache[idx]) return;
+      if (idx === lastIdx && wrap.classList.contains("is-hovering")) return;
+
+      const c = pxCache[idx];
+      lastIdx = idx;
+      wrap.classList.add("is-hovering");
+      crosshairV.style.transform = "translate3d(" + c.px.toFixed(1) + "px,0,0)";
+      crosshairH.style.transform = "translate3d(0," + c.py.toFixed(1) + "px,0)";
+      dot.style.transform = "translate3d(" + c.px.toFixed(1) + "px," + c.py.toFixed(1) + "px,0)";
+      tooltip.style.left = c.px.toFixed(1) + "px";
+      tooltip.style.top = (c.py - 8).toFixed(1) + "px";
+      ttTime.textContent = c.time;
+      ttVal.textContent = c.val;
+      if (lastDot) lastDot.style.opacity = "0.35";
+    }
+
+    function onMove(evt) {
+      showHover(pointIndexFromEvent(evt));
+    }
+
+    rebuildGeom();
+    overlay.addEventListener("pointerenter", onMove);
+    overlay.addEventListener("pointermove", onMove);
+    overlay.addEventListener("pointerleave", hideHover);
+    window.addEventListener("resize", function () {
+      geom = null;
+      pxCache = null;
+      rebuildGeom();
+    }, { passive: true });
+  });
 }
 
 function timelineStats(points) {

@@ -23,6 +23,11 @@ type ServiceDef struct {
 	IngressPath    string `json:"ingress_path"`
 	ExposeIngress  bool   `json:"expose_ingress"`
 	SortOrder      int    `json:"sort_order"`
+	ResourcesMode  string `json:"resources_mode,omitempty"`
+	CPURequest     string `json:"cpu_request,omitempty"`
+	MemoryRequest  string `json:"memory_request,omitempty"`
+	CPULimit       string `json:"cpu_limit,omitempty"`
+	MemoryLimit    string `json:"memory_limit,omitempty"`
 }
 
 const (
@@ -85,6 +90,9 @@ func (p Params) EffectiveServices() []ServiceDef {
 		if len(out) > 0 {
 			return out
 		}
+	}
+	if NormalizeLayout(p.Layout) == LayoutSingle && len(p.Services) == 1 {
+		return []ServiceDef{normalizeServiceDef(p.Services[0])}
 	}
 	return []ServiceDef{p.defaultSingleService()}
 }
