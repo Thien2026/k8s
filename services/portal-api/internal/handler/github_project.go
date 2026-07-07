@@ -221,9 +221,10 @@ func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	secretsProvisioned := []string{deploySecret}
-	if strings.TrimSpace(h.cfg.GitOpsPushToken) != "" && strings.TrimSpace(h.cfg.GitOpsRepoURL) != "" {
+	gitOpsCfg := h.loadGitOpsConfig(r.Context())
+	if gitOpsCfg.PushToken != "" && gitOpsCfg.RepoURL != "" {
 		gitOpsSecret := deploy.GitOpsTokenSecretName()
-		if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, gitOpsSecret, strings.TrimSpace(h.cfg.GitOpsPushToken)); err != nil {
+		if err := client.SetActionsSecret(r.Context(), ghToken, owner, repo, gitOpsSecret, gitOpsCfg.PushToken); err != nil {
 			log.Printf("github gitops token secret failed project=%s err=%v", p.Slug, err)
 			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "không tạo " + gitOpsSecret + ": " + err.Error()})
 			return
@@ -320,10 +321,11 @@ func (h *Handler) buildDeployParams(ctx context.Context, p projectRow, repo proj
 		BuildContext:     repo.BuildContext,
 		ImageTag:         imageTag,
 		HarborHost:       harborHost,
-		GitOpsRepoURL:    strings.TrimSpace(h.cfg.GitOpsRepoURL),
-		GitOpsRepoBranch: strings.TrimSpace(h.cfg.GitOpsRepoBranch),
-		GitOpsBasePath:   strings.TrimSpace(h.cfg.GitOpsBasePath),
 	}
+	gitOps := h.loadGitOpsConfig(ctx)
+	params.GitOpsRepoURL = gitOps.RepoURL
+	params.GitOpsRepoBranch = gitOps.RepoBranch
+	params.GitOpsBasePath = gitOps.BasePath
 	services, layout := h.loadDeployServices(ctx, p.ID, repo)
 	params.Layout = layout
 	params.Services = services

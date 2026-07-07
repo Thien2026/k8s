@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
@@ -18,6 +19,23 @@ func (h *Handler) domainPlatform() domains.Platform {
 		Domain:   h.cfg.PlatformDomain,
 		PublicIP: h.cfg.NodePublicIP,
 	}
+}
+
+// domainHostnameOwner trả về project đang giữ hostname (toàn platform).
+func (h *Handler) domainHostnameOwner(ctx context.Context, hostname string) (projectID int64, slug string, found bool) {
+	host := strings.TrimSpace(strings.ToLower(hostname))
+	if host == "" {
+		return 0, "", false
+	}
+	err := h.db.QueryRow(ctx, `
+		SELECT p.id, p.slug FROM project_domains d
+		INNER JOIN projects p ON p.id = d.project_id
+		WHERE LOWER(TRIM(d.hostname)) = $1
+		LIMIT 1`, host).Scan(&projectID, &slug)
+	if err != nil {
+		return 0, "", false
+	}
+	return projectID, slug, true
 }
 
 func (h *Handler) domainSyncer() *domains.Syncer {

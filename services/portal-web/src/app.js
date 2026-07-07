@@ -2837,6 +2837,177 @@ async function pageAddons(main) {
   });
 }
 
+function canManageGitOps() {
+  return state.user && state.user.role === "admin";
+}
+
+function renderGitOpsProjectCard(slug, pub, status, canScaffold) {
+  pub = pub || {};
+  status = status || {};
+  if (!pub.enabled && !pub.configured) {
+    return (
+      '<div class="card gitops-project-card" style="margin-bottom:16px">' +
+      '<h3>GitOps <span class="badge muted">Chưa bật</span></h3>' +
+      '<p class="muted">Admin chưa cấu hình repo GitOps — vẫn deploy bình thường qua Rancher. ' +
+      (canManageGitOps() ? '<a href="#/gitops">Cấu hình GitOps →</a>' : "Hỏi admin nếu cần Argo CD.") +
+      "</p></div>"
+    );
+  }
+  const devBadge = status.dev_scaffolded
+    ? '<span class="badge ok">dev ✓</span>'
+    : '<span class="badge warn">dev chưa scaffold</span>';
+  const prodBadge = status.prod_scaffolded
+    ? '<span class="badge ok">prod ✓</span>'
+    : '<span class="badge warn">prod chưa scaffold</span>';
+  let argoHtml = "";
+  ["dev", "prod"].forEach(function (env) {
+    const st = status["argocd_" + env];
+    if (!st) return;
+    argoHtml +=
+      '<div class="meta-chips" style="margin-top:6px">' +
+      chip("Argo " + env, (st.sync || "—") + " / " + (st.health || "—")) +
+      (st.url ? '<a class="chip-link" href="' + esc(st.url) + '" target="_blank" rel="noopener">Mở Argo</a>' : "") +
+      "</div>";
+  });
+  const scaffoldBtn =
+    canScaffold && pub.configured
+      ? '<button type="button" class="btn-primary btn-sm" id="gitops-scaffold-btn">Tạo scaffold GitOps</button>'
+      : "";
+  return (
+    '<div class="card gitops-project-card" style="margin-bottom:16px">' +
+    '<div class="gitops-card-head">' +
+    "<h3>GitOps " +
+    (pub.configured ? '<span class="badge ok">Đã cấu hình</span>' : '<span class="badge warn">Thiếu PAT</span>') +
+    "</h3>" +
+    scaffoldBtn +
+    "</div>" +
+    '<p class="muted">Repo: <code>' + esc(pub.repo_url || status.repo_url || "—") + "</code> · branch <code>" + esc(pub.repo_branch || "main") + "</code></p>" +
+    '<div class="meta-chips" style="margin-top:8px">' + devBadge + prodBadge + "</div>" +
+    argoHtml +
+    '<p class="muted" style="margin-top:8px;font-size:12px">Scaffold tạo <code>apps/' + esc(slug) + '/overlays/dev|prod</code> trên repo GitOps + đăng ký Argo CD (nếu bật).</p>' +
+    "</div>"
+  );
+}
+
+function bindGitOpsProjectCard(main, slug) {
+  const btn = main.querySelector("#gitops-scaffold-btn");
+  if (!btn) return;
+  btn.onclick = async function () {
+    if (!(await uiConfirm("Push manifest GitOps cho project " + slug + "?", { title: "Scaffold GitOps" }))) return;
+    btn.disabled = true;
+    btn.textContent = "Đang push…";
+    try {
+      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/gitops/scaffold", { method: "POST", body: {} });
+      toastSuccess("Đã scaffold " + (res.files || []).length + " file");
+      const mainEl = $("#main");
+      if (mainEl) pageProjectHub(mainEl, slug, "deploy");
+    } catch (err) {
+      toastError(errorMessage(err, "Scaffold thất bại"));
+      btn.disabled = false;
+      btn.textContent = "Tạo scaffold GitOps";
+    }
+  };
+}
+
+async function pageGitOps(main) {
+  if (!canManageGitOps()) {
+    main.innerHTML =
+      '<div class="page-header"><h2 class="page-title">GitOps</h2></div>' +
+      '<div class="card"><p class="error-text">Chỉ admin được cấu hình GitOps platform.</p></div>';
+    return;
+  }
+  main.innerHTML = '<p class="loading">Đang tải…</p>';
+  let cfg;
+  let pub;
+  try {
+    [cfg, pub] = await Promise.all([
+      api("/api/v1/admin/gitops"),
+      api("/api/v1/gitops/public"),
+    ]);
+  } catch (err) {
+    main.innerHTML = '<p class="error">' + esc(errorMessage(err)) + "</p>";
+    return;
+  }
+  const tokenHint = cfg.token_configured
+    ? '<span class="badge ok">PAT đã lưu</span>'
+    : '<span class="badge warn">Chưa có PAT</span>';
+  main.innerHTML =
+    '<div class="page-header"><h2 class="page-title">GitOps</h2>' +
+    '<p class="page-subtitle">Repo manifest chung cho platform — CI ghi tag, Argo CD sync cluster. Một repo cho tất cả project.</p></div>' +
+    '<div class="card gitops-settings-card">' +
+    "<h3>Cấu hình repo <span id=\"gitops-token-badge\">" + tokenHint + "</span></h3>" +
+    '<form id="gitops-settings-form" class="login-form" style="max-width:560px">' +
+    '<label>Repo URL<input name="repo_url" type="url" required placeholder="https://github.com/org/gitopt" value="' + esc(cfg.repo_url || "") + '" /></label>' +
+    '<div class="form-row">' +
+    '<label>Branch<input name="repo_branch" value="' + esc(cfg.repo_branch || "main") + '" /></label>' +
+    '<label>Base path<input name="base_path" value="' + esc(cfg.base_path || "apps") + '" placeholder="apps" /></label>' +
+    "</div>" +
+    '<label>PAT (GitHub)<input name="push_token" type="password" autocomplete="new-password" placeholder="' +
+    (cfg.token_configured ? "Để trống giữ PAT hiện tại" : "ghp_… quyền repo") +
+    '" /></label>' +
+    '<p class="muted" style="font-size:12px">PAT cần quyền <code>contents:write</code> trên repo GitOps. Platform inject secret <code>PLATFORM_GITOPS_TOKEN</code> vào workflow project khi setup GitHub.</p>' +
+  '<div class="gitops-form-actions">' +
+    '<button type="submit" class="btn-primary">Lưu cấu hình</button>' +
+    '<button type="button" class="btn-ghost btn-sm" id="gitops-test-btn">Kiểm tra kết nối</button>' +
+    "</div></form>" +
+    (pub.argocd_enabled && pub.argocd_url
+      ? '<p class="muted" style="margin-top:16px">Argo CD: <a href="' + esc(pub.argocd_url) + '" target="_blank" rel="noopener">' + esc(pub.argocd_url) + "</a></p>"
+      : '<p class="muted" style="margin-top:16px">Argo CD: chưa bật — set <code>ARGOCD_NAMESPACE</code> trên VPS.</p>') +
+    "</div>" +
+    '<div class="card" style="margin-top:16px"><h3>Hướng dẫn nhanh</h3><ol class="deploy-steps">' +
+    "<li>Tạo repo GitHub (vd. <code>gitopt</code>) — public hoặc private.</li>" +
+    "<li>Điền URL + PAT ở trên → <strong>Kiểm tra kết nối</strong> → <strong>Lưu</strong>.</li>" +
+    "<li>Vào từng project → tab <strong>Deploy / Git</strong> → <strong>Tạo scaffold GitOps</strong>.</li>" +
+    "<li>Push code — CI sync tag vào overlay → Argo deploy (dev auto-sync).</li>" +
+    "</ol></div>";
+
+  const form = document.getElementById("gitops-settings-form");
+  form.onsubmit = async function (e) {
+    e.preventDefault();
+    const fd = new FormData(form);
+    const body = {
+      repo_url: (fd.get("repo_url") || "").toString().trim(),
+      repo_branch: (fd.get("repo_branch") || "main").toString().trim(),
+      base_path: (fd.get("base_path") || "apps").toString().trim(),
+    };
+    const tok = (fd.get("push_token") || "").toString().trim();
+    if (tok) body.push_token = tok;
+    try {
+      await api("/api/v1/admin/gitops", { method: "PATCH", body: body });
+      toastSuccess("Đã lưu cấu hình GitOps");
+      pageGitOps(main);
+    } catch (err) {
+      toastError(errorMessage(err));
+    }
+  };
+  document.getElementById("gitops-test-btn").onclick = async function () {
+    const fd = new FormData(form);
+    const tok = (fd.get("push_token") || "").toString().trim();
+    if (tok) {
+      try {
+        await api("/api/v1/admin/gitops", {
+          method: "PATCH",
+          body: {
+            repo_url: (fd.get("repo_url") || "").toString().trim(),
+            repo_branch: (fd.get("repo_branch") || "main").toString().trim(),
+            base_path: (fd.get("base_path") || "apps").toString().trim(),
+            push_token: tok,
+          },
+        });
+      } catch (err) {
+        toastError(errorMessage(err));
+        return;
+      }
+    }
+    try {
+      const res = await api("/api/v1/admin/gitops/test", { method: "POST", body: {} });
+      toastSuccess(res.message || "Kết nối OK");
+    } catch (err) {
+      toastError(errorMessage(err, "Kiểm tra thất bại"));
+    }
+  };
+}
+
 function registryChip(p) {
   const reg = p.registry || {};
   const name = reg.label || (p.registry_provider === "harbor" ? "Harbor" : "GHCR");
@@ -4498,7 +4669,9 @@ async function pageProjectHub(main, slug, tab) {
     const svcP = api("/api/v1/projects/" + encodeURIComponent(slug) + "/services").catch(function () {
       return { layout: "single", items: [] };
     });
-    const [ghStatus, plan, svcData] = await Promise.all([ghStatusP, planP, svcP]);
+    const gitopsPubP = api("/api/v1/gitops/public").catch(function () { return {}; });
+    const gitopsStatusP = api("/api/v1/projects/" + encodeURIComponent(slug) + "/gitops/status").catch(function () { return {}; });
+    const [ghStatus, plan, svcData, gitopsPub, gitopsStatus] = await Promise.all([ghStatusP, planP, svcP, gitopsPubP, gitopsStatusP]);
 
     const stepsHtml = (plan.steps || [])
       .map(function (s) {
@@ -4516,6 +4689,7 @@ async function pageProjectHub(main, slug, tab) {
     main.innerHTML =
       projectHeader(p, "Deploy / Git", { help: "deploy" }) +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "deploy"); }) +
+      renderGitOpsProjectCard(slug, gitopsPub, gitopsStatus, canWriteK8s()) +
       renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghReposPlaceholder, canWriteK8s()) +
       '<div class="card" style="margin-bottom:16px"><h3>Tóm tắt</h3>' +
       '<div class="meta-chips">' +
@@ -4594,6 +4768,7 @@ async function pageProjectHub(main, slug, tab) {
 
     bindSnippetCopyButtons(main);
     bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken);
+    bindGitOpsProjectCard(main, slug);
     bindDeployHelpTriggers(main);
 
     Promise.all([
@@ -4965,6 +5140,7 @@ async function pageProjectHub(main, slug, tab) {
       projectHeader(p, "Domains · URL & Ingress") +
       '<div class="card"><h3>URL truy cập app</h3>' +
       '<p class="muted">Domain <strong>Tự động</strong> dùng ngay (sslip / subdomain platform). <strong>Custom</strong> cần cấu hình DNS trỏ về cluster.</p>' +
+      '<p class="muted deploy-help-note-optional" style="margin-top:8px;font-size:12px">Mỗi hostname chỉ gắn <strong>một project</strong> trên toàn platform — project khác dùng cùng tên sẽ bị chặn. Cùng project có thể thêm <strong>nhiều domain khác tên</strong> trên một env (dev/prod).</p>' +
       (canManage
         ? '<form id="add-domain-form" class="login-form" style="max-width:520px;margin-bottom:16px">' +
           '<div class="form-row"><label>Custom hostname<input name="hostname" required placeholder="api.congty.com" /></label>' +
@@ -5903,6 +6079,7 @@ const routes = {
   "my-projects": (main) => pageMyProjects(main),
   "platform-projects": (main) => pagePlatformProjects(main),
   addons: (main) => pageAddons(main),
+  gitops: (main) => pageGitOps(main),
   "add-worker": (main) => pageAddWorker(main),
   audit: (main) => pageAudit(main),
   users: (main) => pageUsers(main),
@@ -6553,7 +6730,7 @@ function setGroupCollapsed(group, collapsed) {
 }
 
 const NAV_ICONS = {
-  overview: "◉", "my-projects": "▣", "platform-projects": "＋", addons: "🧩", audit: "📋", users: "👤", "add-worker": "⊕", clusters: "◎", projects: "▣", namespaces: "▤", nodes: "⬡",
+  overview: "◉", "my-projects": "▣", "platform-projects": "＋", addons: "🧩", gitops: "⎇", audit: "📋", users: "👤", "add-worker": "⊕", clusters: "◎", projects: "▣", namespaces: "▤", nodes: "⬡",
   events: "⚡", deployments: "▶", statefulsets: "▧", daemonsets: "▨",
   jobs: "⏱", cronjobs: "↻", pods: "●", services: "🔗", ingresses: "🌐",
   horizontalpodautoscalers: "📈", persistentvolumeclaims: "💾",

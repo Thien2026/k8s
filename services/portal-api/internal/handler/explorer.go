@@ -37,6 +37,9 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, r *http.Request) {
 	if u.Role == auth.RoleAdmin || u.Role == auth.RoleTechLead {
 		menu = append(menu, item{Key: "addons", Label: "Addons", Section: "platform", Group: "Platform", Type: "page"})
 	}
+	if u.Role == auth.RoleAdmin {
+		menu = append(menu, item{Key: "gitops", Label: "GitOps", Section: "platform", Group: "Platform", Type: "page"})
+	}
 
 	rancherOn, _ := h.plugins.Enabled(r.Context(), plugins.Rancher)
 	if auth.CanViewInfra(u.Role) && rancherOn {

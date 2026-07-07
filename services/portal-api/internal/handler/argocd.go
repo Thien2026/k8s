@@ -16,8 +16,13 @@ type argoAppStatus struct {
 }
 
 func (h *Handler) argoEnabled() bool {
+	return h.argoEnabledCtx(context.Background())
+}
+
+func (h *Handler) argoEnabledCtx(ctx context.Context) bool {
+	g := h.loadGitOpsConfig(ctx)
 	return h.rancher != nil && h.rancher.Enabled() &&
-		strings.TrimSpace(h.cfg.GitOpsRepoURL) != "" &&
+		strings.TrimSpace(g.RepoURL) != "" &&
 		strings.TrimSpace(h.cfg.ArgoCDNamespace) != ""
 }
 
@@ -30,7 +35,12 @@ func (h *Handler) argoAppName(slug, env string) string {
 }
 
 func (h *Handler) argoRepoPath(slug, env string) string {
-	base := strings.Trim(strings.TrimSpace(h.cfg.GitOpsBasePath), "/")
+	return h.argoRepoPathCtx(context.Background(), slug, env)
+}
+
+func (h *Handler) argoRepoPathCtx(ctx context.Context, slug, env string) string {
+	g := h.loadGitOpsConfig(ctx)
+	base := strings.Trim(strings.TrimSpace(g.BasePath), "/")
 	if base == "" {
 		base = "apps"
 	}
@@ -52,6 +62,7 @@ func (h *Handler) argoDashboardURL(appName string) string {
 func (h *Handler) ensureArgoApplication(ctx context.Context, p projectRow, env, imageTag string) (string, string, error) {
 	appName := h.argoAppName(p.Slug, env)
 	ns := strings.TrimSpace(h.cfg.ArgoCDNamespace)
+	g := h.loadGitOpsConfig(ctx)
 	destNS := h.projectNamespace(p, env)
 	payload := map[string]any{
 		"apiVersion": "argoproj.io/v1alpha1",
@@ -70,9 +81,9 @@ func (h *Handler) ensureArgoApplication(ctx context.Context, p projectRow, env, 
 		"spec": map[string]any{
 			"project": "default",
 			"source": map[string]any{
-				"repoURL":        strings.TrimSpace(h.cfg.GitOpsRepoURL),
-				"targetRevision": strings.TrimSpace(h.cfg.GitOpsRepoBranch),
-				"path":           h.argoRepoPath(p.Slug, env),
+				"repoURL":        strings.TrimSpace(g.RepoURL),
+				"targetRevision": strings.TrimSpace(g.RepoBranch),
+				"path":           h.argoRepoPathCtx(ctx, p.Slug, env),
 			},
 			"destination": map[string]any{
 				"server":    "https://kubernetes.default.svc",

@@ -1265,6 +1265,27 @@ body {
   border-top: 1px solid var(--border);
 }
 
+.gitops-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.gitops-card-head h3 {
+  margin: 0;
+}
+
+.gitops-form-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
 .plugin-toggle {
   display: flex;
   align-items: center;

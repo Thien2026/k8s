@@ -675,6 +675,16 @@ func (h *Handler) AddProjectDomain(w http.ResponseWriter, r *http.Request) {
 	if body.TLSEnabled != nil {
 		tls = *body.TLSEnabled
 	}
+	if ownerID, ownerSlug, taken := h.domainHostnameOwner(r.Context(), host); taken {
+		if ownerID == p.ID {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "hostname đã tồn tại trong project"})
+		} else {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error": fmt.Sprintf("hostname %s đã được project «%s» sử dụng — mỗi domain chỉ gắn một project", host, ownerSlug),
+			})
+		}
+		return
+	}
 	var id int64
 	err := h.db.QueryRow(r.Context(), `
 		INSERT INTO project_domains (project_id, hostname, environment, tls_enabled, kind, ingress_name)
@@ -682,6 +692,12 @@ func (h *Handler) AddProjectDomain(w http.ResponseWriter, r *http.Request) {
 		p.ID, host, env, tls).Scan(&id)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") {
+			if ownerID, ownerSlug, taken := h.domainHostnameOwner(r.Context(), host); taken && ownerID != p.ID {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"error": fmt.Sprintf("hostname %s đã được project «%s» sử dụng", host, ownerSlug),
+				})
+				return
+			}
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "hostname đã tồn tại trong project"})
 			return
 		}

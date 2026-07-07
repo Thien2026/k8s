@@ -80,6 +80,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Use(h.requireAuth)
 
 		r.Get("/dashboard", h.Dashboard)
+		r.Get("/gitops/public", h.GetGitOpsPublic)
 		r.Get("/infra/links", h.GetInfraLinks)
 		r.Get("/cluster", h.ClusterSummary)
 		r.Get("/projects", h.ListProjects)
@@ -99,6 +100,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Post("/projects/{slug}/deploy/promote", h.PromoteProjectDeploy)
 		r.Get("/projects/{slug}/deploy/promote-readiness", h.GetPromoteReadiness)
 		r.Post("/projects/{slug}/deploy/rollback", h.RollbackProjectDeploy)
+		r.Get("/projects/{slug}/gitops/status", h.GetProjectGitOpsStatus)
+		r.Post("/projects/{slug}/gitops/scaffold", h.PostProjectGitOpsScaffold)
 		r.Patch("/projects/{slug}/repo/auto-deploy", h.PatchProjectAutoDeploy)
 		r.Post("/projects/{slug}/github/setup", h.ProjectGitHubSetup)
 		r.Get("/github/status", h.GitHubStatus)
@@ -161,6 +164,9 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 			r.Get("/admin/users", h.AdminListUsers)
 			r.Post("/admin/users", h.AdminCreateUser)
 			r.Patch("/admin/users/{id}", h.AdminUpdateUser)
+			r.Get("/admin/gitops", h.GetAdminGitOps)
+			r.Patch("/admin/gitops", h.PatchAdminGitOps)
+			r.Post("/admin/gitops/test", h.PostAdminGitOpsTest)
 		})
 	})
 
