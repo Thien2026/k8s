@@ -4,15 +4,29 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export KUBECONFIG="${KUBECONFIG:-${ROOT_DIR}/kubeconfig/rke2.yaml}"
-export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:${PATH}"
+export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 
 NS="monitoring"
 FAIL=0
 
 ok() { echo "  ✓ $*"; }
 fail() { echo "  ✗ $*"; FAIL=1; }
+warn() { echo "  · $*"; }
 
-echo "== Monitoring pilot smoke =="
+prom_query() {
+  local expr="$1"
+  local enc
+  enc="$(printf '%s' "$expr" | sed 's/ /%20/g; s/{/%7B/g; s/}/%7D/g; s/"/%22/g; s/\[/%5B/g; s/\]/%5D/g')"
+  kubectl exec -n "${NS}" prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- \
+    wget -qO- "http://localhost:9090/api/v1/query?query=${enc}" 2>/dev/null || echo ""
+}
+
+alert_firing() {
+  local name="$1"
+  prom_query "ALERTS{alertname=\"${name}\",alertstate=\"firing\"}" | grep -q '"result":\[{' 2>/dev/null
+}
+
+echo "== Monitoring pilot smoke (Phase 8) =="
 
 if ! kubectl get ns "${NS}" >/dev/null 2>&1; then
   fail "namespace ${NS} chưa có — chạy bootstrap/addons/install-monitoring.sh"
@@ -45,9 +59,22 @@ else
 fi
 
 if kubectl -n "${NS}" get prometheusrule platform-monitoring-test >/dev/null 2>&1; then
-  ok "PrometheusRule test có mặt"
+  ok "PrometheusRule platform-monitoring-test"
 else
-  echo "  · PrometheusRule test chưa apply (tuỳ chọn)"
+  fail "thiếu PrometheusRule platform-monitoring-test — kubectl apply -f platform/monitoring/prometheusrule-platform-test.yaml"
+fi
+
+if alert_firing "PlatformMonitoringStackOK"; then
+  ok "alert PlatformMonitoringStackOK đang firing (pipeline OK)"
+else
+  fail "alert PlatformMonitoringStackOK chưa firing — đợi ~2 phút sau khi apply rule"
+fi
+
+metrics_sample="$(prom_query 'up{job="kube-state-metrics"}' || true)"
+if echo "${metrics_sample}" | grep -q '"status":"success"'; then
+  ok "Prometheus scrape kube-state-metrics"
+else
+  fail "Prometheus không scrape được kube-state-metrics"
 fi
 
 if [[ -f "${ROOT_DIR}/config/grafana.env" ]]; then
@@ -55,16 +82,35 @@ if [[ -f "${ROOT_DIR}/config/grafana.env" ]]; then
   source "${ROOT_DIR}/config/grafana.env"
   if [[ -n "${GRAFANA_HOST:-}" ]]; then
     ok "config/grafana.env — host ${GRAFANA_HOST}"
+    if [[ -n "${GRAFANA_URL:-}" ]]; then
+      code="$(curl -sk -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/login" 2>/dev/null || echo 000)"
+      if [[ "${code}" == "200" || "${code}" == "302" ]]; then
+        ok "Grafana HTTPS ${GRAFANA_URL} (${code})"
+      else
+        fail "Grafana HTTPS ${GRAFANA_URL} trả HTTP ${code}"
+      fi
+    fi
+  fi
+else
+  warn "chưa có config/grafana.env — chạy monitoring/install.sh"
+fi
+
+if [[ -f "${ROOT_DIR}/config/env.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${ROOT_DIR}/config/env.sh"
+  if [[ -n "${PROMETHEUS_STACK_CHART_VERSION:-}" ]]; then
+    ok "PROMETHEUS_STACK_CHART_VERSION=${PROMETHEUS_STACK_CHART_VERSION}"
+  else
+    fail "thiếu PROMETHEUS_STACK_CHART_VERSION trong config/env.sh"
   fi
 fi
 
 if [[ "${FAIL}" -eq 0 ]]; then
   echo ""
-  echo "PASS — monitoring stack cơ bản OK."
-  echo "Mở Grafana, đăng nhập, vào Alerting → xem PlatformMonitoringStackOK (nếu rule test đã apply)."
+  echo "PASS — Phase 8 monitoring OK (Grafana + Prometheus + alert test)."
   exit 0
 fi
 
 echo ""
-echo "FAIL — xem log pod: kubectl -n ${NS} get pods"
+echo "FAIL — xem log: kubectl -n ${NS} get pods"
 exit 1

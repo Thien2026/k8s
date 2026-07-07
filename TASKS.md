@@ -179,15 +179,15 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 > Gộp “Grafana” + “monitor” — một stack. Script: `bootstrap/addons/install-monitoring.sh`
 
-- [ ] `PROMETHEUS_STACK_CHART_VERSION` trong `config/env.sh`
-- [ ] `./bootstrap/addons/run.sh check monitoring` → `./bootstrap/addons/run.sh monitoring`
-- [ ] `grafana.{domain}` + TLS; `config/grafana.env` (password)
-- [ ] `FORCE_BUILD=1 ./bootstrap/run.sh 08 --force` — portal link Grafana
-- [ ] `./scripts/test-monitoring-pilot.sh` — smoke pass
-- [ ] Alert test: PrometheusRule `platform-monitoring-test` → Alertmanager
-- [ ] Console: card Hạ tầng Grafana + link dashboard namespace trên project overview
+- [x] `PROMETHEUS_STACK_CHART_VERSION` trong `config/env.sh`
+- [x] `./bootstrap/addons/run.sh check monitoring` → `./bootstrap/addons/run.sh monitoring`
+- [x] `grafana.{domain}` + TLS; `config/grafana.env` (password)
+- [x] `FORCE_BUILD=1 ./bootstrap/run.sh 08 --force` — portal link Grafana
+- [x] `./scripts/test-monitoring-pilot.sh` — smoke pass
+- [x] Alert test: PrometheusRule `platform-monitoring-test` → Alertmanager
+- [x] Console: card Hạ tầng Grafana + link dashboard namespace trên project overview
 
-**Xong khi:** Grafana có metric + 1 alert test + smoke script pass.
+**Xong khi:** Grafana có metric + 1 alert test + smoke script pass. ✅ (2026-07-07)
 
 ---
 
