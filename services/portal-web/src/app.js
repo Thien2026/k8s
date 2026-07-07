@@ -5834,8 +5834,8 @@ function lineChart(points, opts) {
   if (!points.length) {
     return '<div class="muted">Chưa có dữ liệu timeline</div>';
   }
-  const w = 760;
-  const h = 220;
+  const w = 980;
+  const h = 250;
   const m = { top: 14, right: 16, bottom: 34, left: 52 };
   const cw = w - m.left - m.right;
   const ch = h - m.top - m.bottom;
@@ -5874,20 +5874,30 @@ function lineChart(points, opts) {
     const y = m.top + ratio * ch;
     yGrid.push({ y: y, val: val });
   }
-  const firstTs = Number(points[0][0]) || 0;
-  const midTs = Number(points[Math.floor(points.length / 2)][0]) || firstTs;
-  const lastTs = Number(points[points.length - 1][0]) || firstTs;
-  const xTicks = [
-    { x: xPos(0), label: fmtClockFromUnix(firstTs) },
-    { x: xPos(Math.floor(points.length / 2)), label: fmtClockFromUnix(midTs) },
-    { x: xPos(points.length - 1), label: fmtClockFromUnix(lastTs) },
-  ];
+  const tickCount = 5;
+  const xTicks = [];
+  for (let i = 0; i < tickCount; i++) {
+    const idx = Math.round((points.length - 1) * (i / (tickCount - 1)));
+    const ts = Number(points[idx][0]) || 0;
+    xTicks.push({ x: xPos(idx), label: fmtClockFromUnix(ts) });
+  }
   const last = points[points.length - 1];
   const lastX = xPos(points.length - 1);
   const lastY = yPos(last[1]);
+  const hoverDots = points.map(function (p, i) {
+    const ts = Number(p[0]) || 0;
+    const val = Number(p[1]) || 0;
+    const x = xPos(i);
+    const y = yPos(val);
+    return (
+      '<circle cx="' + x.toFixed(2) + '" cy="' + y.toFixed(2) + '" r="8" fill="transparent">' +
+      "<title>" + esc(fmtClockFromUnix(ts) + " · " + val.toFixed(digits) + (unit ? " " + unit : "")) + "</title>" +
+      "</circle>"
+    );
+  }).join("");
 
   return (
-    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:220px;display:block">' +
+    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:260px;display:block">' +
     yGrid.map(function (g) {
       return (
         '<line x1="' + m.left + '" y1="' + g.y.toFixed(2) + '" x2="' + (m.left + cw) + '" y2="' + g.y.toFixed(2) + '" stroke="rgba(255,255,255,0.08)" stroke-width="1"></line>' +
@@ -5901,6 +5911,7 @@ function lineChart(points, opts) {
     }).join("") +
     '<path d="' + area + '" fill="' + color + '" opacity="0.12"></path>' +
     '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>' +
+    hoverDots +
     '<circle cx="' + lastX.toFixed(2) + '" cy="' + lastY.toFixed(2) + '" r="3.5" fill="' + color + '"></circle>' +
     "</svg>"
   );
