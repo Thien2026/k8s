@@ -4510,6 +4510,8 @@ async function pageProjectHub(main, slug, tab) {
     const pods = Number(metrics.running_pods || 0);
     const cpuSeries = monitoringPoints(metrics.cpu_series, 1);
     const memSeries = monitoringPoints(metrics.memory_series, 1024 * 1024);
+    const cpuStats = timelineStats(cpuSeries);
+    const memStats = timelineStats(memSeries);
     const insight = monitoringInsight(cpu, memMiB, restarts);
     const topCPU = (metrics.top_cpu_pods || []).map(function (r) {
       return { name: r.name || "unknown", value: Number(r.value || 0).toFixed(4) + " cores" };
@@ -4532,9 +4534,11 @@ async function pageProjectHub(main, slug, tab) {
       "</div>" +
       '<div class="card detail-card"><h3>CPU timeline (' + esc(win) + ')</h3>' +
       sparkline(cpuSeries, "#46d6ff") +
+      timelineStatsChips(cpuStats, "cores", 3) +
       '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
       '<div class="card detail-card"><h3>Memory timeline (' + esc(win) + ')</h3>' +
       sparkline(memSeries, "#c084fc") +
+      timelineStatsChips(memStats, "MiB", 1) +
       '<p class="muted">Nguồn: container_memory_working_set_bytes · đơn vị MiB.</p></div>' +
       '<div class="dash-grid-bottom">' +
       '<div class="card detail-card"><h3>Top Pods CPU</h3>' +
@@ -5844,6 +5848,39 @@ function sparkline(points, color) {
     '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:140px;display:block">' +
     '<path d="' + path + '" fill="none" stroke="' + (color || "#6EE7FF") + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>' +
     "</svg>"
+  );
+}
+
+function timelineStats(points) {
+  if (!points.length) {
+    return { current: 0, min: 0, max: 0, avg: 0 };
+  }
+  let min = points[0][1];
+  let max = points[0][1];
+  let sum = 0;
+  points.forEach(function (p) {
+    const v = Number(p[1]) || 0;
+    if (v < min) min = v;
+    if (v > max) max = v;
+    sum += v;
+  });
+  return {
+    current: Number(points[points.length - 1][1]) || 0,
+    min: min,
+    max: max,
+    avg: sum / points.length,
+  };
+}
+
+function timelineStatsChips(stats, unit, digits) {
+  const d = digits == null ? 2 : digits;
+  return (
+    '<div class="meta-chips monitor-stats">' +
+    chip("Current", Number(stats.current).toFixed(d) + " " + unit) +
+    chip("Avg", Number(stats.avg).toFixed(d) + " " + unit) +
+    chip("Min", Number(stats.min).toFixed(d) + " " + unit) +
+    chip("Max", Number(stats.max).toFixed(d) + " " + unit) +
+    "</div>"
   );
 }
 
