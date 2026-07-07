@@ -193,11 +193,11 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ## Phase 9 — Terminal an toàn + sổ lệnh K8s
 
-- [ ] Cheat sheet theo role; **Platform** vs **Project** scope
-- [ ] Chạy lệnh qua API Console (read-only trước), không SSH shell
-- [ ] Copy lệnh có placeholder `{namespace}`, `{pod}`
+- [x] Cheat sheet theo role; **Platform** vs **Project** scope
+- [x] Chạy lệnh qua API Console (read-only trước), không SSH shell
+- [x] Copy lệnh có placeholder `{namespace}`, `{pod}`
 
-**Xong khi:** dev xem pod/log project; admin xem cluster không SSH.
+**Xong khi:** dev xem pod/log project; admin xem cluster không SSH. ✅ (2026-07-07)
 
 ---
 

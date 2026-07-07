@@ -136,6 +136,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 			r.Delete("/projects/{slug}", h.DeleteProject)
 			r.Get("/team/users", h.TeamUserPicker)
 		})
+		r.Get("/k8s/commands", h.ListK8sCommands)
+		r.Post("/k8s/commands/run", h.RunK8sCommand)
 		r.Get("/explorer/menu", h.ExplorerMenu)
 		r.Get("/registry/providers", h.ListRegistryProviders)
 		r.Get("/rancher/namespaces", h.ListNamespaces)

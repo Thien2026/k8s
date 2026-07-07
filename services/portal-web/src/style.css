@@ -3932,3 +3932,82 @@ tr.dns-row td {
   margin-top: 4px;
 }
 
+.k8s-ops-intro {
+  margin-bottom: 16px;
+}
+
+.k8s-ops-category {
+  margin-bottom: 20px;
+}
+
+.k8s-ops-category h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.k8s-ops-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.k8s-ops-card {
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.k8s-ops-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 10px 0;
+}
+
+.k8s-ops-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 140px;
+}
+
+.k8s-ops-field input,
+.k8s-ops-field select {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.k8s-ops-cmd-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.k8s-ops-cmd {
+  flex: 1;
+  min-width: 200px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: #b8e0ff;
+}
+
+.k8s-ops-output-wrap pre {
+  max-height: 420px;
+  overflow: auto;
+}
+

@@ -43,6 +43,9 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, r *http.Request) {
 
 	rancherOn, _ := h.plugins.Enabled(r.Context(), plugins.Rancher)
 	if auth.CanViewInfra(u.Role) && rancherOn {
+		menu = append(menu, item{
+			Key: "k8s-ops", Label: "Sổ lệnh K8s", Section: "infra", Group: "Vận hành", Type: "page",
+		})
 		menu = append(menu,
 			item{Key: "clusters", Label: "Clusters", Section: "infra", Group: "Cluster", Type: "rancher"},
 			item{Key: "projects", Label: "Projects", Section: "infra", Group: "Cluster", Type: "rancher"},
@@ -58,6 +61,9 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, r *http.Request) {
 			menu = append(menu, item{Key: res.Key, Label: res.Label, Section: sec, Group: res.Group, Type: "k8s"})
 		}
 	} else if rancherOn {
+		menu = append(menu, item{
+			Key: "k8s-ops", Label: "Sổ lệnh K8s", Section: "workspace", Group: "Vận hành", Type: "page",
+		})
 		for _, key := range devK8sKeys {
 			res, ok := rancher.K8sResourceByKey(key)
 			if !ok {

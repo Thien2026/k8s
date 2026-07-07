@@ -2106,6 +2106,7 @@ const PROJECT_NAV = [
   { tab: "overview", label: "Tổng quan", icon: "◉" },
   { tab: "monitoring", label: "Monitoring", icon: "📈" },
   { tab: "runtime", label: "Runtime", icon: "▶" },
+  { tab: "ops", label: "Sổ lệnh K8s", icon: "⌘" },
   { tab: "deploy", label: "Deploy / Git", icon: "⎇" },
   { tab: "promote", label: "Promote Prod", icon: "↑" },
   { tab: "deploy-history", label: "Lịch sử deploy", icon: "🕘" },
@@ -5291,6 +5292,22 @@ async function pageProjectHub(main, slug, tab) {
     return;
   }
 
+  if (tab === "ops") {
+    const envOps = state.projectEnv || "dev";
+    const nsOps = envOps === "prod" ? p.namespace_prod : p.namespace_dev;
+    main.innerHTML =
+      projectHeader(p, "Sổ lệnh K8s · chỉ namespace project") +
+      projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "ops"); }) +
+      '<div id="k8s-ops-root"></div>';
+    await pageK8sOps(document.getElementById("k8s-ops-root"), {
+      scope: "project",
+      namespace: nsOps,
+      slug: slug,
+      embed: true,
+    });
+    return;
+  }
+
   if (tab === "runtime") {
     state.namespace = ns;
     localStorage.setItem("filter-ns", ns);
@@ -7141,6 +7158,216 @@ async function pageAddWorker(main) {
   };
 }
 
+async function pageK8sOps(main, opts) {
+  opts = opts || {};
+  const scope = opts.scope || "platform";
+  const embed = opts.embed === true;
+  if (!main) return;
+  if (!embed) {
+    main.innerHTML = '<p class="loading">Đang tải sổ lệnh K8s…</p>';
+  } else {
+    main.innerHTML = '<p class="loading">Đang tải…</p>';
+  }
+  let namespaces = [];
+  try {
+    const nsRes = await api("/api/v1/rancher/namespaces");
+    namespaces = nsRes.items || [];
+  } catch (_) {
+    namespaces = opts.namespace ? [opts.namespace] : [];
+  }
+  const data = await api("/api/v1/k8s/commands" + qs({ scope: scope }));
+  const commands = data.items || [];
+  const defaultNs = opts.namespace || state.namespace || namespaces[0] || "";
+
+  const placeholderLabels = {
+    namespace: "Namespace",
+    pod: "Pod",
+    deployment: "Deployment",
+    container: "Container",
+    tail: "Tail dòng log",
+  };
+
+  function renderPlaceholderInputs(cmd) {
+    if (!cmd.placeholders || !cmd.placeholders.length) return "";
+    return (
+      '<div class="k8s-ops-fields">' +
+      cmd.placeholders
+        .map(function (ph) {
+          if (ph === "namespace") {
+            let optsHtml = namespaces
+              .map(function (n) {
+                return '<option value="' + esc(n) + '"' + (n === defaultNs ? " selected" : "") + ">" + esc(n) + "</option>";
+              })
+              .join("");
+            return (
+              '<label class="k8s-ops-field">' +
+              esc(placeholderLabels[ph]) +
+              '<select class="k8s-ops-ph" data-ph="namespace">' +
+              optsHtml +
+              "</select></label>"
+            );
+          }
+          if (ph === "tail") {
+            return (
+              '<label class="k8s-ops-field">' +
+              esc(placeholderLabels[ph]) +
+              '<input type="number" class="k8s-ops-ph" data-ph="tail" min="50" max="2000" value="300" /></label>'
+            );
+          }
+          return (
+            '<label class="k8s-ops-field">' +
+            esc(placeholderLabels[ph] || ph) +
+            '<input type="text" class="k8s-ops-ph" data-ph="' +
+            esc(ph) +
+            '" placeholder="{' +
+            esc(ph) +
+            '}" /></label>'
+          );
+        })
+        .join("") +
+      "</div>"
+    );
+  }
+
+  const byCat = {};
+  commands.forEach(function (cmd) {
+    const cat = cmd.category || "Khác";
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(cmd);
+  });
+
+  let bodyHtml = "";
+  Object.keys(byCat).forEach(function (cat) {
+    bodyHtml +=
+      '<div class="k8s-ops-category"><h4>' +
+      esc(cat) +
+      "</h4><div class=\"k8s-ops-cards\">" +
+      byCat[cat]
+        .map(function (cmd) {
+          return (
+            '<div class="k8s-ops-card" data-cmd="' +
+            esc(cmd.id) +
+            '">' +
+            "<strong>" +
+            esc(cmd.label) +
+            "</strong>" +
+            (cmd.description ? '<p class="muted">' + esc(cmd.description) + "</p>" : "") +
+            renderPlaceholderInputs(cmd) +
+            '<div class="k8s-ops-cmd-row">' +
+            '<input type="text" class="k8s-ops-cmd" readonly value="' +
+            esc(cmd.kubectl) +
+            '" />' +
+            '<button type="button" class="btn-ghost btn-sm k8s-ops-copy">Copy</button>' +
+            (cmd.runnable
+              ? '<button type="button" class="btn-primary btn-sm k8s-ops-run">Chạy (read-only)</button>'
+              : "") +
+            "</div></div>"
+          );
+        })
+        .join("") +
+      "</div></div>";
+  });
+
+  const shell = embed
+    ? bodyHtml +
+      '<div class="card detail-card k8s-ops-output-wrap" style="margin-top:16px" hidden id="k8s-ops-output-wrap">' +
+      '<h3>Kết quả</h3><p class="muted" id="k8s-ops-summary"></p><pre class="log-box" id="k8s-ops-output"></pre></div>'
+    : '<div class="page-header"><h2 class="page-title">Sổ lệnh K8s</h2>' +
+      '<p class="page-subtitle">Chạy lệnh read-only qua API — không cần SSH. Copy kubectl để dùng ngoài Console.</p></div>' +
+      '<div class="card detail-card k8s-ops-intro">' +
+      '<p class="muted">Phạm vi <strong>' +
+      (scope === "project" ? "Project" : "Platform") +
+      "</strong> · chỉ lệnh đọc (get, logs, describe, events).</p></div>" +
+      bodyHtml +
+      '<div class="card detail-card k8s-ops-output-wrap" style="margin-top:16px" hidden id="k8s-ops-output-wrap">' +
+      '<h3>Kết quả</h3><p class="muted" id="k8s-ops-summary"></p><pre class="log-box" id="k8s-ops-output"></pre></div>';
+
+  main.innerHTML = shell;
+
+  function readVars(card) {
+    const vars = { tail: "300" };
+    card.querySelectorAll(".k8s-ops-ph").forEach(function (el) {
+      vars[el.getAttribute("data-ph")] = el.value || "";
+    });
+    if (!vars.namespace && defaultNs) vars.namespace = defaultNs;
+    if (!vars.tail) vars.tail = "300";
+    return vars;
+  }
+
+  function fillTemplate(tpl, vars) {
+    return tpl.replace(/\{(\w+)\}/g, function (_, key) {
+      return vars[key] != null ? String(vars[key]) : "{" + key + "}";
+    });
+  }
+
+  function formatRunOutput(result) {
+    if (!result) return "";
+    if (result.kind === "logs") return String(result.output || "");
+    if (result.kind === "table" && Array.isArray(result.output)) {
+      return JSON.stringify(result.output, null, 2);
+    }
+    if (result.kind === "json") {
+      return JSON.stringify(result.output, null, 2);
+    }
+    return String(result.output || "");
+  }
+
+  main.querySelectorAll(".k8s-ops-card").forEach(function (card) {
+    const cmdId = card.getAttribute("data-cmd");
+    const cmd = commands.find(function (c) { return c.id === cmdId; });
+    if (!cmd) return;
+    const cmdInput = card.querySelector(".k8s-ops-cmd");
+    function refreshCmd() {
+      cmdInput.value = fillTemplate(cmd.kubectl, readVars(card));
+    }
+    card.querySelectorAll(".k8s-ops-ph").forEach(function (el) {
+      el.addEventListener("input", refreshCmd);
+      el.addEventListener("change", refreshCmd);
+    });
+    refreshCmd();
+    const copyBtn = card.querySelector(".k8s-ops-copy");
+    if (copyBtn) {
+      copyBtn.onclick = function () {
+        navigator.clipboard.writeText(cmdInput.value).then(
+          function () { toastSuccess("Đã copy lệnh"); },
+          function () { toastInfo(cmdInput.value); }
+        );
+      };
+    }
+    const runBtn = card.querySelector(".k8s-ops-run");
+    if (runBtn) {
+      runBtn.onclick = async function () {
+        const vars = readVars(card);
+        runBtn.disabled = true;
+        try {
+          const result = await api("/api/v1/k8s/commands/run", {
+            method: "POST",
+            body: {
+              command_id: cmd.id,
+              namespace: vars.namespace,
+              pod: vars.pod,
+              deployment: vars.deployment,
+              container: vars.container,
+              tail: parseInt(vars.tail, 10) || 300,
+            },
+          });
+          const wrap = document.getElementById("k8s-ops-output-wrap");
+          const out = document.getElementById("k8s-ops-output");
+          const sum = document.getElementById("k8s-ops-summary");
+          if (wrap) wrap.hidden = false;
+          if (sum) sum.textContent = result.summary || cmd.label;
+          if (out) out.textContent = formatRunOutput(result);
+          toastSuccess("Đã chạy — xem kết quả bên dưới");
+        } catch (err) {
+          toastError(errorMessage(err));
+        } finally {
+          runBtn.disabled = false;
+        }
+      };
+    }
+  });
+}
+
 async function pageResourceDetail(main, resource, ns, name) {
   main.innerHTML = '<p class="loading">Đang tải chi tiết…</p>';
   const nsQ = ns && ns !== "_" ? ns : "";
@@ -7264,6 +7491,7 @@ const routes = {
       { key: "state", label: "State", render: (r) => badgeStatus(r.state) },
       { key: "description", label: "Description" },
     ]),
+  "k8s-ops": (main) => pageK8sOps(main, { scope: "platform" }),
 };
 
 function roleLabel(role) {
@@ -7765,8 +7993,8 @@ async function buildPlatformSidebar(nav) {
     sections[sec].push(item);
   });
 
-  const infraGroupOrder = ["Cluster", "Workloads", "Networking", "Storage", "Config"];
-  const workspaceGroupOrder = ["Workloads", "Networking"];
+  const infraGroupOrder = ["Cluster", "Vận hành", "Workloads", "Networking", "Storage", "Config"];
+  const workspaceGroupOrder = ["Vận hành", "Workloads", "Networking"];
   let html = "";
 
   function renderGroup(group, items) {
@@ -7899,6 +8127,7 @@ const NAV_ICONS = {
   horizontalpodautoscalers: "📈", persistentvolumeclaims: "💾",
   persistentvolumes: "🗄", storageclasses: "📂", configmaps: "⚙",
   secrets: "🔒",
+  "k8s-ops": "⌘",
 };
 
 function sectionCollapsed(section) {
