@@ -25,6 +25,7 @@ Phía sau (engine): RKE2, Rancher, Harbor, Argo CD, Grafana, PostgreSQL
 | **2 — Engine** | Rancher, Harbor, Argo CD, Prometheus, Loki, Grafana | Ops K8s, image, GitOps, metric/log |
 | **3 — Console** | portal-web + portal-api (tự code) | **1 dashboard** giao khách |
 | **4 — DB Console** | PostgreSQL (bootstrap `07`) | User, project, metadata — **không** phải DB app khách |
+| **4b — DB app** (Phase 10) | CNPG + Longhorn + MinIO | Postgres/Redis/… per project — xem [DATA-FORK.md](./DATA-FORK.md) |
 | **5 — CI** | GitHub Actions | Build image → Harbor → cập nhật GitOps repo |
 
 ---
@@ -70,6 +71,18 @@ Phía sau (engine): RKE2, Rancher, Harbor, Argo CD, Grafana, PostgreSQL
 | `config/postgres.env` | Connection cho portal-api, không commit |
 
 **Lưu ý:** DB trên K8s **không auto-scale** như API. Portal metadata nhỏ → 1 instance + **backup** (`pg_dump` / Velero). App khách dùng DB riêng (managed hoặc operator per-app).
+
+### Data app khách: Fork Recipe (Phase 10 — đã chốt phương án)
+
+| Chọn | Không chọn |
+|------|------------|
+| **CNPG** + **Longhorn** (VolumeSnapshot) + **MinIO** (backup/export) | Neon Cloud (không khép kín) |
+| **Fork Recipe** platform: schema / seed / snap / full — một API, nhiều engine adapter | Clone kiến trúc Neon OSS mặc định (nặng 12 GB) |
+| Dev mặc định: `schema_and_seed` (nhẹ RAM) | Mỗi branch = CNPG cluster riêng trên 12 GB |
+| **Micro:** 1 CNPG / project, N DB (`service_slug`) | Bắt buộc Neon để multi-DB |
+| Preview: snap PVC → instance mới + TTL | Restore MinIO làm “branch nhanh” |
+
+Chi tiết luồng `db-a` → snapshot → `db-a.1`, multi-DB, quota RAM → **[DATA-FORK.md](./DATA-FORK.md)**.
 
 ### Bootstrap: Bash từng file
 
@@ -136,4 +149,4 @@ k8s/
 - Chốt version quan trọng (pin Helm chart)
 - Quyết định mới từ discussion với khách
 
-*Cập nhật lần cuối: theo repo `main` — Phase 1 + 1b (PostgreSQL), Console chưa code.*
+*Cập nhật lần cuối: 2026-07-07 — thêm phương án Phase 10 [DATA-FORK.md](./DATA-FORK.md).*

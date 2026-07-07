@@ -170,4 +170,80 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 | Ngày | Ghi chú |
 |------|---------|
-|      |         |
+| 2026-07-07 | Phase 4 GitOps (Console UI + gitopt) live VPS. Pilot smoke OK. |
+| 2026-07-07 | Chốt phương án Phase 10 → [docs/DATA-FORK.md](docs/DATA-FORK.md) (Fork Recipe, Longhorn snap, multi-DB/micro, không Neon Cloud). |
+
+---
+
+## Phase 8 — Monitoring & Grafana (ưu tiên sau GitOps)
+
+> Gộp “Grafana” + “monitor” — một stack.
+
+- [ ] Addon kube-prometheus-stack + `grafana.{domain}`
+- [ ] Dashboard node / namespace / ingress; Alertmanager cơ bản
+- [ ] Console link Grafana + widget theo project namespace
+- [ ] Retention Prometheus ngắn (7d) — tiết kiệm RAM VPS
+
+**Xong khi:** Grafana có metric + 1 alert test.
+
+---
+
+## Phase 9 — Terminal an toàn + sổ lệnh K8s
+
+- [ ] Cheat sheet theo role; **Platform** vs **Project** scope
+- [ ] Chạy lệnh qua API Console (read-only trước), không SSH shell
+- [ ] Copy lệnh có placeholder `{namespace}`, `{pod}`
+
+**Xong khi:** dev xem pod/log project; admin xem cluster không SSH.
+
+---
+
+## Phase 10 — Data per project (Postgres, Redis, MinIO)
+
+> **Phương án chi tiết (đã chốt, chưa code):** [docs/DATA-FORK.md](docs/DATA-FORK.md)  
+> Ý tưởng: **Fork Recipe** platform (lấy cảm hứng Neon, không clone Neon) — `schema_only` / `schema+seed` / `volume_snapshot` / `full`.  
+> **Không** Neon Cloud. **Không** Neon OSS mặc định (12 GB). Fast fork = **Longhorn VolumeSnapshot**, không phải restore MinIO.
+
+### Hạ tầng (trước tab Data)
+
+- [ ] Cài **Longhorn** (Phase 1 backlog) — PVC DB app dùng SC `longhorn`, không `local-path`
+- [ ] **MinIO** platform: bucket backup/export (`db-backups`, `db-exports`)
+- [ ] Cài **CloudNativePG** operator
+- [ ] `platform-postgresql` (bước 07) **giữ nguyên** — chỉ metadata Console
+
+### Platform API + DB metadata
+
+- [ ] Migration `data_environments` (+ `service_slug`, `cnpg_cluster_ref`), `data_snapshots`, `data_fork_jobs`
+- [ ] Multi-DB / micro: 1 CNPG cluster / project, N database; provision “thêm DB cho service”
+- [ ] `ForkRecipe`: `empty` | `schema_only` | `schema_and_seed` | `snapshot` | `full`
+- [ ] Adapter Postgres (CNPG): logical fork trước, `volume_snapshot` sau
+- [ ] ForkJob: snap PVC → clone → instance `db-a.1` + **TTL** preview (24–72h)
+- [ ] Quota RAM 12 GB: dev = schema+seed (0 pod thêm); preview snap tối đa 1–2
+
+### Console
+
+- [ ] Tab **Data** — thêm DB per service, fork wizard (per DB + snap cả plane), capability theo engine
+- [ ] Inject `DATABASE_URL` per service → GitOps overlay (dev / preview / prod)
+- [ ] Refresh dev từ prod (on-demand hoặc cron `schema_only`)
+
+### Pilot
+
+- [ ] 1 project: `db-a` (prod) → fork `schema_and_seed` → dev; `volume_snapshot` → preview pilot
+- [ ] Backup CNPG → MinIO (DR + slow path `full`)
+
+### Sau pilot (không block MVP)
+
+- [ ] Redis addon
+- [ ] Adapter MySQL / Arango (cùng Fork API, snap PVC)
+- [ ] Neon OSS **optional** — chỉ khi 24 GB+ và cần CoW Postgres native
+
+**Xong khi:** 1 project pilot có Postgres qua Console + ít nhất 1 logical fork và 1 snap fork thành công.
+
+---
+
+## Phase 11 — MCP (IDE / AI)
+
+- [ ] API token; MCP wrap portal-api (deploy, env, gitops)
+- [ ] Sau phase 10: provision DB/Redis
+
+**Thứ tự:** 8 ∥ 9 → 10 → 11
