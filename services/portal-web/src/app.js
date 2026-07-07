@@ -4488,10 +4488,12 @@ async function pageProjectHub(main, slug, tab) {
   }
 
   if (tab === "monitoring") {
+    const hashQ = new URLSearchParams(location.hash.split("?")[1] || "");
+    const win = hashQ.get("window") || "6h";
     const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
     const mon = ov.monitoring || {};
     const metrics = await api(
-      "/api/v1/projects/" + encodeURIComponent(slug) + "/monitoring" + projectQs({ env: env })
+      "/api/v1/projects/" + encodeURIComponent(slug) + "/monitoring" + projectQs({ env: env, window: win })
     ).catch(function () { return {}; });
     let grafanaBase = mon.grafana_url || "";
     if (!grafanaBase) {
@@ -4508,9 +4510,16 @@ async function pageProjectHub(main, slug, tab) {
     const pods = Number(metrics.running_pods || 0);
     const cpuSeries = monitoringPoints(metrics.cpu_series, 1);
     const memSeries = monitoringPoints(metrics.memory_series, 1024 * 1024);
+    const topCPU = (metrics.top_cpu_pods || []).map(function (r) {
+      return { name: r.name || "unknown", value: Number(r.value || 0).toFixed(4) + " cores" };
+    });
+    const topMem = (metrics.top_mem_pods || []).map(function (r) {
+      return { name: r.name || "unknown", value: Number(r.value || 0).toFixed(1) + " MiB" };
+    });
     main.innerHTML =
       projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
+      monitoringWindowToolbar(win, slug, env) +
       '<div class="stat-grid">' +
       statBox(pods.toFixed(0), "Running Pods", "g1") +
       statBox(cpu.toFixed(2), "CPU cores (5m)", "g2") +
@@ -4525,12 +4534,27 @@ async function pageProjectHub(main, slug, tab) {
       (activeUrl
         ? '<div class="card detail-card"><h3>Dashboard nhanh</h3><p class="muted">Namespace hiện tại: <strong>' + esc(metrics.namespace || ns) + '</strong> · nguồn metrics: Prometheus nội bộ.</p><div class="meta-chips"><a class="chip chip-link" href="' + esc(activeUrl) + '" target="_blank" rel="noopener">Mở dashboard namespace hiện tại</a></div></div>'
         : "") +
-      '<div class="card detail-card"><h3>CPU timeline (6h)</h3>' +
+      '<div class="card detail-card"><h3>CPU timeline (' + esc(win) + ')</h3>' +
       sparkline(cpuSeries, "#46d6ff") +
       '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
-      '<div class="card detail-card"><h3>Memory timeline (6h)</h3>' +
+      '<div class="card detail-card"><h3>Memory timeline (' + esc(win) + ')</h3>' +
       sparkline(memSeries, "#c084fc") +
       '<p class="muted">Nguồn: container_memory_working_set_bytes · đơn vị MiB.</p></div>' +
+      '<div class="dash-grid-bottom">' +
+      '<div class="card detail-card"><h3>Top Pods CPU</h3>' +
+      renderTable(
+        [{ key: "name", label: "Pod" }, { key: "value", label: "CPU (cores)" }],
+        topCPU,
+        ""
+      ) +
+      "</div>" +
+      '<div class="card detail-card"><h3>Top Pods Memory</h3>' +
+      renderTable(
+        [{ key: "name", label: "Pod" }, { key: "value", label: "Memory (MiB)" }],
+        topMem,
+        ""
+      ) +
+      "</div></div>" +
       (metrics.warning ? '<div class="card detail-card"><p class="muted">' + esc(metrics.warning) + "</p></div>" : "") +
       '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
       chip("Dev", p.namespace_dev) +
@@ -5816,6 +5840,23 @@ function sparkline(points, color) {
     '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:140px;display:block">' +
     '<path d="' + path + '" fill="none" stroke="' + (color || "#6EE7FF") + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>' +
     "</svg>"
+  );
+}
+
+function monitoringWindowToolbar(active, slug, env) {
+  const opts = [
+    { key: "15m", label: "15m" },
+    { key: "1h", label: "1h" },
+    { key: "6h", label: "6h" },
+    { key: "24h", label: "24h" },
+  ];
+  return (
+    '<div class="meta-chips" style="margin:0 0 12px">' +
+    opts.map(function (o) {
+      const cls = o.key === active ? "chip chip-link" : "chip";
+      return '<a class="' + cls + '" href="' + esc("#/project/" + slug + "/monitoring?env=" + env + "&window=" + o.key) + '">' + esc(o.label) + "</a>";
+    }).join("") +
+    "</div>"
   );
 }
 

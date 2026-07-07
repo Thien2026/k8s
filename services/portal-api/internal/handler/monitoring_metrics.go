@@ -19,7 +19,8 @@ type promResponse struct {
 	Data   struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
-			Value []any `json:"value"`
+			Metric map[string]string `json:"metric"`
+			Value  []any             `json:"value"`
 		} `json:"result"`
 	} `json:"data"`
 }
@@ -134,6 +135,61 @@ func (h *Handler) queryPrometheusRange(r *http.Request, expr string, start, end 
 	return points, nil
 }
 
+func (h *Handler) queryPrometheusTopVector(r *http.Request, expr, labelKey string, divisor float64) ([]map[string]any, error) {
+	base := strings.TrimRight(h.prometheusBaseURL(), "/")
+	u, err := url.Parse(base + "/api/v1/query")
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	q.Set("query", expr)
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, u.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 8 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("prometheus status %d", resp.StatusCode)
+	}
+	var out promResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	if out.Status != "success" || len(out.Data.Result) == 0 {
+		return []map[string]any{}, nil
+	}
+	rows := make([]map[string]any, 0, len(out.Data.Result))
+	for _, item := range out.Data.Result {
+		if len(item.Value) < 2 {
+			continue
+		}
+		name := item.Metric[labelKey]
+		if name == "" {
+			name = "unknown"
+		}
+		raw, _ := item.Value[1].(string)
+		val, err := strconv.ParseFloat(raw, 64)
+		if err != nil {
+			continue
+		}
+		if divisor > 0 {
+			val = val / divisor
+		}
+		rows = append(rows, map[string]any{
+			"name":  name,
+			"value": val,
+		})
+	}
+	return rows, nil
+}
+
 func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	p, ok := h.requireProjectAccess(w, r, slug)
@@ -149,6 +205,22 @@ func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 	if env == "prod" {
 		namespace = p.NamespaceProd
 	}
+	window := strings.TrimSpace(r.URL.Query().Get("window"))
+	windowDur := 6 * time.Hour
+	step := 5 * time.Minute
+	switch window {
+	case "15m":
+		windowDur = 15 * time.Minute
+		step = 30 * time.Second
+	case "1h":
+		windowDur = 1 * time.Hour
+		step = 1 * time.Minute
+	case "24h":
+		windowDur = 24 * time.Hour
+		step = 10 * time.Minute
+	default:
+		window = "6h"
+	}
 
 	cpuExpr := fmt.Sprintf(`sum(rate(container_cpu_usage_seconds_total{namespace="%s",container!="",container!="POD"}[5m]))`, namespace)
 	memExpr := fmt.Sprintf(`sum(container_memory_working_set_bytes{namespace="%s",container!="",container!="POD"})`, namespace)
@@ -160,13 +232,17 @@ func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 	restarts, restErr := h.queryPrometheusInstant(r, restartExpr)
 	runningPods, podErr := h.queryPrometheusInstant(r, podExpr)
 	end := time.Now().UTC()
-	start := end.Add(-6 * time.Hour)
-	step := 5 * time.Minute
+	start := end.Add(-windowDur)
 	cpuSeries, cpuSeriesErr := h.queryPrometheusRange(r, cpuExpr, start, end, step)
 	memSeries, memSeriesErr := h.queryPrometheusRange(r, memExpr, start, end, step)
+	topCPUExpr := fmt.Sprintf(`topk(5, sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="%s",container!="",container!="POD"}[5m])))`, namespace)
+	topMemExpr := fmt.Sprintf(`topk(5, sum by (pod) (container_memory_working_set_bytes{namespace="%s",container!="",container!="POD"}))`, namespace)
+	topCPU, topCPUErr := h.queryPrometheusTopVector(r, topCPUExpr, "pod", 1)
+	topMem, topMemErr := h.queryPrometheusTopVector(r, topMemExpr, "pod", 1024*1024)
 
 	payload := map[string]any{
 		"env":            env,
+		"window":         window,
 		"namespace":      namespace,
 		"cpu_cores_5m":   cpu,
 		"memory_bytes":   memBytes,
@@ -178,9 +254,11 @@ func (h *Handler) GetProjectMonitoring(w http.ResponseWriter, r *http.Request) {
 		"prometheus_url": trimURL(h.prometheusBaseURL()),
 		"cpu_series":     cpuSeries,
 		"memory_series":  memSeries,
+		"top_cpu_pods":   topCPU,
+		"top_mem_pods":   topMem,
 	}
 
-	if cpuErr != nil || memErr != nil || restErr != nil || podErr != nil || cpuSeriesErr != nil || memSeriesErr != nil {
+	if cpuErr != nil || memErr != nil || restErr != nil || podErr != nil || cpuSeriesErr != nil || memSeriesErr != nil || topCPUErr != nil || topMemErr != nil {
 		payload["warning"] = "Một số metric chưa sẵn sàng"
 	}
 	writeJSON(w, http.StatusOK, payload)
