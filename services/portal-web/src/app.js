@@ -3333,6 +3333,113 @@ function defaultHealthPath(s) {
   return s.health_path || "/health";
 }
 
+function platformDefaultResourcesForService(name) {
+  name = String(name || "app").toLowerCase();
+  var cpuReq = "100m";
+  var memReq = "128Mi";
+  var cpuLim = "500m";
+  var memLim = "512Mi";
+  if (name === "web") {
+    cpuReq = "50m";
+    memReq = "128Mi";
+    cpuLim = "500m";
+    memLim = "768Mi";
+  } else if (name === "worker") {
+    cpuReq = "100m";
+    memReq = "256Mi";
+    cpuLim = "1000m";
+    memLim = "1Gi";
+  } else if (name === "dotnet") {
+    cpuReq = "100m";
+    memReq = "256Mi";
+    cpuLim = "1000m";
+    memLim = "1Gi";
+  } else if (name === "node") {
+    cpuReq = "100m";
+    memReq = "192Mi";
+    cpuLim = "750m";
+    memLim = "768Mi";
+  }
+  return {
+    cpu_request: cpuReq,
+    memory_request: memReq,
+    cpu_limit: cpuLim,
+    memory_limit: memLim,
+  };
+}
+
+function resourceFieldsForService(s) {
+  s = s || {};
+  var mode = s.resources_mode || "platform";
+  if (mode === "custom") {
+    return {
+      mode: mode,
+      disabled: false,
+      cpu_request: s.cpu_request || "",
+      memory_request: s.memory_request || "",
+      cpu_limit: s.cpu_limit || "",
+      memory_limit: s.memory_limit || "",
+    };
+  }
+  if (mode === "none") {
+    return {
+      mode: mode,
+      disabled: true,
+      none: true,
+      cpu_request: "",
+      memory_request: "",
+      cpu_limit: "",
+      memory_limit: "",
+    };
+  }
+  var defs = platformDefaultResourcesForService(s.name || "app");
+  return {
+    mode: "platform",
+    disabled: true,
+    preset: true,
+    cpu_request: defs.cpu_request,
+    memory_request: defs.memory_request,
+    cpu_limit: defs.cpu_limit,
+    memory_limit: defs.memory_limit,
+  };
+}
+
+function resourceFieldNames(prefix, idx) {
+  if (prefix === "app") {
+    return {
+      cpuReq: "app_cpu_req",
+      memReq: "app_mem_req",
+      cpuLim: "app_cpu_lim",
+      memLim: "app_mem_lim",
+    };
+  }
+  return {
+    cpuReq: "svc_cpu_req_" + idx,
+    memReq: "svc_mem_req_" + idx,
+    cpuLim: "svc_cpu_lim_" + idx,
+    memLim: "svc_mem_lim_" + idx,
+  };
+}
+
+function resourceInputGridHtml(prefix, idx, s) {
+  var fields = resourceFieldsForService(s);
+  var names = resourceFieldNames(prefix, idx);
+  var dis = fields.disabled ? " disabled" : "";
+  var ro = fields.disabled ? ' readonly="readonly"' : "";
+  var cls = "svc-res-input" + (fields.preset ? " svc-res-preset" : "") + (fields.none ? " svc-res-none" : "");
+  var ph = function (label) {
+    return fields.none ? "Không set" : label;
+  };
+  return (
+    '<div class="svc-res-grid">' +
+    '<input name="' + names.cpuReq + '" class="' + cls + '" value="' + esc(fields.cpu_request) + '" placeholder="' + esc(ph("CPU req")) + '" title="CPU request"' + dis + ro + " />" +
+    '<input name="' + names.memReq + '" class="' + cls + '" value="' + esc(fields.memory_request) + '" placeholder="' + esc(ph("RAM req")) + '" title="Memory request"' + dis + ro + " />" +
+    '<input name="' + names.cpuLim + '" class="' + cls + '" value="' + esc(fields.cpu_limit) + '" placeholder="' + esc(ph("CPU lim")) + '" title="CPU limit"' + dis + ro + " />" +
+    '<input name="' + names.memLim + '" class="' + cls + '" value="' + esc(fields.memory_limit) + '" placeholder="' + esc(ph("RAM lim")) + '" title="Memory limit"' + dis + ro + " />" +
+    "</div>"
+  );
+}
+
 function resourcesModeSelectHtml(name, mode, idx) {
   mode = mode || "platform";
   const idxAttr = idx != null && idx !== "" ? ' data-idx="' + idx + '"' : "";
@@ -3346,57 +3453,92 @@ function resourcesModeSelectHtml(name, mode, idx) {
 }
 
 function serviceResourcesInputsHtml(s, fieldPrefix) {
-  s = s || {};
-  fieldPrefix = fieldPrefix || "svc";
-  const mode = s.resources_mode || "platform";
-  const custom = mode === "custom";
-  const dis = custom ? "" : " disabled";
-  return (
-    '<div class="svc-res-grid">' +
-    '<input name="' + fieldPrefix + '_cpu_req" class="svc-res-input" value="' + esc(s.cpu_request || "") + '" placeholder="CPU req" title="CPU request (vd. 100m)"' + dis + " />" +
-    '<input name="' + fieldPrefix + '_mem_req" class="svc-res-input" value="' + esc(s.memory_request || "") + '" placeholder="RAM req" title="Memory request (vd. 128Mi)"' + dis + " />" +
-    '<input name="' + fieldPrefix + '_cpu_lim" class="svc-res-input" value="' + esc(s.cpu_limit || "") + '" placeholder="CPU lim" title="CPU limit (vd. 500m)"' + dis + " />" +
-    '<input name="' + fieldPrefix + '_mem_lim" class="svc-res-input" value="' + esc(s.memory_limit || "") + '" placeholder="RAM lim" title="Memory limit (vd. 512Mi)"' + dis + " />" +
-    "</div>"
-  );
+  if ((fieldPrefix || "app") === "app") {
+    return resourceInputGridHtml("app", "app", s);
+  }
+  return resourceInputGridHtml("svc", fieldPrefix, s);
 }
 
 function readServiceResourcesFromForm(form, idx) {
   if (!form) return { resources_mode: "platform", cpu_request: "", memory_request: "", cpu_limit: "", memory_limit: "" };
+  var mode;
   if (idx === "app") {
-    return {
-      resources_mode: (form.querySelector('[name="app_res_mode"]') || {}).value || "platform",
-      cpu_request: (form.querySelector('[name="app_cpu_req"]') || {}).value || "",
-      memory_request: (form.querySelector('[name="app_mem_req"]') || {}).value || "",
-      cpu_limit: (form.querySelector('[name="app_cpu_lim"]') || {}).value || "",
-      memory_limit: (form.querySelector('[name="app_mem_lim"]') || {}).value || "",
-    };
+    mode = (form.querySelector('[name="app_res_mode"]') || {}).value || "platform";
+  } else {
+    mode = (form.querySelector('[name="svc_res_mode_' + idx + '"]') || {}).value || "platform";
   }
-  return {
-    resources_mode: (form.querySelector('[name="svc_res_mode_' + idx + '"]') || {}).value || "platform",
-    cpu_request: (form.querySelector('[name="svc_cpu_req_' + idx + '"]') || {}).value || "",
-    memory_request: (form.querySelector('[name="svc_mem_req_' + idx + '"]') || {}).value || "",
-    cpu_limit: (form.querySelector('[name="svc_cpu_lim_' + idx + '"]') || {}).value || "",
-    memory_limit: (form.querySelector('[name="svc_mem_lim_' + idx + '"]') || {}).value || "",
+  var out = {
+    resources_mode: mode,
+    cpu_request: "",
+    memory_request: "",
+    cpu_limit: "",
+    memory_limit: "",
   };
+  if (mode !== "custom") return out;
+  var names = idx === "app" ? resourceFieldNames("app", "app") : resourceFieldNames("svc", idx);
+  out.cpu_request = (form.querySelector('[name="' + names.cpuReq + '"]') || {}).value || "";
+  out.memory_request = (form.querySelector('[name="' + names.memReq + '"]') || {}).value || "";
+  out.cpu_limit = (form.querySelector('[name="' + names.cpuLim + '"]') || {}).value || "";
+  out.memory_limit = (form.querySelector('[name="' + names.memLim + '"]') || {}).value || "";
+  return out;
+}
+
+function serviceNameForResourceIdx(form, idx) {
+  if (idx === "app") return "app";
+  var nameEl = form.querySelector('[name="svc_name_' + idx + '"]');
+  return nameEl && nameEl.value ? nameEl.value : "";
+}
+
+function applyResourceFields(form, idx, partial) {
+  if (!form) return;
+  var s = Object.assign(
+    {
+      name: serviceNameForResourceIdx(form, idx),
+      resources_mode: idx === "app"
+        ? ((form.querySelector('[name="app_res_mode"]') || {}).value || "platform")
+        : ((form.querySelector('[name="svc_res_mode_' + idx + '"]') || {}).value || "platform"),
+    },
+    partial || {}
+  );
+  if (idx === "app") {
+    var grid = form.querySelector(".single-resources-panel .svc-res-grid");
+    if (grid) {
+      grid.outerHTML = resourceInputGridHtml("app", "app", s);
+    }
+    return;
+  }
+  var card = form.querySelector('.service-resources-card[data-svc-res-idx="' + idx + '"]');
+  if (!card) return;
+  var gridEl = card.querySelector(".svc-res-grid");
+  if (gridEl) gridEl.outerHTML = resourceInputGridHtml("svc", idx, s);
 }
 
 function toggleServiceResourceInputs(form, idx) {
   if (!form) return;
+  var mode;
   if (idx === "app") {
-    const mode = (form.querySelector('[name="app_res_mode"]') || {}).value || "platform";
-    const custom = mode === "custom";
-    form.querySelectorAll('[name="app_cpu_req"],[name="app_mem_req"],[name="app_cpu_lim"],[name="app_mem_lim"]').forEach(function (el) {
-      el.disabled = !custom;
-    });
-    return;
+    mode = (form.querySelector('[name="app_res_mode"]') || {}).value || "platform";
+  } else {
+    mode = (form.querySelector('[name="svc_res_mode_' + idx + '"]') || {}).value || "platform";
   }
-  const modeEl = form.querySelector('[name="svc_res_mode_' + idx + '"]');
-  const custom = modeEl && modeEl.value === "custom";
-  ["svc_cpu_req_", "svc_mem_req_", "svc_cpu_lim_", "svc_mem_lim_"].forEach(function (prefix) {
-    const el = form.querySelector('[name="' + prefix + idx + '"]');
-    if (el) el.disabled = !custom;
-  });
+  var s = {
+    name: serviceNameForResourceIdx(form, idx),
+    resources_mode: mode,
+  };
+  if (mode === "custom") {
+    var names = idx === "app" ? resourceFieldNames("app", "app") : resourceFieldNames("svc", idx);
+    var cpuReqEl = form.querySelector('[name="' + names.cpuReq + '"]');
+    if (cpuReqEl && !cpuReqEl.value) {
+      var defs = platformDefaultResourcesForService(s.name || "app");
+      s = Object.assign(s, defs);
+    } else {
+      s.cpu_request = (cpuReqEl || {}).value || "";
+      s.memory_request = (form.querySelector('[name="' + names.memReq + '"]') || {}).value || "";
+      s.cpu_limit = (form.querySelector('[name="' + names.cpuLim + '"]') || {}).value || "";
+      s.memory_limit = (form.querySelector('[name="' + names.memLim + '"]') || {}).value || "";
+    }
+  }
+  applyResourceFields(form, idx, s);
 }
 
 function renderSingleResourcesPanel(s) {
@@ -3414,20 +3556,13 @@ function renderSingleResourcesPanel(s) {
 }
 
 function renderServiceResourcesCard(s, idx) {
-  const mode = (s && s.resources_mode) || "platform";
-  const custom = mode === "custom";
-  const dis = custom ? "" : " disabled";
   return (
     '<div class="service-resources-card" data-svc-res-idx="' + idx + '">' +
     '<div class="service-resources-card-head"><strong>' + esc((s && (s.display_name || s.name)) || ("Service " + idx)) + "</strong></div>" +
     '<div class="svc-res-row">' +
-    resourcesModeSelectHtml("svc_res_mode_" + idx, mode, idx) +
-    '<div class="svc-res-grid">' +
-    '<input name="svc_cpu_req_' + idx + '" class="svc-res-input" value="' + esc((s && s.cpu_request) || "") + '" placeholder="CPU req" title="CPU request (vd. 100m)"' + dis + " />" +
-    '<input name="svc_mem_req_' + idx + '" class="svc-res-input" value="' + esc((s && s.memory_request) || "") + '" placeholder="RAM req" title="Memory request (vd. 128Mi)"' + dis + " />" +
-    '<input name="svc_cpu_lim_' + idx + '" class="svc-res-input" value="' + esc((s && s.cpu_limit) || "") + '" placeholder="CPU lim" title="CPU limit (vd. 500m)"' + dis + " />" +
-    '<input name="svc_mem_lim_' + idx + '" class="svc-res-input" value="' + esc((s && s.memory_limit) || "") + '" placeholder="RAM lim" title="Memory limit (vd. 768Mi)"' + dis + " />" +
-    "</div></div></div>"
+    resourcesModeSelectHtml("svc_res_mode_" + idx, (s && s.resources_mode) || "platform", idx) +
+    resourceInputGridHtml("svc", idx, s) +
+    "</div></div>"
   );
 }
 

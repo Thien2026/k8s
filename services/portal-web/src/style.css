@@ -2295,6 +2295,19 @@ tr.dns-row td {
   opacity: 0.45;
 }
 
+.svc-res-input.svc-res-preset:disabled {
+  opacity: 1;
+  color: #c8e6ff;
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(139, 92, 246, 0.25);
+  cursor: default;
+}
+
+.svc-res-input.svc-res-none:disabled {
+  opacity: 0.55;
+  font-style: italic;
+}
+
 .svc-res-mode {
   min-width: 148px;
   padding: 6px 8px;
