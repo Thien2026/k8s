@@ -46,6 +46,33 @@ var DEPLOY_HELP_SECTIONS = [
       '<p class="muted">Chi tiết: doc <strong>POLYglot_DEPLOY</strong> trên repo platform.</p>',
   },
   {
+    id: "gitops",
+    title: "GitOps",
+    html:
+      '<p class="deploy-help-lead deploy-help-note-optional"><strong>Nâng cao (Phase 4)</strong> — dev thường <em>bỏ qua</em> tab này. Không có repo GitOps vẫn deploy bình thường.</p>' +
+      '<div class="deploy-help-checklist">' +
+      "<h4>GitOps là gì?</h4>" +
+      "<ul class=\"deploy-help-list\">" +
+      "<li><strong>Repo code</strong> (vd. <code>test-k8s</code>) — kết nối trên tab Deploy / Git, chứa source app.</li>" +
+      "<li><strong>Repo GitOps</strong> (vd. <code>gitopt</code>) — <em>không</em> kết nối Console; chỉ chứa manifest K8s + image tag.</li>" +
+      "<li>Một repo GitOps cho <strong>cả platform</strong> — mỗi project thêm folder <code>apps/&lt;slug&gt;/overlays/dev</code>, không tạo repo mới.</li>" +
+      "</ul>" +
+      "<h4>Không bật GitOps thì sao?</h4>" +
+      "<ul class=\"deploy-help-list\">" +
+      "<li>Push code → CI build → Platform deploy qua Rancher — <strong>đủ cho Phase 1 / 2</strong>.</li>" +
+      "<li>Tab <strong>4 bước</strong> vẫn là hướng dẫn chính.</li>" +
+      "</ul>" +
+      "<h4>Khi bật GitOps (admin)</h4>" +
+      "<ol class=\"deploy-help-steps\">" +
+      "<li>Tạo repo GitOps trên GitHub (một lần).</li>" +
+      "<li>Cấu hình VPS: <code>GITOPS_REPO_URL</code> + <code>GITOPS_PUSH_TOKEN</code>.</li>" +
+      "<li>Scaffold <code>apps/&lt;slug&gt;/overlays/dev/kustomization.yaml</code>.</li>" +
+      "<li>Dev vẫn: repo code + <strong>Lưu &amp; đồng bộ GitHub</strong> + push.</li>" +
+      "<li>CI ghi tag vào GitOps → Argo CD sync cluster.</li>" +
+      "</ol></div>" +
+      '<p class="muted deploy-help-note">Chi tiết admin: doc <strong>GITOPS_DEPLOY</strong> trên repo platform · Argo UI: <code>argocd.{domain}</code></p>',
+  },
+  {
     id: "dont",
     title: "Đừng làm",
     html:
@@ -57,6 +84,8 @@ var DEPLOY_HELP_SECTIONS = [
       "<tr><td><strong>Deploy lại</strong> bản khác kiểu chạy</td><td>Không đổi topology — dùng <strong>Đổi kiểu chạy…</strong></td></tr>" +
       "<tr><td>Thiếu <code>VITE_API_BASE=/api</code></td><td>Frontend gọi API sai URL</td></tr>" +
       "<tr><td>Deploy env = <strong>prod</strong> lần đầu</td><td>Push thẳng production — rủi ro</td></tr>" +
+      "<tr><td>Tưởng phải tạo <strong>repo GitOps</strong> mỗi project</td><td>Chỉ 1 repo GitOps / platform — dev dùng repo code + 4 bước</td></tr>" +
+      "<tr><td>Nhầm repo GitOps với repo code</td><td>Repo code kết nối Console; GitOps do admin cấu hình VPS</td></tr>" +
       "</tbody></table>",
   },
   {
@@ -82,7 +111,9 @@ var DEPLOY_HELP_SECTIONS = [
       "<li>Kiểm <code>…-prod…/</code> và <code>/api/health</code>.</li>" +
       "</ol>" +
       '<p><strong>Cách B — Deploy thẳng prod</strong></p>' +
-      "<p class=\"muted\">Deploy env = prod → sync → mỗi push lên prod. Chỉ khi chủ đích.</p>",
+      "<p class=\"muted\">Deploy env = prod → sync → mỗi push lên prod. Chỉ khi chủ đích.</p>" +
+      '<p><strong>GitOps (nếu bật)</strong></p>' +
+      "<p class=\"muted\">Prod có thể sync <strong>thủ công</strong> trên Argo CD sau khi tag GitOps cập nhật. Dev vẫn promote qua Console như Cách A nếu chưa chuyển hẳn sang Argo.</p>",
   },
   {
     id: "rules",
@@ -106,6 +137,7 @@ var DEPLOY_HELP_SECTIONS = [
       "<tr><td>Site trắng / API lỗi</td><td><code>VITE_API_BASE=/api</code> → sync lại</td></tr>" +
       "<tr><td>GitHub Actions fail</td><td>Log Actions — secret / Dockerfile path</td></tr>" +
       "<tr><td>Project cũ sau update platform</td><td>Sync workflow một lần</td></tr>" +
+      "<tr><td>CI fail bước <strong>Sync GitOps</strong></td><td>Thiếu <code>apps/&lt;slug&gt;/overlays/dev</code> hoặc PAT — hỏi admin; tắt GitOps vẫn deploy Rancher được</td></tr>" +
       "</tbody></table>" +
       '<p class="muted deploy-help-note">Báo support: gửi slug project, branch, screenshot tab Deploy/Git.</p>',
   },

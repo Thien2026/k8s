@@ -3395,6 +3395,13 @@ tr.dns-row td {
   font-size: 12px;
   margin: 0;
 }
+.deploy-help-note-optional {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.12);
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  font-size: 13px;
+}
 .deploy-help-actions {
   flex-shrink: 0;
   margin-top: 16px;
