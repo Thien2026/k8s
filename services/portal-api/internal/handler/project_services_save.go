@@ -9,6 +9,19 @@ import (
 	"github.com/Thien2026/k8s/services/portal-api/internal/platformcontract"
 )
 
+func validateProjectServiceResources(services []projectServiceRow) error {
+	for _, s := range services {
+		name := strings.TrimSpace(s.Name)
+		if name == "" {
+			name = "app"
+		}
+		if err := deploy.ValidateServiceResources(s.ResourcesMode, s.CPURequest, s.MemoryRequest, s.CPULimit, s.MemoryLimit); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
 func (h *Handler) validateProjectServicesLayout(ctx context.Context, userID int64, owner, ghRepo, branch, layout string, services []projectServiceRow) error {
 	layout = deploy.NormalizeLayout(layout)
 	if layout == deploy.LayoutMulti {

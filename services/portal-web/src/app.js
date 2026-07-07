@@ -3368,6 +3368,35 @@ function platformDefaultResourcesForService(name) {
   };
 }
 
+function parseK8sCpu(val) {
+  val = String(val || "").trim();
+  if (!val) return { num: "", unit: "m" };
+  if (/m$/i.test(val)) return { num: val.replace(/m$/i, ""), unit: "m" };
+  return { num: val, unit: "core" };
+}
+
+function parseK8sMem(val) {
+  val = String(val || "").trim();
+  if (!val) return { num: "", unit: "Mi" };
+  if (/Gi$/i.test(val)) return { num: val.replace(/Gi$/i, ""), unit: "Gi" };
+  if (/Mi$/i.test(val)) return { num: val.replace(/Mi$/i, ""), unit: "Mi" };
+  return { num: val, unit: "Mi" };
+}
+
+function formatK8sCpu(num, unit) {
+  num = String(num || "").trim();
+  if (!num) return "";
+  unit = unit || "m";
+  if (unit === "core") return num;
+  return num + "m";
+}
+
+function formatK8sMem(num, unit) {
+  num = String(num || "").trim();
+  if (!num) return "";
+  return num + (unit === "Gi" ? "Gi" : "Mi");
+}
+
 function resourceFieldsForService(s) {
   s = s || {};
   var mode = s.resources_mode || "platform";
@@ -3407,35 +3436,108 @@ function resourceFieldsForService(s) {
 function resourceFieldNames(prefix, idx) {
   if (prefix === "app") {
     return {
-      cpuReq: "app_cpu_req",
-      memReq: "app_mem_req",
-      cpuLim: "app_cpu_lim",
-      memLim: "app_mem_lim",
+      cpuReqVal: "app_cpu_req_val",
+      cpuReqUnit: "app_cpu_req_unit",
+      memReqVal: "app_mem_req_val",
+      memReqUnit: "app_mem_req_unit",
+      cpuLimVal: "app_cpu_lim_val",
+      cpuLimUnit: "app_cpu_lim_unit",
+      memLimVal: "app_mem_lim_val",
+      memLimUnit: "app_mem_lim_unit",
     };
   }
   return {
-    cpuReq: "svc_cpu_req_" + idx,
-    memReq: "svc_mem_req_" + idx,
-    cpuLim: "svc_cpu_lim_" + idx,
-    memLim: "svc_mem_lim_" + idx,
+    cpuReqVal: "svc_cpu_req_val_" + idx,
+    cpuReqUnit: "svc_cpu_req_unit_" + idx,
+    memReqVal: "svc_mem_req_val_" + idx,
+    memReqUnit: "svc_mem_req_unit_" + idx,
+    cpuLimVal: "svc_cpu_lim_val_" + idx,
+    cpuLimUnit: "svc_cpu_lim_unit_" + idx,
+    memLimVal: "svc_mem_lim_val_" + idx,
+    memLimUnit: "svc_mem_lim_unit_" + idx,
   };
+}
+
+function resourceCellHtml(kind, k8sValue, nameVal, nameUnit, fields, label) {
+  var parsed = kind === "cpu" ? parseK8sCpu(k8sValue) : parseK8sMem(k8sValue);
+  var cls =
+    "svc-res-input svc-res-num" +
+    (fields.preset ? " svc-res-preset" : "") +
+    (fields.none ? " svc-res-none" : "");
+  var unitCls = "svc-res-unit" + (fields.disabled ? " svc-res-unit-readonly" : "");
+  if (fields.disabled) {
+    var unitLabel = fields.none ? "—" : kind === "cpu" ? (parsed.unit === "core" ? "lõi" : "m") : parsed.unit;
+    return (
+      '<div class="svc-res-cell" title="' + esc(label) + '">' +
+      '<span class="svc-res-cell-label">' + esc(label) + "</span>" +
+      '<div class="svc-res-cell-inputs">' +
+      '<input name="' +
+      nameVal +
+      '" class="' +
+      cls +
+      '" value="' +
+      esc(parsed.num) +
+      '" readonly="readonly" disabled />' +
+      '<span class="' +
+      unitCls +
+      '">' +
+      esc(unitLabel) +
+      "</span></div></div>"
+    );
+  }
+  var unitHtml;
+  if (kind === "cpu") {
+    unitHtml =
+      '<select name="' +
+      nameUnit +
+      '" class="' +
+      unitCls +
+      '">' +
+      '<option value="m"' +
+      (parsed.unit === "m" ? " selected" : "") +
+      ">m</option>" +
+      '<option value="core"' +
+      (parsed.unit === "core" ? " selected" : "") +
+      ">lõi</option></select>";
+  } else {
+    unitHtml =
+      '<select name="' +
+      nameUnit +
+      '" class="' +
+      unitCls +
+      '">' +
+      '<option value="Mi"' +
+      (parsed.unit === "Mi" ? " selected" : "") +
+      ">Mi</option>" +
+      '<option value="Gi"' +
+      (parsed.unit === "Gi" ? " selected" : "") +
+      ">Gi</option></select>";
+  }
+  return (
+    '<div class="svc-res-cell" title="' + esc(label) + '">' +
+    '<span class="svc-res-cell-label">' + esc(label) + "</span>" +
+    '<div class="svc-res-cell-inputs">' +
+    '<input type="number" min="1" step="1" name="' +
+    nameVal +
+    '" class="' +
+    cls +
+    '" value="' +
+    esc(parsed.num) +
+    '" placeholder="—" />' +
+    unitHtml +
+    "</div></div>"
+  );
 }
 
 function resourceInputGridHtml(prefix, idx, s) {
   var fields = resourceFieldsForService(s);
   var names = resourceFieldNames(prefix, idx);
-  var dis = fields.disabled ? " disabled" : "";
-  var ro = fields.disabled ? ' readonly="readonly"' : "";
-  var cls = "svc-res-input" + (fields.preset ? " svc-res-preset" : "") + (fields.none ? " svc-res-none" : "");
-  var ph = function (label) {
-    return fields.none ? "Không set" : label;
-  };
   return (
     '<div class="svc-res-grid">' +
-    '<input name="' + names.cpuReq + '" class="' + cls + '" value="' + esc(fields.cpu_request) + '" placeholder="' + esc(ph("CPU req")) + '" title="CPU request"' + dis + ro + " />" +
-    '<input name="' + names.memReq + '" class="' + cls + '" value="' + esc(fields.memory_request) + '" placeholder="' + esc(ph("RAM req")) + '" title="Memory request"' + dis + ro + " />" +
-    '<input name="' + names.cpuLim + '" class="' + cls + '" value="' + esc(fields.cpu_limit) + '" placeholder="' + esc(ph("CPU lim")) + '" title="CPU limit"' + dis + ro + " />" +
-    '<input name="' + names.memLim + '" class="' + cls + '" value="' + esc(fields.memory_limit) + '" placeholder="' + esc(ph("RAM lim")) + '" title="Memory limit"' + dis + ro + " />" +
+    resourceCellHtml("cpu", fields.cpu_request, names.cpuReqVal, names.cpuReqUnit, fields, "CPU req") +
+    resourceCellHtml("mem", fields.memory_request, names.memReqVal, names.memReqUnit, fields, "RAM req") +
+    resourceCellHtml("cpu", fields.cpu_limit, names.cpuLimVal, names.cpuLimUnit, fields, "CPU lim") +
+    resourceCellHtml("mem", fields.memory_limit, names.memLimVal, names.memLimUnit, fields, "RAM lim") +
     "</div>"
   );
 }
@@ -3476,10 +3578,22 @@ function readServiceResourcesFromForm(form, idx) {
   };
   if (mode !== "custom") return out;
   var names = idx === "app" ? resourceFieldNames("app", "app") : resourceFieldNames("svc", idx);
-  out.cpu_request = (form.querySelector('[name="' + names.cpuReq + '"]') || {}).value || "";
-  out.memory_request = (form.querySelector('[name="' + names.memReq + '"]') || {}).value || "";
-  out.cpu_limit = (form.querySelector('[name="' + names.cpuLim + '"]') || {}).value || "";
-  out.memory_limit = (form.querySelector('[name="' + names.memLim + '"]') || {}).value || "";
+  out.cpu_request = formatK8sCpu(
+    (form.querySelector('[name="' + names.cpuReqVal + '"]') || {}).value,
+    (form.querySelector('[name="' + names.cpuReqUnit + '"]') || {}).value || "m"
+  );
+  out.memory_request = formatK8sMem(
+    (form.querySelector('[name="' + names.memReqVal + '"]') || {}).value,
+    (form.querySelector('[name="' + names.memReqUnit + '"]') || {}).value || "Mi"
+  );
+  out.cpu_limit = formatK8sCpu(
+    (form.querySelector('[name="' + names.cpuLimVal + '"]') || {}).value,
+    (form.querySelector('[name="' + names.cpuLimUnit + '"]') || {}).value || "m"
+  );
+  out.memory_limit = formatK8sMem(
+    (form.querySelector('[name="' + names.memLimVal + '"]') || {}).value,
+    (form.querySelector('[name="' + names.memLimUnit + '"]') || {}).value || "Mi"
+  );
   return out;
 }
 
@@ -3527,18 +3641,119 @@ function toggleServiceResourceInputs(form, idx) {
   };
   if (mode === "custom") {
     var names = idx === "app" ? resourceFieldNames("app", "app") : resourceFieldNames("svc", idx);
-    var cpuReqEl = form.querySelector('[name="' + names.cpuReq + '"]');
+    var cpuReqEl = form.querySelector('[name="' + names.cpuReqVal + '"]');
     if (cpuReqEl && !cpuReqEl.value) {
       var defs = platformDefaultResourcesForService(s.name || "app");
       s = Object.assign(s, defs);
     } else {
-      s.cpu_request = (cpuReqEl || {}).value || "";
-      s.memory_request = (form.querySelector('[name="' + names.memReq + '"]') || {}).value || "";
-      s.cpu_limit = (form.querySelector('[name="' + names.cpuLim + '"]') || {}).value || "";
-      s.memory_limit = (form.querySelector('[name="' + names.memLim + '"]') || {}).value || "";
+      s.cpu_request = formatK8sCpu(
+        (cpuReqEl || {}).value,
+        (form.querySelector('[name="' + names.cpuReqUnit + '"]') || {}).value || "m"
+      );
+      s.memory_request = formatK8sMem(
+        (form.querySelector('[name="' + names.memReqVal + '"]') || {}).value,
+        (form.querySelector('[name="' + names.memReqUnit + '"]') || {}).value || "Mi"
+      );
+      s.cpu_limit = formatK8sCpu(
+        (form.querySelector('[name="' + names.cpuLimVal + '"]') || {}).value,
+        (form.querySelector('[name="' + names.cpuLimUnit + '"]') || {}).value || "m"
+      );
+      s.memory_limit = formatK8sMem(
+        (form.querySelector('[name="' + names.memLimVal + '"]') || {}).value,
+        (form.querySelector('[name="' + names.memLimUnit + '"]') || {}).value || "Mi"
+      );
     }
   }
   applyResourceFields(form, idx, s);
+}
+
+function cpuToMilliClient(num, unit) {
+  num = parseInt(String(num || "").trim(), 10);
+  if (!num || num < 1) return 0;
+  if (unit === "core") return num * 1000;
+  return num;
+}
+
+function memToMiClient(num, unit) {
+  num = parseInt(String(num || "").trim(), 10);
+  if (!num || num < 1) return 0;
+  if (unit === "Gi") return num * 1024;
+  return num;
+}
+
+function validateServiceResourcesEntry(res, serviceName) {
+  if (!res || res.resources_mode !== "custom") return null;
+  serviceName = serviceName || "app";
+  var hasAny =
+    res.cpu_request || res.memory_request || res.cpu_limit || res.memory_limit;
+  if (!hasAny) {
+    return serviceName + ": tùy chỉnh cần ít nhất một giá trị CPU hoặc RAM";
+  }
+  var cpuReqMilli = res.cpu_request ? cpuToMilliClient(parseK8sCpu(res.cpu_request).num, parseK8sCpu(res.cpu_request).unit) : 0;
+  var cpuLimMilli = res.cpu_limit ? cpuToMilliClient(parseK8sCpu(res.cpu_limit).num, parseK8sCpu(res.cpu_limit).unit) : 0;
+  var memReqMi = res.memory_request ? memToMiClient(parseK8sMem(res.memory_request).num, parseK8sMem(res.memory_request).unit) : 0;
+  var memLimMi = res.memory_limit ? memToMiClient(parseK8sMem(res.memory_limit).num, parseK8sMem(res.memory_limit).unit) : 0;
+  if (res.cpu_request) {
+    var cpuReq = parseK8sCpu(res.cpu_request);
+    var n = parseInt(cpuReq.num, 10);
+    if (cpuReq.unit === "core" && (n < 1 || n > 32)) return serviceName + ": CPU request lõi: 1–32";
+    if (cpuReq.unit === "m" && (n < 1 || n > 32000)) return serviceName + ": CPU request m: 1–32000";
+  }
+  if (res.cpu_limit) {
+    var cpuLim = parseK8sCpu(res.cpu_limit);
+    var ln = parseInt(cpuLim.num, 10);
+    if (cpuLim.unit === "core" && (ln < 1 || ln > 32)) return serviceName + ": CPU limit lõi: 1–32";
+    if (cpuLim.unit === "m" && (ln < 1 || ln > 32000)) return serviceName + ": CPU limit m: 1–32000";
+  }
+  if (res.memory_request) {
+    var memReq = parseK8sMem(res.memory_request);
+    var mn = parseInt(memReq.num, 10);
+    if (memReq.unit === "Gi" && (mn < 1 || mn > 64)) return serviceName + ": RAM request Gi: 1–64";
+    if (memReq.unit === "Mi" && (mn < 32 || mn > 32768)) return serviceName + ": RAM request Mi: 32–32768";
+  }
+  if (res.memory_limit) {
+    var memLim = parseK8sMem(res.memory_limit);
+    var lmn = parseInt(memLim.num, 10);
+    if (memLim.unit === "Gi" && (lmn < 1 || lmn > 64)) return serviceName + ": RAM limit Gi: 1–64";
+    if (memLim.unit === "Mi" && (lmn < 32 || lmn > 32768)) return serviceName + ": RAM limit Mi: 32–32768";
+  }
+  if (cpuReqMilli && cpuLimMilli && cpuReqMilli > cpuLimMilli) {
+    return serviceName + ": CPU request không được lớn hơn CPU limit";
+  }
+  if (memReqMi && memLimMi && memReqMi > memLimMi) {
+    return serviceName + ": RAM request không được lớn hơn RAM limit";
+  }
+  return null;
+}
+
+function validateAllServiceResources(form) {
+  if (!form) return null;
+  var checked = form.querySelector('input[name="layout"]:checked');
+  var layout = checked ? checked.value : "single";
+  var errors = [];
+  if (layout === "single") {
+    var e1 = validateServiceResourcesEntry(readServiceResourcesFromForm(form, "app"), "app");
+    if (e1) errors.push(e1);
+  } else {
+    form.querySelectorAll(".service-resources-card").forEach(function (card) {
+      var idx = card.getAttribute("data-svc-res-idx");
+      if (idx == null) return;
+      var name = serviceNameForResourceIdx(form, idx) || "service " + idx;
+      var e2 = validateServiceResourcesEntry(readServiceResourcesFromForm(form, idx), name);
+      if (e2) errors.push(e2);
+    });
+  }
+  return errors.length ? errors.join(" · ") : null;
+}
+
+function renderResourcesActionsHtml() {
+  if (typeof canWriteK8s === "function" && !canWriteK8s()) return "";
+  return (
+    '<div class="svc-res-actions">' +
+    '<button type="button" class="btn-primary btn-sm" id="resources-save-apply">Lưu &amp; áp dụng CPU/RAM</button>' +
+    '<button type="button" class="btn-ghost btn-sm" id="resources-save-draft">Chỉ lưu nháp</button>' +
+    "</div>"
+  );
 }
 
 function renderSingleResourcesPanel(s) {
@@ -3547,11 +3762,13 @@ function renderSingleResourcesPanel(s) {
   return (
     '<div class="single-resources-panel" style="margin-top:12px">' +
     "<strong>CPU / RAM</strong>" +
-    '<p class="muted" style="margin:6px 0 8px;font-size:12px">Mặc định platform = preset an toàn · Không set = không inject limits (Grafana % có thể trống)</p>' +
+    '<p class="muted" style="margin:6px 0 8px;font-size:12px">Mặc định platform = preset an toàn · Không set = không inject limits · Tùy chỉnh: nhập số + chọn đơn vị</p>' +
     '<div class="svc-res-row">' +
     resourcesModeSelectHtml("app_res_mode", mode, "app") +
     serviceResourcesInputsHtml(s, "app") +
-    "</div></div>"
+    "</div>" +
+    renderResourcesActionsHtml() +
+    "</div>"
   );
 }
 
@@ -4043,10 +4260,12 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     "</div>" +
     '<div class="service-resources-panel" id="service-resources-panel">' +
     "<h4>CPU / RAM từng service</h4>" +
-    '<p class="muted" style="margin:0 0 10px;font-size:12px">Chọn <strong>Mặc định platform</strong> (an toàn) · <strong>Không set</strong> (không limit) · <strong>Tùy chỉnh</strong> để nhập CPU/RAM. Lưu nháp rồi deploy lại để áp dụng.</p>' +
+    '<p class="muted" style="margin:0 0 10px;font-size:12px">Chọn <strong>Mặc định platform</strong> · <strong>Không set</strong> · <strong>Tùy chỉnh</strong> (số + đơn vị). Bấm <strong>Lưu &amp; áp dụng</strong> để restart pod với limits mới — không cần đồng bộ GitHub.</p>' +
     '<div class="service-resources-grid" id="service-resources-grid">' +
     multiItems.map(function (s, idx) { return renderServiceResourcesCard(s, idx); }).join("") +
-    "</div></div>" +
+    "</div>" +
+    renderResourcesActionsHtml() +
+    "</div>" +
     '<details class="layout-advanced-details"><summary>Tùy chỉnh service (dev) — build path, ingress</summary>' +
     '<p class="muted" id="github-dir-hint" style="margin:8px 0">Thư mục build theo branch đã chọn ở bước 1.</p>' +
     '<button type="button" class="btn-ghost btn-sm" id="refresh-github-dirs" style="margin-bottom:8px">Quét thư mục từ GitHub</button>' +
@@ -4638,6 +4857,11 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   const draftBtn = document.getElementById("pipeline-save-draft");
   if (draftBtn) {
     draftBtn.onclick = async function () {
+      const resErr = validateAllServiceResources(form);
+      if (resErr) {
+        toastError(resErr);
+        return;
+      }
       const layoutPayload = collectProjectLayoutPayload(form);
       try {
         const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
@@ -4656,8 +4880,89 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
     };
   }
 
+  async function saveProjectResources(apply) {
+    const resErr = validateAllServiceResources(form);
+    if (resErr) {
+      toastError(resErr);
+      return;
+    }
+    const layoutPayload = collectProjectLayoutPayload(form);
+    const applyBtn = document.getElementById("resources-save-apply");
+    const draftResBtn = document.getElementById("resources-save-draft");
+    try {
+      if (applyBtn) applyBtn.disabled = true;
+      if (draftResBtn) draftResBtn.disabled = true;
+      await api("/api/v1/projects/" + encodeURIComponent(slug) + "/services", {
+        method: "PUT",
+        body: Object.assign({ branch: selectedGitHubBranch(repo.branch || "main") }, layoutPayload),
+      });
+      if (!apply) {
+        toastSuccess("Đã lưu nháp CPU/RAM");
+        scheduleCrosscheck();
+        return;
+      }
+      const envLabel = env === "prod" ? "prod" : "dev";
+      const ok = await uiConfirm({
+        title: "Áp dụng cấu hình CPU/RAM",
+        message: "Pod sẽ restart để nhận limits mới trên " + envLabel + ".",
+        details: [
+          "Không rebuild image — chỉ cập nhật manifest Kubernetes.",
+          "Theo dõi rollout ở lịch sử deploy bên dưới.",
+        ],
+        confirmText: "Lưu & áp dụng",
+      });
+      if (!ok) {
+        toastSuccess("Đã lưu — chưa áp dụng lên cluster");
+        scheduleCrosscheck();
+        return;
+      }
+      const result = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/resources/apply", {
+        method: "POST",
+        body: { environment: env },
+      });
+      toastSuccess(result.message || "Đang áp dụng cấu hình CPU/RAM mới…");
+      const activity = await api(
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/activity" + projectQs({ environment: env })
+      ).catch(function () { return { items: [] }; });
+      let readiness = null;
+      if (env === "dev" && canManagePlatformProjects()) {
+        readiness = await api(
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"
+        ).catch(function () { return null; });
+      }
+      updateDeployActivityDOM(activity, slug, readiness, env);
+      bindDeployActivityPoll(slug, env, navToken);
+      const actCard = document.getElementById("deploy-activity-card");
+      if (actCard) actCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      scheduleCrosscheck();
+    } catch (err) {
+      toastError(errorMessage(err));
+    } finally {
+      if (applyBtn) applyBtn.disabled = false;
+      if (draftResBtn) draftResBtn.disabled = false;
+    }
+  }
+
+  const resApplyBtn = document.getElementById("resources-save-apply");
+  if (resApplyBtn) {
+    resApplyBtn.onclick = function () {
+      saveProjectResources(true);
+    };
+  }
+  const resDraftBtn = document.getElementById("resources-save-draft");
+  if (resDraftBtn) {
+    resDraftBtn.onclick = function () {
+      saveProjectResources(false);
+    };
+  }
+
   form.onsubmit = async function (e) {
     e.preventDefault();
+    const resErr = validateAllServiceResources(form);
+    if (resErr) {
+      toastError(resErr);
+      return;
+    }
     const fd = new FormData(form);
     const full = (fd.get("repo") || "").toString();
     const parts = full.split("/");
