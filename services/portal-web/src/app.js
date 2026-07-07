@@ -4533,12 +4533,12 @@ async function pageProjectHub(main, slug, tab) {
       statBox(restarts.toFixed(0), "Số restart 1 giờ", "g4") +
       "</div>" +
       '<div class="card detail-card"><h3>CPU timeline (' + esc(win) + ')</h3>' +
-      sparkline(cpuSeries, "#46d6ff") +
+      lineChart(cpuSeries, { color: "#46d6ff", unit: "cores", digits: 3 }) +
       timelineStatsChips(cpuStats, "cores", 3) +
       timelinePeakText(cpuStats, "cores", 3) +
       '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
       '<div class="card detail-card"><h3>Memory timeline (' + esc(win) + ')</h3>' +
-      sparkline(memSeries, "#c084fc") +
+      lineChart(memSeries, { color: "#c084fc", unit: "MiB", digits: 1 }) +
       timelineStatsChips(memStats, "MiB", 1) +
       timelinePeakText(memStats, "MiB", 1) +
       '<p class="muted">Nguồn: container_memory_working_set_bytes · đơn vị MiB.</p></div>' +
@@ -5826,29 +5826,82 @@ function monitoringPoints(values, divisor) {
   }).filter(Boolean);
 }
 
-function sparkline(points, color) {
+function lineChart(points, opts) {
+  opts = opts || {};
+  const color = opts.color || "#6EE7FF";
+  const unit = opts.unit || "";
+  const digits = opts.digits == null ? 2 : opts.digits;
   if (!points.length) {
     return '<div class="muted">Chưa có dữ liệu timeline</div>';
   }
-  const w = 520;
-  const h = 120;
-  const pad = 8;
+  const w = 760;
+  const h = 220;
+  const m = { top: 14, right: 16, bottom: 34, left: 52 };
+  const cw = w - m.left - m.right;
+  const ch = h - m.top - m.bottom;
   let min = points[0][1];
   let max = points[0][1];
   points.forEach(function (p) {
     if (p[1] < min) min = p[1];
     if (p[1] > max) max = p[1];
   });
+  const padY = Math.max((max - min) * 0.08, 0.000001);
+  min -= padY;
+  max += padY;
   const span = Math.max(max - min, 0.000001);
-  const step = (w - pad * 2) / Math.max(points.length - 1, 1);
+  const step = cw / Math.max(points.length - 1, 1);
+  function yPos(v) {
+    return m.top + ch - ((v - min) / span) * ch;
+  }
+  function xPos(i) {
+    return m.left + i * step;
+  }
   const path = points.map(function (p, i) {
-    const x = pad + i * step;
-    const y = h - pad - ((p[1] - min) / span) * (h - pad * 2);
+    const x = xPos(i);
+    const y = yPos(p[1]);
     return (i === 0 ? "M" : "L") + x.toFixed(2) + " " + y.toFixed(2);
   }).join(" ");
+  const area =
+    path +
+    " L " + xPos(points.length - 1).toFixed(2) + " " + (m.top + ch).toFixed(2) +
+    " L " + xPos(0).toFixed(2) + " " + (m.top + ch).toFixed(2) +
+    " Z";
+  const yTicks = 4;
+  const yGrid = [];
+  for (let i = 0; i <= yTicks; i++) {
+    const ratio = i / yTicks;
+    const val = max - ratio * (max - min);
+    const y = m.top + ratio * ch;
+    yGrid.push({ y: y, val: val });
+  }
+  const firstTs = Number(points[0][0]) || 0;
+  const midTs = Number(points[Math.floor(points.length / 2)][0]) || firstTs;
+  const lastTs = Number(points[points.length - 1][0]) || firstTs;
+  const xTicks = [
+    { x: xPos(0), label: fmtClockFromUnix(firstTs) },
+    { x: xPos(Math.floor(points.length / 2)), label: fmtClockFromUnix(midTs) },
+    { x: xPos(points.length - 1), label: fmtClockFromUnix(lastTs) },
+  ];
+  const last = points[points.length - 1];
+  const lastX = xPos(points.length - 1);
+  const lastY = yPos(last[1]);
+
   return (
-    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:140px;display:block">' +
-    '<path d="' + path + '" fill="none" stroke="' + (color || "#6EE7FF") + '" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>' +
+    '<svg viewBox="0 0 ' + w + " " + h + '" style="width:100%;height:220px;display:block">' +
+    yGrid.map(function (g) {
+      return (
+        '<line x1="' + m.left + '" y1="' + g.y.toFixed(2) + '" x2="' + (m.left + cw) + '" y2="' + g.y.toFixed(2) + '" stroke="rgba(255,255,255,0.08)" stroke-width="1"></line>' +
+        '<text x="' + (m.left - 8) + '" y="' + (g.y + 4).toFixed(2) + '" text-anchor="end" fill="rgba(200,210,230,0.75)" font-size="11">' +
+        esc(Number(g.val).toFixed(digits) + (unit ? " " + unit : "")) +
+        "</text>"
+      );
+    }).join("") +
+    xTicks.map(function (t) {
+      return '<text x="' + t.x.toFixed(2) + '" y="' + (h - 10) + '" text-anchor="middle" fill="rgba(200,210,230,0.65)" font-size="11">' + esc(t.label) + "</text>";
+    }).join("") +
+    '<path d="' + area + '" fill="' + color + '" opacity="0.12"></path>' +
+    '<path d="' + path + '" fill="none" stroke="' + color + '" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"></path>' +
+    '<circle cx="' + lastX.toFixed(2) + '" cy="' + lastY.toFixed(2) + '" r="3.5" fill="' + color + '"></circle>' +
     "</svg>"
   );
 }
