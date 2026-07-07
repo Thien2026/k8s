@@ -4510,6 +4510,7 @@ async function pageProjectHub(main, slug, tab) {
     const pods = Number(metrics.running_pods || 0);
     const cpuSeries = monitoringPoints(metrics.cpu_series, 1);
     const memSeries = monitoringPoints(metrics.memory_series, 1024 * 1024);
+    const insight = monitoringInsight(cpu, memMiB, restarts);
     const topCPU = (metrics.top_cpu_pods || []).map(function (r) {
       return { name: r.name || "unknown", value: Number(r.value || 0).toFixed(4) + " cores" };
     });
@@ -4520,20 +4521,15 @@ async function pageProjectHub(main, slug, tab) {
       projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
       monitoringWindowToolbar(win, slug, env) +
+      '<div class="card detail-card monitor-summary">' +
+      '<div class="monitor-summary-head"><h3>Tóm tắt nhanh</h3><span class="badge ' + (insight.tone === "warn" ? "badge-warn" : "badge-ok") + '">' + (insight.tone === "warn" ? "Cần chú ý" : "Ổn định") + "</span></div>" +
+      '<p class="muted">' + esc(insight.text) + "</p></div>" +
       '<div class="stat-grid">' +
       statBox(pods.toFixed(0), "Running Pods", "g1") +
-      statBox(cpu.toFixed(2), "CPU cores (5m)", "g2") +
-      statBox(memMiB.toFixed(0) + " MiB", "Memory", "g3") +
-      statBox(restarts.toFixed(0), "Restarts (1h)", "g4") +
+      statBox(cpu.toFixed(2), "CPU trung bình 5 phút", "g2") +
+      statBox(memMiB.toFixed(0) + " MiB", "Memory đang dùng", "g3") +
+      statBox(restarts.toFixed(0), "Số restart 1 giờ", "g4") +
       "</div>" +
-      '<div class="card detail-card"><h3>Grafana</h3><p class="muted">Mở dashboard namespace ngay từ Platform. Nếu chưa đăng nhập Grafana, dùng card Hạ tầng để login một lần.</p><div class="meta-chips">' +
-      (devUrl ? '<a class="chip chip-link" href="' + esc(devUrl) + '" target="_blank" rel="noopener">Mở dashboard Dev</a>' : "") +
-      (prodUrl ? '<a class="chip chip-link" href="' + esc(prodUrl) + '" target="_blank" rel="noopener">Mở dashboard Prod</a>' : "") +
-      (grafanaBase ? '<a class="chip chip-link" href="' + esc(grafanaBase) + '" target="_blank" rel="noopener">Mở Grafana full</a>' : "") +
-      "</div></div>" +
-      (activeUrl
-        ? '<div class="card detail-card"><h3>Dashboard nhanh</h3><p class="muted">Namespace hiện tại: <strong>' + esc(metrics.namespace || ns) + '</strong> · nguồn metrics: Prometheus nội bộ.</p><div class="meta-chips"><a class="chip chip-link" href="' + esc(activeUrl) + '" target="_blank" rel="noopener">Mở dashboard namespace hiện tại</a></div></div>'
-        : "") +
       '<div class="card detail-card"><h3>CPU timeline (' + esc(win) + ')</h3>' +
       sparkline(cpuSeries, "#46d6ff") +
       '<p class="muted">Nguồn: rate(container_cpu_usage_seconds_total[5m]) · namespace hiện tại.</p></div>' +
@@ -4555,6 +4551,14 @@ async function pageProjectHub(main, slug, tab) {
         ""
       ) +
       "</div></div>" +
+      (activeUrl
+        ? '<div class="card detail-card"><h3>Grafana nâng cao</h3><p class="muted">Cần điều tra sâu? Mở dashboard namespace hoặc Grafana full.</p><div class="meta-chips">' +
+          (devUrl ? '<a class="chip chip-link" href="' + esc(devUrl) + '" target="_blank" rel="noopener">Dashboard Dev</a>' : "") +
+          (prodUrl ? '<a class="chip chip-link" href="' + esc(prodUrl) + '" target="_blank" rel="noopener">Dashboard Prod</a>' : "") +
+          '<a class="chip chip-link" href="' + esc(activeUrl) + '" target="_blank" rel="noopener">Namespace hiện tại</a>' +
+          (grafanaBase ? '<a class="chip chip-link" href="' + esc(grafanaBase) + '" target="_blank" rel="noopener">Grafana full</a>' : "") +
+          "</div></div>"
+        : "") +
       (metrics.warning ? '<div class="card detail-card"><p class="muted">' + esc(metrics.warning) + "</p></div>" : "") +
       '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
       chip("Dev", p.namespace_dev) +
@@ -5851,13 +5855,23 @@ function monitoringWindowToolbar(active, slug, env) {
     { key: "24h", label: "24h" },
   ];
   return (
-    '<div class="meta-chips" style="margin:0 0 12px">' +
+    '<div class="monitor-toolbar">' +
+    '<span class="monitor-toolbar-label">Khung thời gian</span>' +
+    '<div class="monitor-segmented">' +
     opts.map(function (o) {
-      const cls = o.key === active ? "chip chip-link" : "chip";
+      const cls = o.key === active ? "seg-btn active" : "seg-btn";
       return '<a class="' + cls + '" href="' + esc("#/project/" + slug + "/monitoring?env=" + env + "&window=" + o.key) + '">' + esc(o.label) + "</a>";
     }).join("") +
+    "</div>" +
     "</div>"
   );
+}
+
+function monitoringInsight(cpu, memMiB, restarts) {
+  if (restarts > 0) return { tone: "warn", text: "Có restart trong khung thời gian này, nên kiểm tra pod logs." };
+  if (cpu > 0.8 || memMiB > 1024) return { tone: "warn", text: "Tải tài nguyên khá cao, cân nhắc scale hoặc tối ưu." };
+  if (cpu > 0.25 || memMiB > 512) return { tone: "ok", text: "Hệ thống đang ổn định, tải ở mức trung bình." };
+  return { tone: "ok", text: "Hệ thống ổn định, tải thấp." };
 }
 
 function listPage(title, total, body, toolbar) {
