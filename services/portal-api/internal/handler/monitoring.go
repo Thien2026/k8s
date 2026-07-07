@@ -2,15 +2,21 @@ package handler
 
 import "net/url"
 
-// grafanaNamespaceDashboardURL — dashboard mặc định kube-prometheus-stack (Compute Resources / Namespace).
+const grafanaNamespacePodsUID = "85a562078cdf77779eaa1add43ccec1e"
+
+// grafanaNamespaceDashboardURL — dashboard mặc định kube-prometheus-stack (Compute Resources / Namespace Pods).
 func grafanaNamespaceDashboardURL(base, namespace string) string {
 	base = trimURL(base)
 	if base == "" || namespace == "" {
 		return ""
 	}
-	u := base + "/d/kubernetes-compute-resources-namespace/kubernetes-compute-resources-namespace"
+	u := base + "/d/" + grafanaNamespacePodsUID + "/kubernetes-compute-resources-namespace-pods"
 	q := url.Values{}
 	q.Set("var-namespace", namespace)
+	q.Set("orgId", "1")
+	q.Set("from", "now-6h")
+	q.Set("to", "now")
+	q.Set("timezone", "browser")
 	return u + "?" + q.Encode()
 }
 

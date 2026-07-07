@@ -2104,6 +2104,7 @@ function projectRoute(slug, tab) {
 
 const PROJECT_NAV = [
   { tab: "overview", label: "Tổng quan", icon: "◉" },
+  { tab: "monitoring", label: "Monitoring", icon: "📈" },
   { tab: "runtime", label: "Runtime", icon: "▶" },
   { tab: "deploy", label: "Deploy / Git", icon: "⎇" },
   { tab: "promote", label: "Promote Prod", icon: "↑" },
@@ -2119,6 +2120,21 @@ const PROJECT_WORKLOADS = [
   { tab: "services", label: "Services", icon: "🔗" },
   { tab: "ingresses", label: "Ingresses", icon: "🌐" },
 ];
+
+const GRAFANA_NS_DASH_UID = "85a562078cdf77779eaa1add43ccec1e";
+
+function grafanaNamespaceDashboardUrl(baseUrl, namespace) {
+  if (!baseUrl || !namespace) return "";
+  const base = String(baseUrl).replace(/\/+$/, "");
+  const q = new URLSearchParams({
+    "var-namespace": namespace,
+    orgId: "1",
+    from: "now-6h",
+    to: "now",
+    timezone: "browser",
+  });
+  return base + "/d/" + GRAFANA_NS_DASH_UID + "/kubernetes-compute-resources-namespace-pods?" + q.toString();
+}
 
 function updateSidebarBrand(ctx) {
   const h1 = document.querySelector(".sidebar-brand h1");
@@ -4433,15 +4449,23 @@ async function pageProjectHub(main, slug, tab) {
     const dev = ov.dev || {};
     const prod = ov.prod || {};
     const mon = ov.monitoring || {};
+    let grafanaBase = mon.grafana_url || "";
+    if (!grafanaBase) {
+      const infra = await api("/api/v1/infra/links").catch(function () { return { items: [] }; });
+      const g = (infra.items || []).find(function (x) { return x && x.key === "grafana" && x.url; });
+      grafanaBase = g && g.url ? g.url : "";
+    }
+    const monDevUrl = mon.dev_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_dev);
+    const monProdUrl = mon.prod_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_prod);
     let monHtml = "";
-    if (mon.grafana_url && (mon.dev_dashboard_url || mon.prod_dashboard_url)) {
+    if (grafanaBase && (monDevUrl || monProdUrl)) {
       monHtml =
         '<div class="card detail-card"><h3>Monitoring</h3><p class="muted">Metric theo namespace trên Grafana (đăng nhập qua card Hạ tầng nếu cần).</p><div class="meta-chips">' +
-        (mon.dev_dashboard_url
-          ? '<a class="chip chip-link" href="' + esc(mon.dev_dashboard_url) + '" target="_blank" rel="noopener">Grafana · Dev</a>'
+        (monDevUrl
+          ? '<a class="chip chip-link" href="' + esc(monDevUrl) + '" target="_blank" rel="noopener">Grafana · Dev</a>'
           : "") +
-        (mon.prod_dashboard_url
-          ? '<a class="chip chip-link" href="' + esc(mon.prod_dashboard_url) + '" target="_blank" rel="noopener">Grafana · Prod</a>'
+        (monProdUrl
+          ? '<a class="chip chip-link" href="' + esc(monProdUrl) + '" target="_blank" rel="noopener">Grafana · Prod</a>'
           : "") +
         "</div></div>";
     }
@@ -4460,6 +4484,32 @@ async function pageProjectHub(main, slug, tab) {
       "</div></div>" +
       monHtml +
       '<div class="card detail-card"><p class="muted">Pipeline Git → image → deploy: cấu hình tại tab <strong>Deploy / Git</strong>, theo dõi workload tại <strong>Runtime</strong>.</p></div>';
+    return;
+  }
+
+  if (tab === "monitoring") {
+    const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
+    const mon = ov.monitoring || {};
+    let grafanaBase = mon.grafana_url || "";
+    if (!grafanaBase) {
+      const infra = await api("/api/v1/infra/links").catch(function () { return { items: [] }; });
+      const g = (infra.items || []).find(function (x) { return x && x.key === "grafana" && x.url; });
+      grafanaBase = g && g.url ? g.url : "";
+    }
+    const devUrl = mon.dev_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_dev);
+    const prodUrl = mon.prod_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_prod);
+    main.innerHTML =
+      projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
+      projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
+      '<div class="card detail-card"><h3>Grafana</h3><p class="muted">Mở dashboard namespace ngay từ Platform. Nếu chưa đăng nhập Grafana, dùng card Hạ tầng để login một lần.</p><div class="meta-chips">' +
+      (devUrl ? '<a class="chip chip-link" href="' + esc(devUrl) + '" target="_blank" rel="noopener">Mở dashboard Dev</a>' : "") +
+      (prodUrl ? '<a class="chip chip-link" href="' + esc(prodUrl) + '" target="_blank" rel="noopener">Mở dashboard Prod</a>' : "") +
+      (grafanaBase ? '<a class="chip chip-link" href="' + esc(grafanaBase) + '" target="_blank" rel="noopener">Mở Grafana full</a>' : "") +
+      "</div></div>" +
+      '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
+      chip("Dev", p.namespace_dev) +
+      chip("Prod", p.namespace_prod) +
+      "</div></div>";
     return;
   }
 
