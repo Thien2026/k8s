@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Smoke test Phase 8 — monitoring stack trên cluster.
 set -euo pipefail
+export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:/usr/bin:/bin:${PATH:-}"
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 export KUBECONFIG="${KUBECONFIG:-${ROOT_DIR}/kubeconfig/rke2.yaml}"
-export PATH="/var/lib/rancher/rke2/bin:/usr/local/bin:/usr/bin:/bin:${PATH}"
 
 NS="monitoring"
 FAIL=0
