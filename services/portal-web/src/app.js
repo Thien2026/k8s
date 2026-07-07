@@ -6619,15 +6619,16 @@ function getRoute() {
 
 function parseRoute() {
   const raw = getRoute();
-  if (raw.startsWith("view/")) {
-    const parts = raw.split("/");
+  const pathOnly = raw.split("?")[0];
+  if (pathOnly.startsWith("view/")) {
+    const parts = pathOnly.split("/");
     return { type: "view", resource: parts[1], ns: parts[2] || "_", name: parts.slice(3).join("/") };
   }
-  const parts = raw.split("/");
+  const parts = pathOnly.split("/");
   if (parts[0] === "project" && parts[1]) {
     return { type: "project", slug: parts[1], tab: parts[2] || "overview", key: "project/" + parts[1] };
   }
-  return { type: "page", key: raw };
+  return { type: "page", key: pathOnly };
 }
 
 async function navigate() {
