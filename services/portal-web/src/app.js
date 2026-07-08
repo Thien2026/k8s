@@ -2155,7 +2155,9 @@ function updateSidebarBrand(ctx) {
 
 function projectHeader(p, subtitle, opts) {
   opts = opts || {};
-  const helpBtn = opts.help === "deploy" ? renderDeployHelpButton("steps", "btn-help-header") : "";
+  let helpBtn = "";
+  if (opts.help === "deploy") helpBtn = renderDeployHelpButton("steps", "btn-help-header");
+  if (opts.help === "k8sops") helpBtn = renderK8sOpsHelpButton("start", "btn-help-header");
   return (
     '<div class="page-header project-header page-header-row">' +
     '<div class="page-header-text">' +
@@ -3163,7 +3165,11 @@ function registrySelectHtml(providers, selected, defaultProvider) {
       esc(pr.label) + hint + "</option>";
   });
   return (
-    '<label>Registry<select name="registry_provider" id="registry-provider-select">' + opts + "</select></label>" +
+    '<label class="field-stack">Registry' +
+    '<div class="select-wrap">' +
+    '<select name="registry_provider" id="registry-provider-select">' +
+    opts +
+    '</select><span class="select-chev" aria-hidden="true">▾</span></div></label>' +
     '<p class="muted registry-picker-hint" id="registry-picker-hint"></p>'
   );
 }
@@ -5128,6 +5134,142 @@ function bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToke
   };
 }
 
+function projectDeployBadgeFromSummary(dep, loading) {
+  if (loading) return '<span class="badge muted project-ov-badge-skel">…</span>';
+  dep = dep || {};
+  if (!dep.status || dep.status === "none") return '<span class="badge muted">Chưa deploy</span>';
+  const build = String(dep.build_status || "").toLowerCase();
+  const deploySt = String(dep.deploy_status || "").toLowerCase();
+  if (build === "running" || build === "pending" || deploySt === "running" || deploySt === "pending") {
+    return '<span class="badge warn"><span class="live-dot"></span> Pipeline</span>';
+  }
+  const rt = String(dep.runtime_status || "").toLowerCase();
+  const st = String(dep.status || "").toLowerCase();
+  if (st === "failed" || deploySt === "failed" || build === "failed") {
+    return '<span class="badge bad">Lỗi</span>';
+  }
+  if (st === "success" || rt === "running") {
+    const tag = String(dep.image_tag || "").trim();
+    const short = tag.length > 12 ? tag.slice(0, 12) + "…" : tag;
+    return '<span class="badge ok">OK' + (short ? " · " + esc(short) : "") + "</span>";
+  }
+  return '<span class="badge muted">' + esc(dep.status) + "</span>";
+}
+
+function renderProjectEnvOverviewCard(slug, envKey, label, ns, counts, deploy, loading) {
+  counts = counts || {};
+  const pods = counts.pods != null ? counts.pods : null;
+  const deps = counts.deployments != null ? counts.deployments : null;
+  const podText = pods != null ? pods + " pods" : "… pods";
+  const depText = deps != null ? deps + " deployments" : "… deployments";
+  const skel = loading ? " project-ov-loading" : "";
+  return (
+    '<div class="card detail-card project-ov-env project-ov-env-' +
+    esc(envKey) +
+    skel +
+    '">' +
+    '<div class="project-ov-env-accent"></div>' +
+    '<div class="project-ov-env-body">' +
+    '<div class="project-ov-env-head"><div><h3>' +
+    esc(label) +
+    '</h3><p class="project-ov-ns">' +
+    esc(ns || "—") +
+    "</p></div>" +
+    projectDeployBadgeFromSummary(deploy, loading) +
+    "</div>" +
+    '<div class="project-ov-metric-row">' +
+    '<span class="project-ov-metric"><span class="project-ov-metric-icon" aria-hidden="true">▣</span>' +
+    esc(String(podText)) +
+    "</span>" +
+    '<span class="project-ov-metric"><span class="project-ov-metric-icon" aria-hidden="true">⬡</span>' +
+    esc(String(depText)) +
+    "</span></div>" +
+    '<div class="project-ov-env-links">' +
+    '<a class="project-ov-link" href="#/project/' +
+    esc(slug) +
+    "/runtime?env=" +
+    esc(envKey) +
+    '">Runtime</a>' +
+    '<a class="project-ov-link" href="#/project/' +
+    esc(slug) +
+    "/monitoring?env=" +
+    esc(envKey) +
+    '">Biểu đồ</a>' +
+    '<a class="project-ov-link project-ov-link-primary" href="#/project/' +
+    esc(slug) +
+    "/deploy?env=" +
+    esc(envKey) +
+    '">Deploy</a>' +
+    "</div></div></div>"
+  );
+}
+
+function renderProjectOverviewHtml(p, slug, ov, loading) {
+  ov = ov || {};
+  const dev = ov.dev || {};
+  const prod = ov.prod || {};
+  return (
+    projectHeader(p, "Trang chủ project") +
+    '<p class="project-ov-lead muted">So sánh <strong>Dev</strong> và <strong>Prod</strong> — metric chi tiết ở tab Monitoring.</p>' +
+    '<div class="project-ov-env-grid">' +
+    renderProjectEnvOverviewCard(slug, "dev", "Dev", p.namespace_dev, dev, dev.deploy, loading) +
+    renderProjectEnvOverviewCard(slug, "prod", "Prod", p.namespace_prod, prod, prod.deploy, loading) +
+    "</div>" +
+    (p.registry && p.registry.image_prefix
+      ? '<div class="card detail-card project-ov-registry"><span class="muted">Registry</span> <code>' +
+        esc(p.registry.image_prefix) +
+        "</code></div>"
+      : "") +
+    '<div class="card detail-card"><h3>Đi nhanh</h3>' +
+    renderProjectQuickNav(slug) +
+    "</div>"
+  );
+}
+
+async function loadProjectOverview(main, slug, p) {
+  main.innerHTML = renderProjectOverviewHtml(p, slug, null, true);
+  try {
+    const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
+    main.innerHTML = renderProjectOverviewHtml(p, slug, ov, false);
+  } catch (err) {
+    main.innerHTML =
+      renderProjectOverviewHtml(p, slug, null, false) +
+      '<p class="error" style="margin-top:12px">Không tải số liệu cluster: ' +
+      esc(errorMessage(err)) +
+      "</p>";
+  }
+}
+
+function renderProjectQuickNav(slug) {
+  const items = [
+    { href: "#/project/" + slug + "/deploy", icon: "⎇", title: "Deploy / Git", sub: "Repo, pipeline, push" },
+    { href: "#/project/" + slug + "/runtime", icon: "▶", title: "Runtime", sub: "Pods & deployments" },
+    { href: "#/project/" + slug + "/monitoring", icon: "📈", title: "Monitoring", sub: "CPU/RAM timeline" },
+    { href: "#/project/" + slug + "/ops", icon: "⌘", title: "Sổ lệnh K8s", sub: "Log & kubectl" },
+    { href: "#/project/" + slug + "/domains", icon: "🌐", title: "Domains", sub: "URL & Ingress" },
+    { href: "#/project/" + slug + "/env", icon: "🔑", title: "Cấu hình app", sub: "Env build & pod" },
+  ];
+  return (
+    '<div class="project-ov-quick">' +
+    items
+      .map(function (it) {
+        return (
+          '<a class="project-ov-quick-card" href="' +
+          esc(it.href) +
+          '"><span class="project-ov-quick-icon" aria-hidden="true">' +
+          it.icon +
+          "</span><strong>" +
+          esc(it.title) +
+          '</strong><span class="muted">' +
+          esc(it.sub) +
+          "</span></a>"
+        );
+      })
+      .join("") +
+    "</div>"
+  );
+}
+
 async function pageProjectHub(main, slug, tab) {
   tab = tab || "overview";
   if (tab !== "deploy") {
@@ -5163,45 +5305,7 @@ async function pageProjectHub(main, slug, tab) {
   const ns = env === "prod" ? p.namespace_prod : p.namespace_dev;
 
   if (tab === "overview") {
-    const ov = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/overview" + projectQs());
-    const dev = ov.dev || {};
-    const prod = ov.prod || {};
-    const mon = ov.monitoring || {};
-    let grafanaBase = mon.grafana_url || "";
-    if (!grafanaBase) {
-      const infra = await api("/api/v1/infra/links").catch(function () { return { items: [] }; });
-      const g = (infra.items || []).find(function (x) { return x && x.key === "grafana" && x.url; });
-      grafanaBase = g && g.url ? g.url : "";
-    }
-    const monDevUrl = mon.dev_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_dev);
-    const monProdUrl = mon.prod_dashboard_url || grafanaNamespaceDashboardUrl(grafanaBase, p.namespace_prod);
-    let monHtml = "";
-    if (grafanaBase && (monDevUrl || monProdUrl)) {
-      monHtml =
-        '<div class="card detail-card"><h3>Monitoring</h3><p class="muted">Metric theo namespace trên Grafana (đăng nhập qua card Hạ tầng nếu cần).</p><div class="meta-chips">' +
-        (monDevUrl
-          ? '<a class="chip chip-link" href="' + esc(monDevUrl) + '" target="_blank" rel="noopener">Grafana · Dev</a>'
-          : "") +
-        (monProdUrl
-          ? '<a class="chip chip-link" href="' + esc(monProdUrl) + '" target="_blank" rel="noopener">Grafana · Prod</a>'
-          : "") +
-        "</div></div>";
-    }
-    main.innerHTML =
-      projectHeader(p, p.description || "Tổng quan project") +
-      '<div class="stat-grid">' +
-      statBox(dev.pods ?? "—", "Pods (dev)", "g1") +
-      statBox(dev.deployments ?? "—", "Deployments (dev)", "g2") +
-      statBox(prod.pods ?? "—", "Pods (prod)", "g3") +
-      statBox(prod.deployments ?? "—", "Deployments (prod)", "g4") +
-      "</div>" +
-      '<div class="card detail-card"><h3>Namespaces</h3><div class="meta-chips">' +
-      chip("Dev", p.namespace_dev) +
-      chip("Prod", p.namespace_prod) +
-      (p.registry && p.registry.image_prefix ? chip(p.registry.label || "Registry", p.registry.image_prefix) : "") +
-      "</div></div>" +
-      monHtml +
-      '<div class="card detail-card"><p class="muted">Pipeline Git → image → deploy: cấu hình tại tab <strong>Deploy / Git</strong>, theo dõi workload tại <strong>Runtime</strong>.</p></div>';
+    await loadProjectOverview(main, slug, p);
     return;
   }
 
@@ -5238,7 +5342,9 @@ async function pageProjectHub(main, slug, tab) {
       return { name: r.name || "unknown", value: Number(r.value || 0).toFixed(1) + " MiB" };
     });
     main.innerHTML =
-      projectHeader(p, "Monitoring theo namespace (Dev/Prod)") +
+      '<div class="monitor-page">' +
+      projectHeader(p, "Biểu đồ CPU/RAM · Prometheus") +
+      '<p class="monitor-page-lead muted">Timeline metric namespace — khác tab Tổng quan (chỉ xem trạng thái & lối tắt).</p>' +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "monitoring"); }) +
       monitoringWindowToolbar(win, slug, env) +
       '<div class="card detail-card monitor-summary">' +
@@ -5284,10 +5390,7 @@ async function pageProjectHub(main, slug, tab) {
           "</div></div>"
         : "") +
       (metrics.warning ? '<div class="card detail-card"><p class="muted">' + esc(metrics.warning) + "</p></div>" : "") +
-      '<div class="card detail-card"><h3>Namespace map</h3><div class="meta-chips">' +
-      chip("Dev", p.namespace_dev) +
-      chip("Prod", p.namespace_prod) +
-      "</div></div>";
+      "</div>";
     bindInteractiveCharts(main);
     return;
   }
@@ -5296,7 +5399,7 @@ async function pageProjectHub(main, slug, tab) {
     const envOps = state.projectEnv || "dev";
     const nsOps = envOps === "prod" ? p.namespace_prod : p.namespace_dev;
     main.innerHTML =
-      projectHeader(p, "Sổ lệnh K8s · chỉ namespace project") +
+      projectHeader(p, "Sổ lệnh K8s · terminal read-only", { help: "k8sops" }) +
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "ops"); }) +
       '<div id="k8s-ops-root"></div>';
     await pageK8sOps(document.getElementById("k8s-ops-root"), {
@@ -5305,6 +5408,7 @@ async function pageProjectHub(main, slug, tab) {
       slug: slug,
       embed: true,
     });
+    bindK8sOpsHelpTriggers(main);
     return;
   }
 
@@ -6058,10 +6162,24 @@ async function pageProjectHub(main, slug, tab) {
     const users = canManage ? await api("/api/v1/team/users").catch(() => ({ items: [] })) : { items: [] };
     let mrows = members
       .map(function (m) {
+        const roleBadge =
+          m.role === "owner"
+            ? '<span class="badge ok">owner</span>'
+            : m.role === "dev"
+              ? '<span class="badge">dev</span>'
+              : '<span class="badge muted">' + esc(m.role) + "</span>";
         return (
-          "<tr><td>" + esc(m.email) + "</td><td>" + esc(m.display_name || "—") + "</td><td>" + esc(m.role) + "</td>" +
+          "<tr><td>" +
+          esc(m.email) +
+          "</td><td>" +
+          esc(m.display_name || "—") +
+          "</td><td>" +
+          roleBadge +
+          "</td>" +
           (canManage && m.role !== "owner"
-            ? '<td><button type="button" class="btn-sm btn-danger mem-del" data-id="' + m.user_id + '">Gỡ</button></td>'
+            ? '<td class="col-actions"><button type="button" class="btn-sm btn-danger mem-del" data-id="' +
+              m.user_id +
+              '">Gỡ</button></td>'
             : "<td></td>") +
           "</tr>"
         );
@@ -6078,22 +6196,42 @@ async function pageProjectHub(main, slug, tab) {
     main.innerHTML =
       projectHeader(p, "Cài đặt · registry & thành viên") +
       (canManage
-        ? '<div class="card" style="margin-bottom:16px"><h3>Registry</h3>' +
-          '<form id="registry-form" class="login-form" style="max-width:480px">' +
+        ? '<div class="card detail-card project-settings-card">' +
+          "<h3>Registry</h3>" +
+          '<p class="muted project-settings-desc">Nơi lưu image Docker của project (GHCR hoặc Harbor).</p>' +
+          (p.registry && p.registry.image_prefix
+            ? '<p class="project-settings-current muted">Hiện tại: <code>' + esc(p.registry.image_prefix) + "</code></p>"
+            : "") +
+          '<form id="registry-form" class="project-settings-form">' +
           registrySelectHtml(providers, p.registry_provider, "ghcr") +
-          '<button type="submit" class="btn-primary" style="margin-top:12px">Lưu registry</button></form></div>'
-        : '<div class="card" style="margin-bottom:16px"><h3>Registry</h3><p class="muted">' +
+          '<div class="project-settings-actions">' +
+          '<button type="submit" class="btn-primary btn-sm">Lưu registry</button>' +
+          "</div></form></div>"
+        : '<div class="card detail-card project-settings-card"><h3>Registry</h3><p class="muted">' +
           esc((p.registry && p.registry.label) || p.registry_provider) +
           (p.registry && p.registry.image_prefix ? " · <code>" + esc(p.registry.image_prefix) + "</code>" : "") +
           "</p></div>") +
-      '<div class="card"><h3>Thành viên project</h3>' +
+      '<div class="card detail-card project-settings-card">' +
+      "<h3>Thành viên project</h3>" +
+      '<p class="muted project-settings-desc">Ai được xem và deploy project này.</p>' +
       (canManage && addMemberOpts
-        ? '<form id="add-member-form" class="toolbar" style="margin-bottom:12px">' +
-          '<select name="user_id">' + addMemberOpts + "</select>" +
-          '<select name="role"><option value="dev">dev</option><option value="readonly">readonly</option></select>' +
-          '<button type="submit" class="btn-primary">Thêm</button></form>'
+        ? '<form id="add-member-form" class="project-member-add">' +
+          '<div class="project-member-field project-member-field-grow">' +
+          '<span class="field-label">Thành viên</span>' +
+          '<div class="select-wrap">' +
+          '<select name="user_id">' +
+          addMemberOpts +
+          '</select><span class="select-chev" aria-hidden="true">▾</span></div></div>' +
+          '<div class="project-member-field">' +
+          '<span class="field-label">Vai trò</span>' +
+          '<div class="select-wrap select-wrap-compact">' +
+          '<select name="role">' +
+          '<option value="dev">dev</option><option value="readonly">readonly</option>' +
+          '</select><span class="select-chev" aria-hidden="true">▾</span></div></div>' +
+          '<button type="submit" class="btn-primary btn-sm project-member-add-btn">Thêm</button>' +
+          "</form>"
         : "") +
-      '<div class="table-wrap"><table><thead><tr><th>Email</th><th>Tên</th><th>Role</th><th></th></tr></thead><tbody>' +
+      '<div class="table-wrap project-members-table"><table class="data-table"><thead><tr><th>Email</th><th>Tên</th><th>Vai trò</th><th></th></tr></thead><tbody>' +
       (mrows || '<tr><td colspan="4" class="muted">Chưa có thành viên</td></tr>') +
       "</tbody></table></div></div>";
     const regForm = document.getElementById("registry-form");
@@ -7160,14 +7298,15 @@ async function pageAddWorker(main) {
 
 async function pageK8sOps(main, opts) {
   opts = opts || {};
+  if (typeof window.__k8sOpsCloseMenu === "function") {
+    document.removeEventListener("mousedown", window.__k8sOpsCloseMenu);
+    window.__k8sOpsCloseMenu = null;
+  }
   const scope = opts.scope || "platform";
   const embed = opts.embed === true;
   if (!main) return;
-  if (!embed) {
-    main.innerHTML = '<p class="loading">Đang tải sổ lệnh K8s…</p>';
-  } else {
-    main.innerHTML = '<p class="loading">Đang tải…</p>';
-  }
+  main.innerHTML = '<p class="loading">Đang tải sổ lệnh K8s…</p>';
+
   let namespaces = [];
   try {
     const nsRes = await api("/api/v1/rancher/namespaces");
@@ -7179,132 +7318,38 @@ async function pageK8sOps(main, opts) {
   const commands = data.items || [];
   const defaultNs = opts.namespace || state.namespace || namespaces[0] || "";
 
-  const placeholderLabels = {
-    namespace: "Namespace",
-    pod: "Pod",
-    deployment: "Deployment",
-    container: "Container",
-    tail: "Tail dòng log",
-  };
-
-  function renderPlaceholderInputs(cmd) {
-    if (!cmd.placeholders || !cmd.placeholders.length) return "";
-    return (
-      '<div class="k8s-ops-fields">' +
-      cmd.placeholders
-        .map(function (ph) {
-          if (ph === "namespace") {
-            let optsHtml = namespaces
-              .map(function (n) {
-                return '<option value="' + esc(n) + '"' + (n === defaultNs ? " selected" : "") + ">" + esc(n) + "</option>";
-              })
-              .join("");
-            return (
-              '<label class="k8s-ops-field">' +
-              esc(placeholderLabels[ph]) +
-              '<select class="k8s-ops-ph" data-ph="namespace">' +
-              optsHtml +
-              "</select></label>"
-            );
-          }
-          if (ph === "tail") {
-            return (
-              '<label class="k8s-ops-field">' +
-              esc(placeholderLabels[ph]) +
-              '<input type="number" class="k8s-ops-ph" data-ph="tail" min="50" max="2000" value="300" /></label>'
-            );
-          }
-          return (
-            '<label class="k8s-ops-field">' +
-            esc(placeholderLabels[ph] || ph) +
-            '<input type="text" class="k8s-ops-ph" data-ph="' +
-            esc(ph) +
-            '" placeholder="{' +
-            esc(ph) +
-            '}" /></label>'
-          );
-        })
-        .join("") +
-      "</div>"
-    );
-  }
-
-  const byCat = {};
-  commands.forEach(function (cmd) {
-    const cat = cmd.category || "Khác";
-    if (!byCat[cat]) byCat[cat] = [];
-    byCat[cat].push(cmd);
-  });
-
-  let bodyHtml = "";
-  Object.keys(byCat).forEach(function (cat) {
-    bodyHtml +=
-      '<div class="k8s-ops-category"><h4>' +
-      esc(cat) +
-      "</h4><div class=\"k8s-ops-cards\">" +
-      byCat[cat]
-        .map(function (cmd) {
-          return (
-            '<div class="k8s-ops-card" data-cmd="' +
-            esc(cmd.id) +
-            '">' +
-            "<strong>" +
-            esc(cmd.label) +
-            "</strong>" +
-            (cmd.description ? '<p class="muted">' + esc(cmd.description) + "</p>" : "") +
-            renderPlaceholderInputs(cmd) +
-            '<div class="k8s-ops-cmd-row">' +
-            '<input type="text" class="k8s-ops-cmd" readonly value="' +
-            esc(cmd.kubectl) +
-            '" />' +
-            '<button type="button" class="btn-ghost btn-sm k8s-ops-copy">Copy</button>' +
-            (cmd.runnable
-              ? '<button type="button" class="btn-primary btn-sm k8s-ops-run">Chạy (read-only)</button>'
-              : "") +
-            "</div></div>"
-          );
-        })
-        .join("") +
-      "</div></div>";
-  });
-
-  const shell = embed
-    ? bodyHtml +
-      '<div class="card detail-card k8s-ops-output-wrap" style="margin-top:16px" hidden id="k8s-ops-output-wrap">' +
-      '<h3>Kết quả</h3><p class="muted" id="k8s-ops-summary"></p><pre class="log-box" id="k8s-ops-output"></pre></div>'
-    : '<div class="page-header"><h2 class="page-title">Sổ lệnh K8s</h2>' +
-      '<p class="page-subtitle">Chạy lệnh read-only qua API — không cần SSH. Copy kubectl để dùng ngoài Console.</p></div>' +
-      '<div class="card detail-card k8s-ops-intro">' +
-      '<p class="muted">Phạm vi <strong>' +
-      (scope === "project" ? "Project" : "Platform") +
-      "</strong> · chỉ lệnh đọc (get, logs, describe, events).</p></div>" +
-      bodyHtml +
-      '<div class="card detail-card k8s-ops-output-wrap" style="margin-top:16px" hidden id="k8s-ops-output-wrap">' +
-      '<h3>Kết quả</h3><p class="muted" id="k8s-ops-summary"></p><pre class="log-box" id="k8s-ops-output"></pre></div>';
-
-  main.innerHTML = shell;
-
-  function readVars(card) {
-    const vars = { tail: "300" };
-    card.querySelectorAll(".k8s-ops-ph").forEach(function (el) {
-      vars[el.getAttribute("data-ph")] = el.value || "";
-    });
-    if (!vars.namespace && defaultNs) vars.namespace = defaultNs;
-    if (!vars.tail) vars.tail = "300";
-    return vars;
-  }
-
   function fillTemplate(tpl, vars) {
     return tpl.replace(/\{(\w+)\}/g, function (_, key) {
-      return vars[key] != null ? String(vars[key]) : "{" + key + "}";
+      return vars[key] != null && vars[key] !== "" ? String(vars[key]) : "{" + key + "}";
     });
+  }
+
+  function defaultVars() {
+    return {
+      namespace: defaultNs,
+      pod: "{pod}",
+      deployment: "{deployment}",
+      name: "{name}",
+      container: "{container}",
+      tail: "300",
+      label: "app={app}",
+    };
   }
 
   function formatRunOutput(result) {
     if (!result) return "";
     if (result.kind === "logs") return String(result.output || "");
     if (result.kind === "table" && Array.isArray(result.output)) {
-      return JSON.stringify(result.output, null, 2);
+      if (!result.output.length) return "(không có dữ liệu)";
+      return result.output
+        .map(function (row) {
+          if (typeof row === "string") return row;
+          const name = row.name || row.Name || "—";
+          const status = row.status || row.Status || row.phase || row.Phase || "";
+          const ns = row.namespace || row.Namespace || "";
+          return [name, ns, status].filter(Boolean).join("\t");
+        })
+        .join("\n");
     }
     if (result.kind === "json") {
       return JSON.stringify(result.output, null, 2);
@@ -7312,60 +7357,298 @@ async function pageK8sOps(main, opts) {
     return String(result.output || "");
   }
 
-  main.querySelectorAll(".k8s-ops-card").forEach(function (card) {
-    const cmdId = card.getAttribute("data-cmd");
-    const cmd = commands.find(function (c) { return c.id === cmdId; });
-    if (!cmd) return;
-    const cmdInput = card.querySelector(".k8s-ops-cmd");
-    function refreshCmd() {
-      cmdInput.value = fillTemplate(cmd.kubectl, readVars(card));
-    }
-    card.querySelectorAll(".k8s-ops-ph").forEach(function (el) {
-      el.addEventListener("input", refreshCmd);
-      el.addEventListener("change", refreshCmd);
+  const nsOptions = namespaces
+    .map(function (n) {
+      return '<option value="' + esc(n) + '"' + (n === defaultNs ? " selected" : "") + ">" + esc(n) + "</option>";
+    })
+    .join("");
+
+  const byCat = {};
+  commands.forEach(function (cmd) {
+    const cat = cmd.category || "Khác";
+    if (!byCat[cat]) byCat[cat] = [];
+    byCat[cat].push(cmd);
+  });
+  const catOrder = ["Pods", "Deployments", "Workloads", "Networking", "Config & Storage", "Debug", "Cluster", "Khác"];
+  const sortedCats = catOrder.filter(function (c) { return byCat[c]; });
+  Object.keys(byCat).forEach(function (c) {
+    if (sortedCats.indexOf(c) < 0) sortedCats.push(c);
+  });
+
+  let quickMenuHtml =
+    '<div class="k8s-term-quick-head">' +
+    '<p class="k8s-term-quick-head-title">Chèn mẫu lệnh <span class="muted">· ngay trên ô gõ</span></p>' +
+    '<input type="search" class="k8s-term-quick-search" id="k8s-term-quick-search" placeholder="Tìm lệnh… (pods, logs, ingress…)" autocomplete="off" />' +
+    "</div>" +
+    '<div class="k8s-term-quick-list" id="k8s-term-quick-list">';
+  sortedCats.forEach(function (cat) {
+    quickMenuHtml += '<div class="k8s-term-quick-cat">' + esc(cat) + "</div>";
+    byCat[cat].forEach(function (cmd) {
+      const copyOnly = cmd.runnable === false;
+      quickMenuHtml +=
+        '<button type="button" class="k8s-term-quick-item" data-cmd-id="' +
+        esc(cmd.id) +
+        '" data-search="' +
+        esc((cmd.label + " " + cmd.kubectl + " " + (cmd.description || "")).toLowerCase()) +
+        '" title="' +
+        esc(cmd.kubectl) +
+        '">' +
+        "<span>" +
+        esc(cmd.label) +
+        (copyOnly ? ' <em class="k8s-term-copy-tag">copy</em>' : "") +
+        "</span>" +
+        '<code class="k8s-term-quick-code">' +
+        esc(cmd.kubectl) +
+        "</code></button>";
     });
-    refreshCmd();
-    const copyBtn = card.querySelector(".k8s-ops-copy");
-    if (copyBtn) {
-      copyBtn.onclick = function () {
-        navigator.clipboard.writeText(cmdInput.value).then(
-          function () { toastSuccess("Đã copy lệnh"); },
-          function () { toastInfo(cmdInput.value); }
-        );
-      };
+  });
+  quickMenuHtml += "</div>";
+
+  const headerHtml = embed
+    ? ""
+    : '<div class="page-header k8s-term-page-header">' +
+      '<div class="k8s-term-page-title-row">' +
+      "<h2 class=\"page-title\">Sổ lệnh K8s</h2>" +
+      renderK8sOpsHelpButton("start", "btn-help-header") +
+      "</div>" +
+      '<p class="page-subtitle">Terminal read-only — gõ kubectl tự do hoặc chèn mẫu từ <strong>+</strong>.</p></div>';
+
+  main.innerHTML =
+    headerHtml +
+    '<div class="card detail-card k8s-terminal">' +
+    '<div class="k8s-terminal-toolbar">' +
+    '<label class="k8s-term-ns-label">Namespace mặc định' +
+    '<select id="k8s-term-ns"' +
+    (scope === "project" ? " disabled" : "") +
+    ">" +
+    nsOptions +
+    "</select></label>" +
+    '<span class="muted k8s-term-scope">Phạm vi <strong>' +
+    (scope === "project" ? "Project" : "Platform") +
+    "</strong></span>" +
+    (embed ? renderK8sOpsHelpButton("start", "btn-help-inline") : "") +
+    "</div>" +
+    '<div class="k8s-terminal-feed" id="k8s-term-feed" tabindex="0">' +
+    '<div class="k8s-term-line k8s-term-system">' +
+    "Gõ lệnh <code>kubectl get|describe|logs</code> bên dưới. Bấm <strong>+</strong> chèn mẫu. Sau khi chạy — <strong>Copy kết quả</strong> để lấy log/output." +
+    "</div></div>" +
+    '<div class="k8s-term-quick-panel" id="k8s-term-plus-menu" hidden>' +
+    quickMenuHtml +
+    "</div>" +
+    '<div class="k8s-terminal-composer">' +
+    '<button type="button" class="k8s-term-plus" id="k8s-term-plus" title="Chèn lệnh mẫu">+</button>' +
+    '<span class="k8s-term-prompt" aria-hidden="true">$</span>' +
+    '<input type="text" class="k8s-term-input" id="k8s-term-input" autocomplete="off" spellcheck="false" placeholder="kubectl get pods -n ' +
+    esc(defaultNs || "namespace") +
+    '" />' +
+    '<button type="button" class="btn-primary btn-sm" id="k8s-term-run">Chạy</button>' +
+    '<button type="button" class="btn-ghost btn-sm" id="k8s-term-copy" disabled title="Copy kết quả lệnh vừa chạy">Copy kết quả</button>' +
+    "</div></div>";
+
+  bindK8sOpsHelpTriggers(main);
+
+  const feed = document.getElementById("k8s-term-feed");
+  const input = document.getElementById("k8s-term-input");
+  const nsSelect = document.getElementById("k8s-term-ns");
+  const plusBtn = document.getElementById("k8s-term-plus");
+  const plusMenu = document.getElementById("k8s-term-plus-menu");
+  const termCard = main.querySelector(".k8s-terminal");
+  const copyResultBtn = document.getElementById("k8s-term-copy");
+  let lastOutputText = "";
+
+  function copyOutputText(text, okMsg) {
+    text = (text || "").trim();
+    if (!text) {
+      toastInfo("Chưa có kết quả để copy — chạy lệnh trước");
+      return;
     }
-    const runBtn = card.querySelector(".k8s-ops-run");
-    if (runBtn) {
-      runBtn.onclick = async function () {
-        const vars = readVars(card);
-        runBtn.disabled = true;
-        try {
-          const result = await api("/api/v1/k8s/commands/run", {
-            method: "POST",
-            body: {
-              command_id: cmd.id,
-              namespace: vars.namespace,
-              pod: vars.pod,
-              deployment: vars.deployment,
-              container: vars.container,
-              tail: parseInt(vars.tail, 10) || 300,
-            },
-          });
-          const wrap = document.getElementById("k8s-ops-output-wrap");
-          const out = document.getElementById("k8s-ops-output");
-          const sum = document.getElementById("k8s-ops-summary");
-          if (wrap) wrap.hidden = false;
-          if (sum) sum.textContent = result.summary || cmd.label;
-          if (out) out.textContent = formatRunOutput(result);
-          toastSuccess("Đã chạy — xem kết quả bên dưới");
-        } catch (err) {
-          toastError(errorMessage(err));
-        } finally {
-          runBtn.disabled = false;
+    navigator.clipboard.writeText(text).then(
+      function () { toastSuccess(okMsg || "Đã copy kết quả"); },
+      function () { toastInfo(text.slice(0, 500)); }
+    );
+  }
+
+  function setLastOutput(text) {
+    lastOutputText = text || "";
+    if (copyResultBtn) {
+      copyResultBtn.disabled = !lastOutputText.trim();
+    }
+  }
+
+  function currentNs() {
+    if (scope === "project" && defaultNs) return defaultNs;
+    return (nsSelect && nsSelect.value) || defaultNs || "";
+  }
+
+  function appendLine(className, html) {
+    const line = document.createElement("div");
+    line.className = "k8s-term-line " + className;
+    line.innerHTML = html;
+    feed.appendChild(line);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function appendUserCmd(cmdText) {
+    appendLine("k8s-term-user", '<span class="k8s-term-prompt-inline">$</span> ' + esc(cmdText));
+  }
+
+  function appendOutput(text, isError) {
+    const outText = text == null ? "" : String(text);
+    setLastOutput(outText);
+    const wrap = document.createElement("div");
+    wrap.className = "k8s-term-line k8s-term-result";
+    const bar = document.createElement("div");
+    bar.className = "k8s-term-result-bar";
+    const copyOne = document.createElement("button");
+    copyOne.type = "button";
+    copyOne.className = "btn-ghost btn-sm k8s-term-copy-one";
+    copyOne.textContent = "Copy";
+    copyOne.title = "Copy khối kết quả này";
+    copyOne.onclick = function () {
+      copyOutputText(outText);
+    };
+    bar.appendChild(copyOne);
+    const pre = document.createElement("pre");
+    pre.className = "k8s-term-output" + (isError ? " k8s-term-error" : "");
+    pre.textContent = outText;
+    wrap.appendChild(bar);
+    wrap.appendChild(pre);
+    feed.appendChild(wrap);
+    feed.scrollTop = feed.scrollHeight;
+  }
+
+  function insertTemplate(cmd) {
+    const vars = defaultVars();
+    vars.namespace = currentNs();
+    const line = fillTemplate(cmd.kubectl, vars);
+    input.value = line;
+    input.focus();
+    const pos = line.indexOf("{");
+    if (pos >= 0) {
+      input.setSelectionRange(pos, line.indexOf("}", pos) + 1 || line.length);
+    } else {
+      input.select();
+    }
+    plusMenu.hidden = true;
+  }
+
+  async function runCommand(cmdText) {
+    cmdText = (cmdText || "").trim();
+    if (!cmdText) return;
+    appendUserCmd(cmdText);
+    const runBtn = document.getElementById("k8s-term-run");
+    runBtn.disabled = true;
+    input.disabled = true;
+    try {
+      const result = await api("/api/v1/k8s/commands/run", {
+        method: "POST",
+        body: { kubectl: cmdText },
+      });
+      appendOutput(formatRunOutput(result), false);
+      if (result.summary) {
+        appendLine("k8s-term-meta muted", esc(result.summary));
+      }
+    } catch (err) {
+      appendOutput(errorMessage(err), true);
+    } finally {
+      runBtn.disabled = false;
+      input.disabled = false;
+      input.focus();
+    }
+  }
+
+  function closePlusMenu() {
+    if (plusMenu) plusMenu.hidden = true;
+    if (plusBtn) plusBtn.classList.remove("is-active");
+    if (termCard) termCard.classList.remove("k8s-terminal-picks-open");
+  }
+
+  function openPlusMenu() {
+    if (plusMenu) plusMenu.hidden = false;
+    if (plusBtn) plusBtn.classList.add("is-active");
+    if (termCard) termCard.classList.add("k8s-terminal-picks-open");
+    const search = document.getElementById("k8s-term-quick-search");
+    if (search) {
+      search.value = "";
+      search.dispatchEvent(new Event("input"));
+      setTimeout(function () { search.focus(); }, 0);
+    }
+  }
+
+  plusBtn.onclick = function (e) {
+    e.stopPropagation();
+    if (plusMenu.hidden) openPlusMenu();
+    else closePlusMenu();
+  };
+
+  main.querySelectorAll(".k8s-term-quick-item").forEach(function (btn) {
+    btn.onclick = function (e) {
+      e.stopPropagation();
+      const cmd = commands.find(function (c) { return c.id === btn.dataset.cmdId; });
+      if (cmd) insertTemplate(cmd);
+    };
+  });
+
+  const quickSearch = document.getElementById("k8s-term-quick-search");
+  if (quickSearch) {
+    quickSearch.addEventListener("input", function () {
+      const q = quickSearch.value.trim().toLowerCase();
+      main.querySelectorAll(".k8s-term-quick-item").forEach(function (btn) {
+        const hay = btn.getAttribute("data-search") || "";
+        btn.hidden = q !== "" && hay.indexOf(q) < 0;
+      });
+      main.querySelectorAll(".k8s-term-quick-cat").forEach(function (head) {
+        let next = head.nextElementSibling;
+        let any = false;
+        while (next && !next.classList.contains("k8s-term-quick-cat")) {
+          if (next.classList.contains("k8s-term-quick-item") && !next.hidden) any = true;
+          next = next.nextElementSibling;
         }
-      };
+        head.hidden = q !== "" && !any;
+      });
+    });
+    quickSearch.addEventListener("click", function (e) { e.stopPropagation(); });
+  }
+
+  function onDocPointerDown(e) {
+    if (!plusMenu || plusMenu.hidden) return;
+    if (plusMenu.contains(e.target) || (plusBtn && plusBtn.contains(e.target))) return;
+    closePlusMenu();
+  }
+  document.addEventListener("mousedown", onDocPointerDown);
+  window.__k8sOpsCloseMenu = onDocPointerDown;
+
+  feed.addEventListener("mousedown", closePlusMenu);
+
+  document.getElementById("k8s-term-run").onclick = function () {
+    runCommand(input.value);
+    input.value = "";
+  };
+
+  if (copyResultBtn) {
+    copyResultBtn.onclick = function () {
+      copyOutputText(lastOutputText);
+    };
+  }
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      runCommand(input.value);
+      input.value = "";
+    }
+    if (e.key === "Escape" && plusMenu) {
+      closePlusMenu();
     }
   });
+
+  if (nsSelect && scope !== "project") {
+    nsSelect.addEventListener("change", function () {
+      input.placeholder = "kubectl get pods -n " + nsSelect.value;
+    });
+  }
+
+  input.focus();
 }
 
 async function pageResourceDetail(main, resource, ns, name) {

@@ -178,4 +178,8 @@ func filterResourceList(scope accessScope, list rancher.ResourceList) rancher.Re
 }
 
 // DevResources — workload trong namespace project (không cluster-wide).
-var devK8sKeys = []string{"pods", "deployments", "services", "ingresses"}
+var devK8sKeys = []string{
+	"pods", "deployments", "services", "ingresses",
+	"statefulsets", "daemonsets", "jobs", "cronjobs",
+	"configmaps", "secrets", "persistentvolumeclaims", "horizontalpodautoscalers",
+}

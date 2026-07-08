@@ -211,6 +211,53 @@ func (c *Client) ListK8s(ctx context.Context, clusterOverride, key, namespace st
 	}, nil
 }
 
+// CountK8s — đếm resource trong namespace (limit=1 + remainingItemCount, không parse full list).
+func (c *Client) CountK8s(ctx context.Context, clusterOverride, key, namespace string) (int, error) {
+	res, ok := K8sResourceByKey(key)
+	if !ok {
+		return 0, fmt.Errorf("unknown resource: %s", key)
+	}
+	if !c.Enabled() {
+		return 0, fmt.Errorf("rancher not configured")
+	}
+	clusterID, err := c.ClusterID(ctx, clusterOverride)
+	if err != nil {
+		return 0, err
+	}
+	path := res.APIPath
+	if res.Namespaced && namespace != "" {
+		path = namespacedAPIPath(path, namespace)
+	}
+	if !strings.Contains(path, "?") {
+		path += "?limit=1"
+	} else {
+		path += "&limit=1"
+	}
+	body, err := c.get(ctx, fmt.Sprintf("/k8s/clusters/%s%s", clusterID, path))
+	if err != nil {
+		return 0, err
+	}
+	var envelope struct {
+		Metadata struct {
+			RemainingItemCount *int64 `json:"remainingItemCount"`
+		} `json:"metadata"`
+		Items []json.RawMessage `json:"items"`
+		Data  []json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return 0, err
+	}
+	rawItems := envelope.Items
+	if len(rawItems) == 0 {
+		rawItems = envelope.Data
+	}
+	n := len(rawItems)
+	if envelope.Metadata.RemainingItemCount != nil {
+		n += int(*envelope.Metadata.RemainingItemCount)
+	}
+	return n, nil
+}
+
 func (c *Client) ListClusters(ctx context.Context) ([]ClusterRow, error) {
 	if !c.Enabled() {
 		return nil, fmt.Errorf("rancher not configured")

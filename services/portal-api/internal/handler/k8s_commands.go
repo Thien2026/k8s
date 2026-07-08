@@ -32,9 +32,11 @@ func (h *Handler) ListK8sCommands(w http.ResponseWriter, r *http.Request) {
 
 type k8sRunRequest struct {
 	CommandID  string `json:"command_id"`
+	Kubectl    string `json:"kubectl"`
 	Namespace  string `json:"namespace"`
 	Pod        string `json:"pod"`
 	Deployment string `json:"deployment"`
+	Name       string `json:"name"`
 	Container  string `json:"container"`
 	Tail       int    `json:"tail"`
 }
@@ -55,10 +57,34 @@ func (h *Handler) RunK8sCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "payload không hợp lệ"})
 		return
 	}
-	cmd, ok := k8scommands.ByID(strings.TrimSpace(body.CommandID))
-	if !ok {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lệnh không tồn tại"})
-		return
+
+	kubectlRaw := strings.TrimSpace(body.Kubectl)
+	cmdID := strings.TrimSpace(body.CommandID)
+
+	var cmd k8scommands.Command
+	var ok bool
+	var parsed k8scommands.Parsed
+	var parseErr error
+
+	if kubectlRaw != "" {
+		parsed, parseErr = k8scommands.ParseReadOnlyKubectl(kubectlRaw)
+		if parseErr != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": parseErr.Error()})
+			return
+		}
+		cmd, ok = k8scommands.ByID(parsed.CommandKey)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lệnh chưa được triển khai trên server"})
+			return
+		}
+		body = mergeRunBodyFromParsed(body, parsed)
+		cmdID = cmd.ID
+	} else {
+		cmd, ok = k8scommands.ByID(cmdID)
+		if !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lệnh không tồn tại"})
+			return
+		}
 	}
 	if !cmd.Runnable || !cmd.ReadOnly {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "lệnh này chỉ hỗ trợ copy — chưa chạy qua API"})
@@ -83,7 +109,7 @@ func (h *Handler) RunK8sCommand(w http.ResponseWriter, r *http.Request) {
 			writeAccessDenied(w)
 			return
 		}
-	} else {
+	} else if commandNeedsNamespace(cmd) {
 		if ns == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "namespace bắt buộc"})
 			return
@@ -101,18 +127,53 @@ func (h *Handler) RunK8sCommand(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func commandNeedsNamespace(cmd k8scommands.Command) bool {
+	for _, ph := range cmd.Placeholders {
+		if ph == "namespace" {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeRunBodyFromParsed(body k8sRunRequest, p k8scommands.Parsed) k8sRunRequest {
+	if p.Namespace != "" {
+		body.Namespace = p.Namespace
+	}
+	if p.Name != "" {
+		switch p.CommandKey {
+		case "pods_logs", "pods_logs_container", "pods_describe":
+			body.Pod = p.Name
+		case "deployments_describe":
+			body.Deployment = p.Name
+		default:
+			body.Name = p.Name
+		}
+	}
+	if p.Container != "" {
+		body.Container = p.Container
+	}
+	if p.Tail > 0 {
+		body.Tail = p.Tail
+	}
+	return body
+}
+
 func resourceKeyForCommand(id string) string {
+	if key, ok := k8scommands.ListKeyFromID(id); ok {
+		if key == "events" {
+			return "pods"
+		}
+		return key
+	}
+	if key, ok := k8scommands.DescribeKeyFromID(id); ok {
+		return key
+	}
 	switch {
 	case strings.HasPrefix(id, "pods_"):
 		return "pods"
 	case strings.HasPrefix(id, "deployments_"):
 		return "deployments"
-	case strings.HasPrefix(id, "services_"):
-		return "services"
-	case strings.HasPrefix(id, "ingresses_"):
-		return "ingresses"
-	case id == "events_list":
-		return "pods"
 	default:
 		return "pods"
 	}
@@ -126,6 +187,7 @@ func validateRunParams(cmd k8scommands.Command, body k8sRunRequest) error {
 		"namespace":  strings.TrimSpace(body.Namespace),
 		"pod":        strings.TrimSpace(body.Pod),
 		"deployment": strings.TrimSpace(body.Deployment),
+		"name":       strings.TrimSpace(body.Name),
 		"container":  strings.TrimSpace(body.Container),
 	}
 	for _, ph := range cmd.Placeholders {
@@ -147,15 +209,7 @@ func (h *Handler) executeK8sCommand(r *http.Request, clusterID string, cmd k8sco
 	}
 
 	switch cmd.ID {
-	case "pods_list":
-		return h.runListCommand(r, clusterID, cmd.ID, "pods", ns)
-	case "deployments_list":
-		return h.runListCommand(r, clusterID, cmd.ID, "deployments", ns)
-	case "services_list":
-		return h.runListCommand(r, clusterID, cmd.ID, "services", ns)
-	case "ingresses_list":
-		return h.runListCommand(r, clusterID, cmd.ID, "ingresses", ns)
-	case "pods_logs":
+	case "pods_logs", "pods_logs_container":
 		logs, err := h.rancher.GetPodLogs(r.Context(), clusterID, ns, strings.TrimSpace(body.Pod), strings.TrimSpace(body.Container), tail)
 		if err != nil {
 			return k8sRunResult{}, err
@@ -167,32 +221,19 @@ func (h *Handler) executeK8sCommand(r *http.Request, clusterID string, cmd k8sco
 			Summary:   fmt.Sprintf("Log %s (tail %d)", body.Pod, tail),
 		}, nil
 
-	case "pods_describe", "deployments_describe":
-		key := "pods"
-		name := strings.TrimSpace(body.Pod)
-		if cmd.ID == "deployments_describe" {
-			key = "deployments"
-			name = strings.TrimSpace(body.Deployment)
-		}
-		raw, err := h.rancher.GetK8sResource(r.Context(), clusterID, key, ns, name)
-		if err != nil {
-			return k8sRunResult{}, err
-		}
-		var obj map[string]any
-		if err := json.Unmarshal(raw, &obj); err != nil {
-			return k8sRunResult{CommandID: cmd.ID, Kind: "json", Output: string(raw)}, nil
-		}
-		return k8sRunResult{
-			CommandID: cmd.ID,
-			Kind:      "json",
-			Output:    obj,
-			Summary:   fmt.Sprintf("%s/%s", key, name),
-		}, nil
-
-	case "events_list":
+	case "events_list", "events_warnings":
 		events, err := h.rancher.ListNamespaceEvents(r.Context(), clusterID, ns, "", 80)
 		if err != nil {
 			return k8sRunResult{}, err
+		}
+		if cmd.ID == "events_warnings" {
+			filtered := make([]rancher.ResourceRow, 0, len(events))
+			for _, ev := range events {
+				if strings.EqualFold(ev.Status, "Warning") {
+					filtered = append(filtered, ev)
+				}
+			}
+			events = filtered
 		}
 		return k8sRunResult{
 			CommandID: cmd.ID,
@@ -219,17 +260,44 @@ func (h *Handler) executeK8sCommand(r *http.Request, clusterID string, cmd k8sco
 			rows = append(rows, rancher.ResourceRow{Name: n, Namespace: n, Status: "—"})
 		}
 		return k8sRunResult{CommandID: cmd.ID, Kind: "table", Output: rows, Summary: fmt.Sprintf("%d namespaces", len(rows))}, nil
+	}
 
-	case "nodes_list":
-		list, err := h.rancher.ListK8s(r.Context(), clusterID, "nodes", "", 1, 50)
+	if key, ok := k8scommands.ListKeyFromID(cmd.ID); ok {
+		return h.runListCommand(r, clusterID, cmd.ID, key, ns)
+	}
+
+	if key, ok := k8scommands.DescribeKeyFromID(cmd.ID); ok {
+		name := describeName(body)
+		if name == "" {
+			return k8sRunResult{}, fmt.Errorf("thiếu tên resource")
+		}
+		raw, err := h.rancher.GetK8sResource(r.Context(), clusterID, key, ns, name)
 		if err != nil {
 			return k8sRunResult{}, err
 		}
-		return k8sRunResult{CommandID: cmd.ID, Kind: "table", Output: list.Items, Summary: fmt.Sprintf("%d nodes", len(list.Items))}, nil
-
-	default:
-		return k8sRunResult{}, fmt.Errorf("lệnh chưa được triển khai: %s", cmd.ID)
+		var obj map[string]any
+		if err := json.Unmarshal(raw, &obj); err != nil {
+			return k8sRunResult{CommandID: cmd.ID, Kind: "json", Output: string(raw)}, nil
+		}
+		return k8sRunResult{
+			CommandID: cmd.ID,
+			Kind:      "json",
+			Output:    obj,
+			Summary:   fmt.Sprintf("%s/%s", key, name),
+		}, nil
 	}
+
+	return k8sRunResult{}, fmt.Errorf("lệnh chưa được triển khai: %s", cmd.ID)
+}
+
+func describeName(body k8sRunRequest) string {
+	if strings.TrimSpace(body.Pod) != "" {
+		return strings.TrimSpace(body.Pod)
+	}
+	if strings.TrimSpace(body.Deployment) != "" {
+		return strings.TrimSpace(body.Deployment)
+	}
+	return strings.TrimSpace(body.Name)
 }
 
 func (h *Handler) runListCommand(r *http.Request, clusterID, cmdID, key, ns string) (k8sRunResult, error) {

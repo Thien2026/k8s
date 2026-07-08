@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
@@ -193,34 +194,81 @@ func (h *Handler) ProjectOverview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	devMap := map[string]any{"namespace": p.NamespaceDev}
+	prodMap := map[string]any{"namespace": p.NamespaceProd}
 	out := map[string]any{
 		"project": p,
-		"dev":     map[string]any{"namespace": p.NamespaceDev},
-		"prod":    map[string]any{"namespace": p.NamespaceProd},
+		"dev":     devMap,
+		"prod":    prodMap,
 	}
 	if h.monitoringConfigured() {
 		out["monitoring"] = map[string]any{
-			"grafana_url": trimURL(h.cfg.GrafanaURL),
+			"grafana_url":        trimURL(h.cfg.GrafanaURL),
 			"dev_dashboard_url":  grafanaNamespaceDashboardURL(h.cfg.GrafanaURL, p.NamespaceDev),
 			"prod_dashboard_url": grafanaNamespaceDashboardURL(h.cfg.GrafanaURL, p.NamespaceProd),
 		}
 	}
+	if dep, err := h.projectDeploySummary(r.Context(), p.ID, "dev"); err == nil {
+		devMap["deploy"] = dep
+	}
+	if dep, err := h.projectDeploySummary(r.Context(), p.ID, "prod"); err == nil {
+		prodMap["deploy"] = dep
+	}
 	if h.rancher != nil && h.rancher.Enabled() {
 		cid := r.URL.Query().Get("cluster_id")
-		if pods, err := h.rancher.ListK8s(r.Context(), cid, "pods", p.NamespaceDev, 1, 500); err == nil {
-			out["dev"].(map[string]any)["pods"] = len(pods.Items)
+		jobs := []struct {
+			env, key, ns string
+		}{
+			{"dev", "pods", p.NamespaceDev},
+			{"dev", "deployments", p.NamespaceDev},
+			{"prod", "pods", p.NamespaceProd},
+			{"prod", "deployments", p.NamespaceProd},
 		}
-		if dep, err := h.rancher.ListK8s(r.Context(), cid, "deployments", p.NamespaceDev, 1, 500); err == nil {
-			out["dev"].(map[string]any)["deployments"] = len(dep.Items)
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+		for _, job := range jobs {
+			wg.Add(1)
+			go func(env, key, ns string) {
+				defer wg.Done()
+				n, err := h.rancher.CountK8s(r.Context(), cid, key, ns)
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				m := devMap
+				if env == "prod" {
+					m = prodMap
+				}
+				field := key
+				if field == "deployments" {
+					m["deployments"] = n
+				} else {
+					m[field] = n
+				}
+			}(job.env, job.key, job.ns)
 		}
-		if pods, err := h.rancher.ListK8s(r.Context(), cid, "pods", p.NamespaceProd, 1, 500); err == nil {
-			out["prod"].(map[string]any)["pods"] = len(pods.Items)
-		}
-		if dep, err := h.rancher.ListK8s(r.Context(), cid, "deployments", p.NamespaceProd, 1, 500); err == nil {
-			out["prod"].(map[string]any)["deployments"] = len(dep.Items)
-		}
+		wg.Wait()
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *Handler) projectDeploySummary(ctx context.Context, projectID int64, env string) (map[string]any, error) {
+	items, err := h.listProjectDeployments(ctx, projectID, env, 1)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return map[string]any{"status": "none"}, nil
+	}
+	d := items[0]
+	return map[string]any{
+		"status":          d.Status,
+		"image_tag":       d.ImageTag,
+		"runtime_status":  d.RuntimeStatus,
+		"deploy_status":   d.DeployStatus,
+		"build_status":    d.BuildStatus,
+	}, nil
 }
 
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
