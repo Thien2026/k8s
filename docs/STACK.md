@@ -48,12 +48,13 @@ Phía sau (engine): RKE2, Rancher, Harbor, Argo CD, Grafana, PostgreSQL
 | Rancher/Harbor/Argo **ẩn sau API** | Engine chuẩn, không rebuild |
 | Không Keycloak giai đoạn đầu | Phức tạp; login JWT trong Console đủ cho MVP |
 
-### Frontend: React + Vite + TypeScript
+### Frontend: Vanilla JS modules + Vite (mục tiêu)
 
-| Chọn | Không chọn |
-|------|------------|
-| **React + Vite** (SPA) | Next.js — thừa SSR/SEO cho admin panel |
-| TypeScript | — |
+| Hiện tại (MVP) | Mục tiêu |
+|----------------|----------|
+| **Vanilla JS** + concat `build.sh` — `app.js` ~20 dòng, modules `ui_*.js` / `core_*.js` | **ES modules + Vite** — xem [REFACTOR-PLAN.md](./REFACTOR-PLAN.md) |
+| Chưa TypeScript | TS từng bước sau refactor R2 |
+| Không React trong production | React **không** bắt buộc; chỉ xem xét nếu team khách yêu cầu |
 
 ### Backend Console: Go
 
@@ -113,7 +114,7 @@ k8s/
 ├── bootstrap/steps/     # Cài hạ tầng (bash)
 ├── platform/            # Helm / manifest engine
 ├── services/
-│   ├── portal-web/      # React + Vite
+│   ├── portal-web/      # Vanilla JS modules + build.sh (→ Vite ở R2)
 │   └── portal-api/      # Go BFF
 ├── templates/new-project/
 └── docs/

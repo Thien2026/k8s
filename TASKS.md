@@ -201,6 +201,85 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ---
 
+## Refactor — Console code health (trước Phase 10)
+
+> **Chi tiết:** [docs/REFACTOR-PLAN.md](docs/REFACTOR-PLAN.md)  
+> **Tạm dừng Phase 10a** (Redis Helm) cho đến khi xong gate Refactor.
+
+### R0 — Freeze
+
+- [ ] Cập nhật `STACK.md` (frontend thực tế = vanilla JS → modules)
+- [ ] Quy ước thư mục `portal-web/src/{core,ui,pages}`
+- [ ] Freeze: không feature mới trong `app.js` / `deployments.go`
+
+### R1 — Frontend tách module (P0)
+
+> **Concat modules** (chưa Vite). Gate R1 FE ✅.
+
+- [x] `core_state.js`, `core_format.js`, `core_api.js`, `core_router.js`
+- [x] `ui_dialog.js`, `ui_sidebar.js`, `ui_auth.js`, `ui_common.js`
+- [x] Project: hub / tabs / env / domains / settings / deploy / overview
+- [x] Deploy: `ui_deploy_render.js`, `ui_deploy_history.js`, `ui_deploy_activity.js`, `ui_deploy_pipeline.js`, `ui_pipeline_layout.js`
+- [x] Platform: `ui_platform_pages.js`, `ui_overview_charts.js`
+- [x] K8s: `ui_k8s.js`
+- [x] Env helpers: `ui_env_helpers.js`
+- [x] `app.js` &lt; 200 dòng (~20, bootstrap only)
+- [x] Không file JS page &gt;1.200 dòng
+- [ ] Đổi tên/folder `core/` `ui/` `pages/` đúng quy ước (cosmetic, không block)
+- [ ] Smoke manual tab project chính (trước deploy VPS)
+
+### R2 — Vite + CSS
+
+- [ ] Production build qua Vite
+- [ ] Tách `style.css` theo domain
+
+### B1 — Backend tách `deployments.go` (P0)
+
+- [x] `deployment_model.go`, `deployment_pick.go`, `deployment_store.go`, `deployment_runtime.go`
+- [x] `deployment_list.go`, `deployment_github.go`, `deployment_activity.go`, `deployment_hooks.go`
+- [x] `deployments.go` stub index (&lt;20 dòng)
+- [x] `go test ./internal/handler/...` pass; mỗi file deployment_* ≤600 dòng
+
+### B2 — Backend deploy / projects / rancher
+
+- [x] Tách `deploy.go` → `deploy_apply.go`, `deploy_promote.go`, `deploy_rollback.go`
+- [x] Tách `projects.go` → model / overview / crud / members / repo / domains
+- [x] `rancher/k8s.go` → `k8s_list.go` + `k8s_parse.go`
+
+**Gate quay Phase 10a:** đủ tick trong REFACTOR-PLAN.md § Tiêu chí xong Refactor.
+
+---
+
+## Phase 10a — Data addon: Redis (làm trước Phase 10 full)
+
+> Slice nhỏ, ship được trước Postgres/Longhorn/Fork. UX: **shell Addons riêng** trong project (sidebar lồng nhau).  
+> Không cần admin bật plugin — catalog built-in.
+
+### Console (shell + Redis MVP)
+
+- [x] Ghi spec Phase 10a (file này)
+- [x] Migration `project_data_addons`
+- [x] API catalog + list / get / create (status `pending`)
+- [x] Route `#/project/{slug}/addons` — hub catalog + addon đã gắn
+- [x] Route `#/project/{slug}/addons/redis` — dashboard Redis (UI shell)
+- [x] Sidebar addons riêng (không nhét Pods/Deployments vào menu project)
+- [ ] **⏸ Chờ Refactor gate** — các mục dưới làm sau R1+B1
+- [ ] Helm provision Redis trong namespace project (Bitnami)
+- [ ] Sinh Secret `REDIS_URL` + copy / inject env dev
+- [ ] Quota UI: `max_memory_mb`, `max_clients` → apply Helm
+- [ ] Health: status, restart, logs (reuse Runtime pattern)
+- [ ] Prod env + NetworkPolicy
+
+### API
+
+- `GET /projects/{slug}/addons` — catalog + instances
+- `GET /projects/{slug}/addons/{engine}?environment=dev`
+- `POST /projects/{slug}/addons/{engine}` — ghi metadata, provision (bước sau)
+
+**Xong 10a khi:** 1 project bật Redis dev, có connection string, quota, restart — không cần fork.
+
+---
+
 ## Phase 10 — Data per project (Postgres, Redis, MinIO)
 
 > **Phương án chi tiết (đã chốt, chưa code):** [docs/DATA-FORK.md](docs/DATA-FORK.md)  
@@ -236,7 +315,7 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ### Sau pilot (không block MVP)
 
-- [ ] Redis addon
+- [ ] ~~Redis addon~~ → chuyển **Phase 10a** (làm trước)
 - [ ] Adapter MySQL / Arango (cùng Fork API, snap PVC)
 - [ ] Neon OSS **optional** — chỉ khi 24 GB+ và cần CoW Postgres native
 
@@ -249,4 +328,4 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 - [ ] API token; MCP wrap portal-api (deploy, env, gitops)
 - [ ] Sau phase 10: provision DB/Redis
 
-**Thứ tự:** 8 ∥ 9 → 10 → 11
+**Thứ tự:** 8 ∥ 9 → **Refactor** → 10a → 10 → 11

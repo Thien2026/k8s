@@ -14,7 +14,7 @@ func TestEnrichWorkloadRow_PodListItemWithoutKind(t *testing.T) {
 			"containerStatuses": [{"ready": true, "restartCount": 0, "image": "demo:1"}]
 		}
 	}`
-	row, ok := parseK8sItem(json.RawMessage(raw))
+	row, ok := parseK8sItem(json.RawMessage(raw), "Pod")
 	if !ok {
 		t.Fatal("parse failed")
 	}
@@ -34,8 +34,30 @@ func TestEnrichWorkloadRow_PodReadyFromConditions(t *testing.T) {
 			"conditions": [{"type": "Ready", "status": "True"}]
 		}
 	}`
-	row, ok := parseK8sItem(json.RawMessage(raw))
+	row, ok := parseK8sItem(json.RawMessage(raw), "Pod")
 	if !ok || !row.Ready {
 		t.Fatalf("expected ready from conditions, ok=%v ready=%v", ok, row.Ready)
+	}
+}
+
+func TestEnrichWorkloadRow_DeploymentListItemWithoutKind(t *testing.T) {
+	raw := `{
+		"metadata": {"name": "api", "namespace": "demo-dev"},
+		"spec": {"replicas": 1},
+		"status": {
+			"replicas": 1,
+			"readyReplicas": 1,
+			"availableReplicas": 1
+		}
+	}`
+	row, ok := parseK8sItem(json.RawMessage(raw), "Deployment")
+	if !ok {
+		t.Fatal("parse failed")
+	}
+	if row.Replicas != "1/1 ready" {
+		t.Fatalf("replicas=%q", row.Replicas)
+	}
+	if row.Status == "" {
+		t.Fatal("expected status")
 	}
 }

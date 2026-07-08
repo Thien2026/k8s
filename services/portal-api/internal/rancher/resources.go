@@ -39,3 +39,45 @@ func K8sResourceByKey(key string) (K8sResource, bool) {
 	}
 	return K8sResource{}, false
 }
+
+// K8sListItemKind — kind mặc định khi item list K8s không có field "kind" (Rancher proxy).
+func K8sListItemKind(key string) string {
+	switch key {
+	case "deployments":
+		return "Deployment"
+	case "statefulsets":
+		return "StatefulSet"
+	case "daemonsets":
+		return "DaemonSet"
+	case "jobs":
+		return "Job"
+	case "cronjobs":
+		return "CronJob"
+	case "pods":
+		return "Pod"
+	case "services":
+		return "Service"
+	case "ingresses":
+		return "Ingress"
+	case "namespaces":
+		return "Namespace"
+	case "nodes":
+		return "Node"
+	case "events":
+		return "Event"
+	case "horizontalpodautoscalers":
+		return "HorizontalPodAutoscaler"
+	case "persistentvolumeclaims":
+		return "PersistentVolumeClaim"
+	case "persistentvolumes":
+		return "PersistentVolume"
+	case "storageclasses":
+		return "StorageClass"
+	case "configmaps":
+		return "ConfigMap"
+	case "secrets":
+		return "Secret"
+	default:
+		return ""
+	}
+}

@@ -93,7 +93,7 @@ func (c *Client) JoinNodeCount(ctx context.Context, clusterID string) int {
 	if err != nil {
 		return 0
 	}
-	_, total, err := parseK8sItems(body)
+	_, total, err := parseK8sItems(body, "")
 	if err != nil {
 		return 0
 	}
@@ -184,7 +184,7 @@ func (c *Client) ListNamespaceEvents(ctx context.Context, clusterOverride, names
 	if err != nil {
 		return nil, err
 	}
-	rows, _, err := parseK8sItems(body)
+	rows, _, err := parseK8sItems(body, "")
 	return rows, err
 }
 

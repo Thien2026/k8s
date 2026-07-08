@@ -218,6 +218,81 @@ body {
   width: 72px;
 }
 
+.workload-health-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.workload-health-overall {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 140px;
+}
+
+.workload-health-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  flex: 1;
+}
+
+.workload-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 88px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.workload-stat strong {
+  font-size: 18px;
+}
+
+.workload-health-hint {
+  width: 100%;
+  margin: 0;
+  font-size: 12px;
+}
+
+.workload-card {
+  margin-top: 16px;
+}
+
+.workload-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.workload-card-head h3 {
+  margin: 0;
+}
+
+.workload-events-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #e2e8f0;
+}
+
+.workload-events-list li {
+  margin-bottom: 6px;
+}
+
 .btn-primary {
   padding: 11px 16px;
   border: none;
@@ -3229,6 +3304,109 @@ tr.dns-row td {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--muted);
+}
+
+.nav-section-project {
+  padding: 4px 0 8px;
+}
+
+.nav-group-project {
+  margin: 0 8px 4px;
+}
+
+.nav-group-project .nav-group-toggle {
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.nav-group-project .nav-group-toggle:hover {
+  color: #e2e8f0;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.nav-group-project .nav-group-items .nav-link {
+  padding-left: 28px;
+}
+
+.nav-section-addons {
+  padding: 4px 8px 12px;
+}
+
+.nav-section-addons .nav-link-sub {
+  padding-left: 36px;
+  font-size: 13px;
+}
+
+.addon-nav-sections {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+}
+
+.addon-brand-engine {
+  text-transform: capitalize;
+  color: #c4b5fd;
+}
+
+.addon-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.addon-catalog-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.addon-catalog-card-disabled {
+  opacity: 0.55;
+}
+
+.addon-catalog-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.addon-catalog-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.addon-catalog-action {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.addon-installed-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.addon-redis-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.addon-redis-section h4 {
+  margin: 0 0 8px;
 }
 
 .project-sidebar-meta {

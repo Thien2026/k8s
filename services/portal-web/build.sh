@@ -3,10 +3,43 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 CSS="$(cat "$DIR/src/style.css")"
-HELP="$(cat "$DIR/src/deploy_help.js")"
-K8SHELP="$(cat "$DIR/src/k8s_ops_help.js")"
-JS="$(cat "$DIR/src/app.js")"
-JS="${HELP}"$'\n'"${K8SHELP}"$'\n'"${JS}"
+
+# Thứ tự: state → core/ui → pages → bootstrap
+FILES=(
+  src/core_state.js
+  src/deploy_help.js
+  src/k8s_ops_help.js
+  src/core_format.js
+  src/ui_dialog.js
+  src/core_api.js
+  src/ui_common.js
+  src/ui_auth.js
+  src/ui_sidebar.js
+  src/core_router.js
+  src/ui_deploy_render.js
+  src/ui_deploy_history.js
+  src/ui_deploy_activity.js
+  src/ui_deploy_pipeline.js
+  src/ui_pipeline_layout.js
+  src/ui_env_helpers.js
+  src/ui_platform_pages.js
+  src/ui_project_overview.js
+  src/ui_project_tabs.js
+  src/ui_project_config.js
+  src/ui_project_env.js
+  src/ui_project_deploy.js
+  src/ui_project_hub.js
+  src/ui_overview_charts.js
+  src/ui_k8s.js
+  src/app.js
+)
+
+JS=""
+NL=$'\n'
+for f in "${FILES[@]}"; do
+  JS+="$(cat "$DIR/$f")"
+  JS+="$NL"
+done
 # Tránh đóng thẻ <script> sớm khi nhúng inline
 JS="${JS//<\/script>/<\\/script>}"
 TMPJS="$(mktemp).js"

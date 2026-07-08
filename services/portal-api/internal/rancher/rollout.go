@@ -279,6 +279,6 @@ func (c *Client) ListPods(ctx context.Context, clusterOverride, namespace, label
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("list pods: http %d", status)
 	}
-	rows, _, err := parseK8sItems(body)
+	rows, _, err := parseK8sItems(body, "")
 	return rows, err
 }
