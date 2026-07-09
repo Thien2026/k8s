@@ -461,6 +461,10 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 	if err := h.syncAppEnvSecret(ctx, p, env, "", true); err != nil {
 		return "", fmt.Errorf("sync app-env: %w", err)
 	}
+	// Secret auth đổi password nhưng pod Redis chỉ đọc REDIS_PASSWORD lúc khởi động — bắt buộc rollout restart.
+	if err := h.rancher.RolloutRestartStatefulSet(ctx, "", ns, release); err != nil {
+		return "", fmt.Errorf("restart redis statefulset: %w", err)
+	}
 	return connSecretName, nil
 }
 
@@ -557,7 +561,7 @@ func (h *Handler) buildRedisAddonAPIView(ctx context.Context, p projectRow, v pr
 
 func (h *Handler) provisionRedisAddon(ctx context.Context, p projectRow, engine, env string, addon *projectAddonView) error {
 	h.setProjectAddonStatus(ctx, p.ID, engine, env, "provisioning")
-	runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	runCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	connSecret, err := h.applyRedisAddonObjects(runCtx, p, env, addon)
 	if err != nil {
