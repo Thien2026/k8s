@@ -37,5 +37,5 @@ sync_project() {
 echo "=== Sync workflow pilot projects ==="
 sync_project back-front-demo huuthienit97 test-k8s back-front-pilot
 sync_project polyglot-demo huuthienit97 test-k8s multi-polyglot-full
-sync_project test-harbor huuthienit97 test-k8s multi-submodules
+sync_project test-harbor huuthienit97 test-k8s redis-pilot
 echo "=== Done ==="

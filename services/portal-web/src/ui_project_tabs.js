@@ -204,6 +204,90 @@ async function loadProjectRuntimePage(main, slug, p) {
   }
 }
 
+function renderAddonRedisPlayground(canManage, slug, env) {
+  if (!canManage) {
+    return '<p class="muted">Chỉ owner/admin dùng playground Redis.</p>';
+  }
+  const appURL = slug
+    ? "https://" + esc(slug) + "-" + esc(env) + ".platform.7mlabs.com/api/redis/ping"
+    : "";
+  return (
+    '<div class="addon-redis-play">' +
+    '<p class="muted">Thử kết nối trực tiếp từ Console (cluster → Redis). Key demo nên prefix <code>console:</code>.</p>' +
+    '<div class="addon-redis-play-actions">' +
+    '<button type="button" class="btn-primary btn-sm" id="addon-redis-play-ping">Ping · PONG</button> ' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-play-info">INFO</button>' +
+    "</div>" +
+    '<div class="addon-redis-play-form">' +
+    '<label>Key<input type="text" id="addon-redis-play-key" placeholder="console:hello" value="console:hello"></label>' +
+    '<label>Value<input type="text" id="addon-redis-play-val" placeholder="world"></label>' +
+    '<div class="addon-redis-play-form-btns">' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-play-get">GET</button> ' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-play-set">SET</button> ' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-play-del">DEL</button>' +
+    "</div></div>" +
+  (appURL
+    ? '<p class="muted addon-redis-app-probe">App pilot: <a href="' + appURL + '" target="_blank" rel="noopener"><code>/api/redis/ping</code></a> sau khi deploy branch <code>redis-pilot</code>.</p>'
+    : "") +
+    '<pre class="addon-redis-play-out muted" id="addon-redis-play-out">Bấm Ping để thử…</pre>' +
+    "</div>"
+  );
+}
+
+function bindAddonRedisPlayground(slug, env) {
+  const out = document.getElementById("addon-redis-play-out");
+  if (!out) return;
+  async function runPlay(action, extra) {
+    out.textContent = "Đang gọi Redis…";
+    try {
+      const body = Object.assign({ environment: env, action: action }, extra || {});
+      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/play", {
+        method: "POST",
+        body: body,
+      });
+      const lines = [
+        res.ok ? "✓ OK" : "✗ Lỗi",
+        "action: " + (res.action || action),
+        res.result != null ? "result: " + res.result : "",
+        res.key ? "key: " + res.key : "",
+        res.value != null && res.value !== "" ? "value: " + res.value : "",
+        res.latency_ms != null ? "latency: " + res.latency_ms + " ms" : "",
+        res.redis_url_masked ? "via: " + res.redis_url_masked : "",
+        res.error ? "error: " + res.error : "",
+      ].filter(Boolean);
+      out.textContent = lines.join("\n");
+    } catch (err) {
+      out.textContent = "Lỗi: " + (err.message || String(err));
+    }
+  }
+  const pingBtn = document.getElementById("addon-redis-play-ping");
+  if (pingBtn) pingBtn.onclick = function () { runPlay("ping"); };
+  const infoBtn = document.getElementById("addon-redis-play-info");
+  if (infoBtn) infoBtn.onclick = function () { runPlay("info"); };
+  const getBtn = document.getElementById("addon-redis-play-get");
+  if (getBtn) {
+    getBtn.onclick = function () {
+      runPlay("get", { key: document.getElementById("addon-redis-play-key").value });
+    };
+  }
+  const setBtn = document.getElementById("addon-redis-play-set");
+  if (setBtn) {
+    setBtn.onclick = function () {
+      runPlay("set", {
+        key: document.getElementById("addon-redis-play-key").value,
+        value: document.getElementById("addon-redis-play-val").value,
+        ttl_seconds: 3600,
+      });
+    };
+  }
+  const delBtn = document.getElementById("addon-redis-play-del");
+  if (delBtn) {
+    delBtn.onclick = function () {
+      runPlay("del", { key: document.getElementById("addon-redis-play-key").value });
+    };
+  }
+}
+
 function renderAddonRedisDashboard(addon, canManage) {
   const pod = addon.pod;
   let podHtml = '<p class="muted">Chưa thấy pod Redis trên cluster.</p>';
@@ -530,7 +614,8 @@ async function loadProjectAddonRedis(main, slug, p) {
       '<div class="toolbar addon-redis-nav" style="margin:10px 0 14px">' +
       '<a class="btn-ghost btn-sm" href="#addon-sec-dashboard">Dashboard</a> ' +
       '<a class="btn-ghost btn-sm" href="#addon-sec-connection">Connection</a> ' +
-      '<a class="btn-ghost btn-sm" href="#addon-sec-quota">Quota</a>' +
+      '<a class="btn-ghost btn-sm" href="#addon-sec-quota">Quota</a> ' +
+      '<a class="btn-ghost btn-sm" href="#addon-sec-play">Playground</a>' +
       (canManage ? ' <button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision-top">Re-provision</button>' : "") +
       "</div>" +
       '<div class="addon-redis-section" id="addon-sec-dashboard">' +
@@ -548,8 +633,13 @@ async function loadProjectAddonRedis(main, slug, p) {
       "<h4>Quota</h4>" +
       renderAddonRedisQuota(addon, canManage) +
       "</div>" +
+      '<div class="addon-redis-section" id="addon-sec-play">' +
+      "<h4>Playground</h4>" +
+      renderAddonRedisPlayground(canManage, slug, env) +
+      "</div>" +
       '<p class="addon-back-wrap"><a class="addon-back-link" href="' + esc(projectAddonsRoute(slug)) + '">← Về catalog addons</a></p>';
     bindAddonRedisActions(main, slug, p, env, canManage, addon);
+    bindAddonRedisPlayground(slug, env);
   } catch (err) {
     const root = document.getElementById("addon-redis-root");
     if (root) root.innerHTML = '<p class="error-text">' + esc(err.message) + "</p>";

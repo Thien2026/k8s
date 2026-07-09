@@ -3534,6 +3534,60 @@ tr.dns-row td {
   word-break: break-word;
 }
 
+.addon-redis-play-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.addon-redis-play-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: flex-end;
+  margin-bottom: 10px;
+}
+
+.addon-redis-play-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.addon-redis-play-form input {
+  min-width: 160px;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.addon-redis-play-form-btns {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.addon-redis-play-out {
+  margin-top: 8px;
+  max-height: 240px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.addon-redis-app-probe {
+  margin: 8px 0;
+}
+
 .addon-quota-form {
   display: flex;
   flex-wrap: wrap;

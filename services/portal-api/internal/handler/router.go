@@ -100,6 +100,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Get("/projects/{slug}/addons", h.ListProjectAddons)
 		r.Post("/projects/{slug}/addons/redis/restart", h.RestartRedisAddon)
 		r.Get("/projects/{slug}/addons/redis/logs", h.GetRedisAddonLogs)
+		r.Post("/projects/{slug}/addons/redis/play", h.RedisAddonPlay)
 		r.Get("/projects/{slug}/addons/{engine}", h.GetProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}", h.CreateProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}/provision", h.ProvisionProjectAddon)

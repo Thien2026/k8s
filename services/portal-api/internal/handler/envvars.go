@@ -177,7 +177,9 @@ func (h *Handler) syncAppEnvSecret(ctx context.Context, p projectRow, env, clust
 		_ = h.rancher.DeleteNamespacedObject(ctx, clusterID, "/api/v1/secrets", ns, deploy.AppEnvSecretName)
 	}
 	if restart {
-		_ = h.rancher.RolloutRestartDeployment(ctx, clusterID, ns, "app")
+		for _, name := range []string{"app", "api", "worker", "web"} {
+			_ = h.rancher.RolloutRestartDeployment(ctx, clusterID, ns, name)
+		}
 	}
 	return nil
 }
