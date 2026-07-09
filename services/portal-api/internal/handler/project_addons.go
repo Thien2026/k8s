@@ -2,12 +2,19 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
+	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
+	"github.com/Thien2026/k8s/services/portal-api/internal/rancher"
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 )
@@ -31,6 +38,18 @@ type projectAddonView struct {
 	CreatedAt     string `json:"created_at,omitempty"`
 	UpdatedAt     string `json:"updated_at,omitempty"`
 }
+
+type redisAddonAPIView struct {
+	projectAddonView
+	ConnectionURLMasked string `json:"connection_url_masked,omitempty"`
+	ConnectionURL       string `json:"connection_url,omitempty"`
+	ConnectionSecret    string `json:"connection_secret,omitempty"`
+}
+
+const (
+	redisAddonImage       = "redis:7.2-alpine"
+	redisAddonServicePort = 6379
+)
 
 var addonCatalog = []addonCatalogItem{
 	{
@@ -107,6 +126,429 @@ func (h *Handler) getProjectAddon(ctx context.Context, projectID int64, engine, 
 	return &v, nil
 }
 
+func redisAddonRelease(slug, env string) string {
+	return slug + "-redis-" + env
+}
+
+func redisAddonConnectionSecretName(release string) string {
+	return release + "-connection"
+}
+
+func maskRedisURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	schemeEnd := strings.Index(raw, "://")
+	if schemeEnd < 0 {
+		return "••••••••"
+	}
+	rest := raw[schemeEnd+3:]
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return raw
+	}
+	return raw[:schemeEnd+3] + "***@" + rest[at+1:]
+}
+
+func (h *Handler) getProjectAddonConnectionSecretName(ctx context.Context, projectID int64, engine, env string) string {
+	var name string
+	_ = h.db.QueryRow(ctx, `
+		SELECT connection_secret FROM project_data_addons
+		WHERE project_id=$1 AND engine=$2 AND environment=$3`,
+		projectID, engine, env).Scan(&name)
+	return strings.TrimSpace(name)
+}
+
+func randomRedisPassword() (string, error) {
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+func redisMemoryLimitMi(maxMemoryMB int) int {
+	if maxMemoryMB < 64 {
+		return 64
+	}
+	return maxMemoryMB
+}
+
+func redisRequestMi(limitMi int) int {
+	return int(math.Max(32, float64(limitMi/2)))
+}
+
+func (h *Handler) setProjectAddonStatus(ctx context.Context, projectID int64, engine, env, status string) {
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_data_addons
+		SET status=$1, updated_at=now()
+		WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+		status, projectID, engine, env)
+}
+
+func (h *Handler) setProjectAddonConnectionSecret(ctx context.Context, projectID int64, engine, env, secretName string) {
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_data_addons
+		SET connection_secret=$1, updated_at=now()
+		WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+		secretName, projectID, engine, env)
+}
+
+func (h *Handler) upsertRuntimeEnvVar(ctx context.Context, projectID int64, env, key, value string, isSecret bool) error {
+	var id int64
+	err := h.db.QueryRow(ctx, `
+		SELECT id FROM project_env_vars
+		WHERE project_id=$1 AND environment=$2 AND scope='runtime' AND key=$3
+		LIMIT 1`, projectID, env, key).Scan(&id)
+	if err == nil {
+		_, err = h.db.Exec(ctx, `
+			UPDATE project_env_vars
+			SET value=$1, is_secret=$2, updated_at=now()
+			WHERE id=$3`, value, isSecret, id)
+		return err
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	_, err = h.db.Exec(ctx, `
+		INSERT INTO project_env_vars (project_id, environment, key, value, is_secret, scope)
+		VALUES ($1,$2,$3,$4,$5,'runtime')`,
+		projectID, env, key, value, isSecret)
+	return err
+}
+
+func (h *Handler) redisAddonURL(release, namespace, password string) string {
+	host := fmt.Sprintf("%s.%s.svc.cluster.local", release, namespace)
+	return fmt.Sprintf("redis://:%s@%s:%d/0", password, host, redisAddonServicePort)
+}
+
+func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env string, addon *projectAddonView) (string, error) {
+	if h.rancher == nil || !h.rancher.Enabled() || !h.pluginEnabled(ctx, plugins.Rancher) {
+		return "", fmt.Errorf("Rancher chưa sẵn sàng")
+	}
+	ns := h.projectNamespace(p, env)
+	release := redisAddonRelease(p.Slug, env)
+	if err := h.rancher.EnsureNamespace(ctx, "", ns); err != nil {
+		return "", err
+	}
+	pass, err := randomRedisPassword()
+	if err != nil {
+		return "", err
+	}
+	authSecretName := release + "-auth"
+	authSecret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name": authSecretName,
+		},
+		"type": "Opaque",
+		"stringData": map[string]string{
+			"password": pass,
+		},
+	}
+	authSecretJSON, _ := json.Marshal(authSecret)
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/secrets", ns, authSecretJSON); err != nil {
+		return "", fmt.Errorf("secret auth: %w", err)
+	}
+
+	limitMi := redisMemoryLimitMi(addon.MaxMemoryMB)
+	requestMi := redisRequestMi(limitMi)
+	conf := fmt.Sprintf("bind 0.0.0.0\nport %d\nappendonly yes\nmaxmemory %dmb\nmaxmemory-policy allkeys-lru\nmaxclients %d\n", redisAddonServicePort, limitMi, addon.MaxClients)
+	confMap := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata": map[string]any{
+			"name": release + "-config",
+		},
+		"data": map[string]string{
+			"redis.conf": conf,
+		},
+	}
+	confJSON, _ := json.Marshal(confMap)
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/configmaps", ns, confJSON); err != nil {
+		return "", fmt.Errorf("configmap redis: %w", err)
+	}
+
+	svc := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Service",
+		"metadata": map[string]any{
+			"name": release,
+			"labels": map[string]string{
+				"app.kubernetes.io/name":     "redis",
+				"app.kubernetes.io/instance": release,
+			},
+		},
+		"spec": map[string]any{
+			"type": "ClusterIP",
+			"ports": []map[string]any{
+				{
+					"name":       "redis",
+					"port":       redisAddonServicePort,
+					"targetPort": redisAddonServicePort,
+				},
+			},
+			"selector": map[string]string{
+				"app.kubernetes.io/name":     "redis",
+				"app.kubernetes.io/instance": release,
+			},
+		},
+	}
+	svcJSON, _ := json.Marshal(svc)
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/services", ns, svcJSON); err != nil {
+		return "", fmt.Errorf("service redis: %w", err)
+	}
+
+	sts := map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "StatefulSet",
+		"metadata": map[string]any{
+			"name": release,
+			"labels": map[string]string{
+				"app.kubernetes.io/name":     "redis",
+				"app.kubernetes.io/instance": release,
+			},
+		},
+		"spec": map[string]any{
+			"serviceName": release,
+			"replicas":    1,
+			"selector": map[string]any{
+				"matchLabels": map[string]string{
+					"app.kubernetes.io/name":     "redis",
+					"app.kubernetes.io/instance": release,
+				},
+			},
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"labels": map[string]string{
+						"app.kubernetes.io/name":     "redis",
+						"app.kubernetes.io/instance": release,
+					},
+				},
+				"spec": map[string]any{
+					"containers": []map[string]any{
+						{
+							"name":            "redis",
+							"image":           redisAddonImage,
+							"imagePullPolicy": "IfNotPresent",
+							"command":         []string{"sh", "-c", "redis-server /etc/redis/redis.conf --requirepass \"$REDIS_PASSWORD\""},
+							"ports": []map[string]any{
+								{"containerPort": redisAddonServicePort, "name": "redis"},
+							},
+							"env": []map[string]any{
+								{
+									"name": "REDIS_PASSWORD",
+									"valueFrom": map[string]any{
+										"secretKeyRef": map[string]any{
+											"name": authSecretName,
+											"key":  "password",
+										},
+									},
+								},
+							},
+							"resources": map[string]any{
+								"requests": map[string]string{
+									"cpu":    "50m",
+									"memory": fmt.Sprintf("%dMi", requestMi),
+								},
+								"limits": map[string]string{
+									"cpu":    "500m",
+									"memory": fmt.Sprintf("%dMi", limitMi),
+								},
+							},
+							"volumeMounts": []map[string]any{
+								{"name": "data", "mountPath": "/data"},
+								{"name": "config", "mountPath": "/etc/redis"},
+							},
+							"livenessProbe": map[string]any{
+								"exec": map[string]any{
+									"command": []string{"sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"},
+								},
+								"initialDelaySeconds": 15,
+								"periodSeconds":       10,
+								"timeoutSeconds":      5,
+							},
+							"readinessProbe": map[string]any{
+								"exec": map[string]any{
+									"command": []string{"sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep PONG"},
+								},
+								"initialDelaySeconds": 5,
+								"periodSeconds":       5,
+								"timeoutSeconds":      3,
+							},
+						},
+					},
+					"volumes": []map[string]any{
+						{
+							"name": "config",
+							"configMap": map[string]any{
+								"name": release + "-config",
+								"items": []map[string]any{
+									{"key": "redis.conf", "path": "redis.conf"},
+								},
+							},
+						},
+					},
+				},
+			},
+			"volumeClaimTemplates": []map[string]any{
+				{
+					"metadata": map[string]any{
+						"name": "data",
+					},
+					"spec": map[string]any{
+						"accessModes": []string{"ReadWriteOnce"},
+						"resources": map[string]any{
+							"requests": map[string]string{
+								"storage": "1Gi",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	stsJSON, _ := json.Marshal(sts)
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/apis/apps/v1/statefulsets", ns, stsJSON); err != nil {
+		return "", fmt.Errorf("statefulset redis: %w", err)
+	}
+
+	connURL := h.redisAddonURL(release, ns, pass)
+	connSecretName := redisAddonConnectionSecretName(release)
+	connSecret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name": connSecretName,
+		},
+		"type": "Opaque",
+		"stringData": map[string]string{
+			"REDIS_URL": connURL,
+		},
+	}
+	connSecretJSON, _ := json.Marshal(connSecret)
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/secrets", ns, connSecretJSON); err != nil {
+		return "", fmt.Errorf("secret connection: %w", err)
+	}
+
+	if err := h.upsertRuntimeEnvVar(ctx, p.ID, env, "REDIS_URL", connURL, true); err != nil {
+		return "", fmt.Errorf("save env REDIS_URL: %w", err)
+	}
+	if err := h.syncAppEnvSecret(ctx, p, env, "", true); err != nil {
+		return "", fmt.Errorf("sync app-env: %w", err)
+	}
+	return connSecretName, nil
+}
+
+func redisStatefulSetReady(row rancher.ResourceRow) bool {
+	status := strings.ToLower(strings.TrimSpace(row.Status))
+	replicas := strings.ToLower(strings.TrimSpace(row.Replicas))
+	if status == "available" || strings.Contains(status, "ready") {
+		return true
+	}
+	if strings.Contains(replicas, "1/1") {
+		return true
+	}
+	if strings.HasPrefix(replicas, "1/") && strings.Contains(replicas, "ready") {
+		return true
+	}
+	return false
+}
+
+func (h *Handler) reconcileRedisAddonStatus(ctx context.Context, p projectRow, addon *projectAddonView) projectAddonView {
+	out := *addon
+	ns := h.projectNamespace(p, addon.Environment)
+	release := out.K8sRelease
+	if release == "" {
+		release = redisAddonRelease(p.Slug, addon.Environment)
+	}
+	if h.rancher == nil || !h.rancher.Enabled() || !h.pluginEnabled(ctx, plugins.Rancher) {
+		if out.Status == "" {
+			out.Status = "pending"
+		}
+		return out
+	}
+	list, err := h.rancher.ListK8s(ctx, "", "statefulsets", ns, 1, 50)
+	if err != nil {
+		return out
+	}
+	found := false
+	for _, it := range list.Items {
+		if it.Name != release {
+			continue
+		}
+		found = true
+		status := strings.ToLower(strings.TrimSpace(it.Status))
+		if redisStatefulSetReady(it) {
+			out.Status = "running"
+		} else if strings.Contains(status, "err") || strings.Contains(status, "crash") || strings.Contains(status, "fail") {
+			out.Status = "failed"
+		} else if out.HasConnection {
+			out.Status = "provisioning"
+		} else {
+			out.Status = "provisioning"
+		}
+		break
+	}
+	if !found {
+		if out.HasConnection {
+			out.Status = "provisioning"
+		} else {
+			out.Status = "pending"
+		}
+	}
+	if out.Status != addon.Status {
+		h.setProjectAddonStatus(ctx, p.ID, addon.Engine, addon.Environment, out.Status)
+	}
+	if !out.HasConnection {
+		connSecretName := redisAddonConnectionSecretName(release)
+		if data, ok, err := h.rancher.GetOpaqueSecretData(ctx, "", ns, connSecretName); err == nil && ok && strings.TrimSpace(data["REDIS_URL"]) != "" {
+			out.HasConnection = true
+			h.setProjectAddonConnectionSecret(ctx, p.ID, addon.Engine, addon.Environment, connSecretName)
+		}
+	}
+	return out
+}
+
+func (h *Handler) buildRedisAddonAPIView(ctx context.Context, p projectRow, v projectAddonView, exposeFullURL bool) redisAddonAPIView {
+	out := redisAddonAPIView{projectAddonView: v}
+	if !v.HasConnection {
+		return out
+	}
+	sec := h.getProjectAddonConnectionSecretName(ctx, p.ID, v.Engine, v.Environment)
+	if sec != "" {
+		out.ConnectionSecret = sec
+	}
+	vars, err := h.envVarsMap(ctx, p.ID, v.Environment)
+	if err == nil {
+		if u := strings.TrimSpace(vars["REDIS_URL"]); u != "" {
+			out.ConnectionURLMasked = maskRedisURL(u)
+			if exposeFullURL {
+				out.ConnectionURL = u
+			}
+		}
+	}
+	return out
+}
+
+func (h *Handler) provisionRedisAddon(ctx context.Context, p projectRow, engine, env string, addon *projectAddonView) error {
+	h.setProjectAddonStatus(ctx, p.ID, engine, env, "provisioning")
+	runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	connSecret, err := h.applyRedisAddonObjects(runCtx, p, env, addon)
+	if err != nil {
+		h.setProjectAddonStatus(ctx, p.ID, engine, env, "failed")
+		return err
+	}
+	h.setProjectAddonConnectionSecret(ctx, p.ID, engine, env, connSecret)
+	h.setProjectAddonStatus(ctx, p.ID, engine, env, "running")
+	addon.HasConnection = true
+	addon.Status = "running"
+	return nil
+}
+
 // ListProjectAddons GET /projects/{slug}/addons
 func (h *Handler) ListProjectAddons(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
@@ -119,12 +561,17 @@ func (h *Handler) ListProjectAddons(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
+	for i := range items {
+		if items[i].Engine == "redis" {
+			items[i] = h.reconcileRedisAddonStatus(r.Context(), p, &items[i])
+		}
+	}
 	u, _ := auth.UserFromContext(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"catalog":     addonCatalog,
-		"items":       items,
-		"can_manage":  h.canManageProject(r.Context(), u, p.ID),
-		"project":     map[string]string{"slug": p.Slug, "name": p.Name},
+		"catalog":    addonCatalog,
+		"items":      items,
+		"can_manage": h.canManageProject(r.Context(), u, p.ID),
+		"project":    map[string]string{"slug": p.Slug, "name": p.Name},
 	})
 }
 
@@ -168,10 +615,22 @@ func (h *Handler) GetProjectAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if engine == "redis" && canManage {
+		needsProvision := !item.HasConnection && (item.Status == "pending" || item.Status == "provisioning" || item.Status == "failed")
+		if needsProvision {
+			_ = h.provisionRedisAddon(r.Context(), p, engine, env, item)
+		}
+	}
+
+	addonPayload := any(item)
+	if engine == "redis" {
+		reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
+		addonPayload = h.buildRedisAddonAPIView(r.Context(), p, reconciled, canManage)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"catalog":     catalogItem,
 		"installed":   true,
-		"addon":       item,
+		"addon":       addonPayload,
 		"can_manage":  canManage,
 		"environment": env,
 		"namespace":   h.projectNamespace(p, env),
@@ -257,12 +716,112 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		"engine": engine, "environment": env, "by": u.Email,
 	})
 
-	// Phase 10a: provision K8s sẽ gọi ở bước tiếp theo.
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":  "pending",
-		"message": "Đã ghi nhận addon — provision Redis trên cluster sẽ có ở bước kế tiếp",
-		"engine":  engine,
+	addon, err := h.getProjectAddon(r.Context(), p.ID, engine, env)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := h.provisionRedisAddon(r.Context(), p, engine, env, addon); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":       "Provision Redis thất bại: " + err.Error(),
+			"status":      "failed",
+			"engine":      engine,
+			"environment": env,
+			"k8s_release": release,
+		})
+		return
+	}
+	reconciled := h.reconcileRedisAddonStatus(r.Context(), p, addon)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "running",
+		"message":     "Đã provision Redis, tạo REDIS_URL và sync vào app env",
+		"engine":      engine,
 		"environment": env,
 		"k8s_release": release,
+		"addon":       h.buildRedisAddonAPIView(r.Context(), p, reconciled, true),
+	})
+}
+
+// ProvisionProjectAddon POST /projects/{slug}/addons/{engine}/provision
+func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	engine := strings.TrimSpace(chi.URLParam(r, "engine"))
+	p, ok := h.requireProjectAccess(w, r, slug)
+	if !ok {
+		return
+	}
+	u, _ := auth.UserFromContext(r.Context())
+	if !h.canManageProject(r.Context(), u, p.ID) {
+		writeAccessDenied(w)
+		return
+	}
+	if engine != "redis" || !validAddonEngine(engine) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "re-provision chỉ hỗ trợ Redis"})
+		return
+	}
+
+	var body struct {
+		Environment string `json:"environment"`
+		MaxMemoryMB int    `json:"max_memory_mb"`
+		MaxClients  int    `json:"max_clients"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	env := strings.TrimSpace(body.Environment)
+	if env == "" {
+		env = strings.TrimSpace(r.URL.Query().Get("environment"))
+	}
+	if env == "" {
+		env = "dev"
+	}
+	if !validAddonEnv(env) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
+		return
+	}
+	if env == "prod" && !auth.CanWriteProd(u.Role) {
+		writeAccessDenied(w)
+		return
+	}
+
+	item, err := h.getProjectAddon(r.Context(), p.ID, engine, env)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "addon chưa được bật — dùng POST /addons/redis trước"})
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if body.MaxMemoryMB >= 64 && body.MaxMemoryMB <= 512 {
+		item.MaxMemoryMB = body.MaxMemoryMB
+		_, _ = h.db.Exec(r.Context(), `
+			UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
+			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+			item.MaxMemoryMB, p.ID, engine, env)
+	}
+	if body.MaxClients >= 10 && body.MaxClients <= 1000 {
+		item.MaxClients = body.MaxClients
+		_, _ = h.db.Exec(r.Context(), `
+			UPDATE project_data_addons SET max_clients=$1, updated_at=now()
+			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+			item.MaxClients, p.ID, engine, env)
+	}
+
+	auditAction(r.Context(), h, r, "addon.provision", slug, map[string]any{
+		"engine": engine, "environment": env, "by": u.Email,
+	})
+
+	if err := h.provisionRedisAddon(r.Context(), p, engine, env, item); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error":  "Re-provision Redis thất bại: " + err.Error(),
+			"status": "failed",
+		})
+		return
+	}
+	reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":      "running",
+		"message":     "Đã re-provision Redis — REDIS_URL mới đã sync vào app env",
+		"environment": env,
+		"addon":       h.buildRedisAddonAPIView(r.Context(), p, reconciled, true),
 	})
 }

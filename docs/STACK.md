@@ -139,8 +139,9 @@ k8s/
 ## Dev / Prod
 
 - **Mặc định:** 1 cluster, namespace `{project}-dev` / `{project}-prod`
-- **Domain:** `{app}-{env}.{domain}`
+- **Domain app:** `{slug}-{env}.{PLATFORM_DOMAIN}` (vd `my-shop-dev.platform.example.com`)
 - **Promote prod:** đổi image tag GitOps → Argo CD sync (manual prod)
+- **Quy ước DNS đầy đủ:** [DOMAIN-CONVENTIONS.md](./DOMAIN-CONVENTIONS.md) · Cloudflare: [CLOUDFLARE-INTEGRATION.md](./CLOUDFLARE-INTEGRATION.md)
 
 ---
 
@@ -150,4 +151,4 @@ k8s/
 - Chốt version quan trọng (pin Helm chart)
 - Quyết định mới từ discussion với khách
 
-*Cập nhật lần cuối: 2026-07-07 — thêm phương án Phase 10 [DATA-FORK.md](./DATA-FORK.md).*
+*Cập nhật lần cuối: 2026-07-09 — thêm [DOMAIN-CONVENTIONS.md](./DOMAIN-CONVENTIONS.md), [CLOUDFLARE-INTEGRATION.md](./CLOUDFLARE-INTEGRATION.md).*

@@ -2,7 +2,7 @@
 
 Source tái sử dụng: K8s + Rancher + ArgoCD + Harbor + Monitoring + Logging + GitOps.
 
-> Chi tiết từng bước: [TASKS.md](./TASKS.md) · Công nghệ & vì sao chọn: [docs/STACK.md](./docs/STACK.md)
+> Chi tiết từng bước: [TASKS.md](./TASKS.md) · Công nghệ & vì sao chọn: [docs/STACK.md](./docs/STACK.md) · DNS / domain: [docs/DOMAIN-CONVENTIONS.md](./docs/DOMAIN-CONVENTIONS.md)
 
 ## Bắt đầu từ đâu?
 
@@ -88,7 +88,7 @@ project-b-dev
 project-b-prod
 ```
 
-Convention domain: `{app}-{env}.{domain}` — ví dụ `api-dev.company.com`
+Convention domain: `{slug}-{env}.{PLATFORM_DOMAIN}` — ví dụ `my-shop-dev.platform.company.com` (xem [docs/DOMAIN-CONVENTIONS.md](./docs/DOMAIN-CONVENTIONS.md))
 
 ## Chạy setup trên VPS (từng file, SSH rớt OK)
 
@@ -105,5 +105,8 @@ Chi tiết: [bootstrap/README.md](./bootstrap/README.md)
 
 - [TASKS.md](./TASKS.md) — checklist đầy đủ, tick khi xong
 - [docs/STACK.md](./docs/STACK.md) — công nghệ đã chọn & lý do
+- [docs/DOMAIN-CONVENTIONS.md](./docs/DOMAIN-CONVENTIONS.md) — hostname engines, app, Redis, Cloudflare mặc định
+- [docs/CLOUDFLARE-INTEGRATION.md](./docs/CLOUDFLARE-INTEGRATION.md) — roadmap bảo mật Cloudflare qua Console
 - [bootstrap/README.md](./bootstrap/README.md) — script từng bước + tmux
 - `config/env.sh.example` — biến cho script (copy → `config/env.sh`)
+- `config/domains.env.example` — bảng hostname + proxy CF (machine-readable)

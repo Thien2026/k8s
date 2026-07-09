@@ -329,3 +329,16 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 - [ ] Sau phase 10: provision DB/Redis
 
 **Thứ tự:** 8 ∥ 9 → **Refactor** → 10a → 10 → 11
+
+---
+
+## Phase CF — Cloudflare (DNS + Security qua Console)
+
+> Spec: [docs/CLOUDFLARE-INTEGRATION.md](docs/CLOUDFLARE-INTEGRATION.md) · Hostname: [docs/DOMAIN-CONVENTIONS.md](docs/DOMAIN-CONVENTIONS.md)
+
+- [ ] CF-1: Connect API token + đối chiếu DNS với `config/domains.env.example`
+- [ ] CF-1: Nút **Apply defaults** (record + proxy mode)
+- [ ] CF-2: Security templates (platform, app, admin, redis-tcp warning)
+- [ ] CF-3: Rate limit + WAF rules qua API
+
+**Xong khi:** cluster mới chỉ cần token CF + Apply defaults → DNS + proxy khớp convention.

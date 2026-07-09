@@ -63,9 +63,11 @@ function markActiveNav(parsed) {
       const tab = projectNavActiveTab(parsed.tab, parsed.addon);
       active = route === "project/" + parsed.slug + "/" + tab || route === "project/" + parsed.slug;
       if (!active && parsed.tab === "addons") {
-        active =
-          route === "addons/" + parsed.slug + "/" + (parsed.addon || "") ||
-          route === "addons/" + parsed.slug;
+        if (parsed.addon) {
+          active = route === "addons/" + parsed.slug + "/" + parsed.addon;
+        } else {
+          active = route === "addons/" + parsed.slug;
+        }
       }
     } else if (parsed.type === "view") {
       active = el.dataset.route === parsed.resource;

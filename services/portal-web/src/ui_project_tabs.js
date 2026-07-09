@@ -220,6 +220,108 @@ function addonIcon(engine) {
   return "🧩";
 }
 
+function renderAddonRedisConnection(addon, canManage) {
+  if (addon.has_connection && addon.connection_url_masked) {
+    return (
+      '<div class="addon-connection-box">' +
+      '<p class="muted">REDIS_URL · runtime env</p>' +
+      '<div class="addon-connection-row">' +
+      '<code class="addon-connection-url">' + esc(addon.connection_url_masked) + "</code>" +
+      (canManage
+        ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-copy-url">Copy</button>'
+        : "") +
+      "</div>" +
+      (addon.connection_secret
+        ? '<p class="muted addon-connection-meta">Secret K8s: <code>' + esc(addon.connection_secret) + "</code></p>"
+        : "") +
+      '<p class="muted addon-connection-hint">Giá trị đầy đủ nằm trong biến runtime <code>REDIS_URL</code> và Secret <code>app-env</code>.</p>' +
+      (canManage ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision">Re-provision Redis</button>' : "") +
+      "</div>"
+    );
+  }
+  if (addon.status === "provisioning" || addon.status === "pending") {
+    return '<p class="loading">Đang provision Redis trên cluster…</p>';
+  }
+  return (
+    '<p class="muted">Chưa có connection trên cluster.</p>' +
+    (canManage ? '<button type="button" class="btn-primary btn-sm" id="addon-redis-reprovision">Provision Redis</button>' : "")
+  );
+}
+
+function renderAddonRedisQuota(addon, canManage) {
+  const mem = addon.max_memory_mb || 128;
+  const clients = addon.max_clients || 100;
+  if (!canManage) {
+    return (
+      "<p>RAM: <strong>" + esc(mem) + " MB</strong> · Max clients: <strong>" + esc(clients) + "</strong></p>" +
+      '<p class="muted">Chỉ owner/admin chỉnh quota.</p>'
+    );
+  }
+  return (
+    '<div class="addon-quota-form">' +
+    '<label class="addon-quota-field">RAM (MB)<input type="number" id="addon-redis-mem" min="64" max="512" step="1" value="' + esc(mem) + '"></label>' +
+    '<label class="addon-quota-field">Max clients<input type="number" id="addon-redis-clients" min="10" max="1000" step="1" value="' + esc(clients) + '"></label>' +
+    '<button type="button" class="btn-primary btn-sm" id="addon-redis-quota-apply">Lưu & apply</button>' +
+    "</div>" +
+    '<p class="muted">Apply = re-provision Redis với quota mới (redis.conf + memory limit pod).</p>'
+  );
+}
+
+function bindAddonRedisActions(main, slug, p, env, canManage, addon) {
+  if (!canManage) return;
+  const fullURL = addon && addon.connection_url ? String(addon.connection_url) : "";
+  const copyBtn = document.getElementById("addon-redis-copy-url");
+  if (copyBtn && fullURL) {
+    copyBtn.onclick = function () {
+      copyText(fullURL, "Đã copy REDIS_URL");
+    };
+  } else if (copyBtn) {
+    copyBtn.disabled = true;
+    copyBtn.title = "Chưa có REDIS_URL";
+  }
+  async function runProvision(extraBody) {
+    const ok = await uiConfirm(
+      "Re-provision Redis? Mật khẩu mới sẽ được tạo, REDIS_URL cập nhật và app restart để nhận env.",
+      { title: "Re-provision Redis" }
+    );
+    if (!ok) return;
+    const buttons = document.querySelectorAll("#addon-redis-reprovision, #addon-redis-reprovision-top, #addon-redis-quota-apply");
+    buttons.forEach(function (el) { el.disabled = true; });
+    try {
+      const body = Object.assign({ environment: env }, extraBody || {});
+      const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/provision", {
+        method: "POST",
+        body: body,
+      });
+      toastSuccess(res.message || "Đã re-provision Redis");
+      await loadProjectAddonRedis(main, slug, p);
+    } catch (err) {
+      toastError(err.message || "Re-provision thất bại");
+      buttons.forEach(function (el) { el.disabled = false; });
+    }
+  }
+  ["addon-redis-reprovision", "addon-redis-reprovision-top"].forEach(function (id) {
+    const btn = document.getElementById(id);
+    if (btn) btn.onclick = function () { runProvision(); };
+  });
+  const quotaBtn = document.getElementById("addon-redis-quota-apply");
+  if (quotaBtn) {
+    quotaBtn.onclick = function () {
+      const mem = parseInt(document.getElementById("addon-redis-mem").value, 10);
+      const clients = parseInt(document.getElementById("addon-redis-clients").value, 10);
+      if (!(mem >= 64 && mem <= 512)) {
+        toastError("RAM phải từ 64–512 MB");
+        return;
+      }
+      if (!(clients >= 10 && clients <= 1000)) {
+        toastError("Max clients phải từ 10–1000");
+        return;
+      }
+      runProvision({ max_memory_mb: mem, max_clients: clients });
+    };
+  }
+}
+
 async function loadProjectAddonsHub(main, slug, p) {
   main.innerHTML =
     projectHeader(p, "Addons · data services") +
@@ -262,11 +364,12 @@ async function loadProjectAddonsHub(main, slug, p) {
       '<p class="muted">Mỗi addon = instance riêng, connection riêng, quota riêng.</p>' +
       '<div class="addon-catalog-grid">' + cards + "</div>" +
       (installed.length
-        ? '<h4 style="margin:20px 0 10px">Đã gắn</h4><ul class="addon-installed-list">' +
+        ? '<h4 class="addon-installed-title">Đã gắn</h4><ul class="addon-installed-list">' +
           installed.map(function (it) {
             return (
-              "<li><a href=\"" + esc(projectAddonsRoute(slug, it.engine)) + '">' +
-              addonIcon(it.engine) + " " + esc(it.engine) + " · " + addonStatusBadge(it.status) + "</a></li>"
+              '<li><a class="addon-installed-link" href="' + esc(projectAddonsRoute(slug, it.engine)) + '">' +
+              '<span class="addon-installed-engine">' + addonIcon(it.engine) + " " + esc(it.engine) + "</span>" +
+              '<span class="addon-installed-status">' + addonStatusBadge(it.status) + "</span></a></li>"
             );
           }).join("") +
           "</ul>"
@@ -327,7 +430,7 @@ async function loadProjectAddonRedis(main, slug, p) {
               method: "POST",
               body: { environment: env, max_memory_mb: 128, max_clients: 100 },
             });
-            toastSuccess("Đã ghi nhận — provision cluster bước kế tiếp");
+            toastSuccess("Đã bật Redis");
             await loadProjectAddonRedis(main, slug, p);
           } catch (err) {
             toastError(err.message || "Lỗi");
@@ -337,24 +440,31 @@ async function loadProjectAddonRedis(main, slug, p) {
       return;
     }
     const addon = data.addon || {};
+    const canManage = !!data.can_manage;
     root.innerHTML =
       "<h3>Redis · " + esc(env.toUpperCase()) + " · <code>" + esc(data.namespace || "") + "</code></h3>" +
-      '<div class="addon-redis-section" id="addon-sec-overview">' +
-      "<h4>Tổng quan</h4>" +
+      '<div class="toolbar addon-redis-nav" style="margin:10px 0 14px">' +
+      '<a class="btn-ghost btn-sm" href="#addon-sec-dashboard">Dashboard</a> ' +
+      '<a class="btn-ghost btn-sm" href="#addon-sec-connection">Connection</a> ' +
+      '<a class="btn-ghost btn-sm" href="#addon-sec-quota">Quota</a>' +
+      (canManage ? ' <button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision-top">Re-provision</button>' : "") +
+      "</div>" +
+      '<div class="addon-redis-section" id="addon-sec-dashboard">' +
+      "<h4>Dashboard</h4>" +
       '<p>Trạng thái: ' + addonStatusBadge(addon.status) + "</p>" +
       '<p class="muted">Release: <code>' + esc(addon.k8s_release || "—") + "</code></p>" +
+      '<p class="muted">Namespace: <code>' + esc(data.namespace || "—") + "</code></p>" +
       "</div>" +
       '<div class="addon-redis-section" id="addon-sec-connection">' +
       "<h4>Connection</h4>" +
-      (addon.has_connection
-        ? '<p class="muted">REDIS_URL đã sẵn sàng — hiển thị đầy đủ sau bước provision.</p>'
-        : '<p class="muted">Chưa có connection — provision Helm sẽ sinh Secret.</p>') +
+      renderAddonRedisConnection(addon, canManage) +
       "</div>" +
       '<div class="addon-redis-section" id="addon-sec-quota">' +
       "<h4>Quota</h4>" +
-      '<p>RAM: <strong>' + esc(addon.max_memory_mb || 128) + " MB</strong> · Max clients: <strong>" + esc(addon.max_clients || 100) + "</strong></p>" +
-      '<p class="muted">Chỉnh quota + apply Helm — bước kế tiếp Phase 10a.</p></div>' +
-      '<p class="muted" style="margin-top:12px"><a href="' + esc(projectAddonsRoute(slug)) + '">← Về catalog addons</a></p>';
+      renderAddonRedisQuota(addon, canManage) +
+      "</div>" +
+      '<p class="addon-back-wrap"><a class="addon-back-link" href="' + esc(projectAddonsRoute(slug)) + '">← Về catalog addons</a></p>';
+    bindAddonRedisActions(main, slug, p, env, canManage, addon);
   } catch (err) {
     const root = document.getElementById("addon-redis-root");
     if (root) root.innerHTML = '<p class="error-text">' + esc(err.message) + "</p>";

@@ -87,15 +87,6 @@ function buildAddonsSidebarHtml(nav, slug, engine, p, installed) {
       '<span class="ico">' + addonIcon(eng) + '</span><span class="nav-label">' + esc(eng) + "</span></a>";
   });
 
-  if (engine && ADDON_SIDEBAR_NAV[engine]) {
-    html += '<div class="addon-nav-sections">';
-    ADDON_SIDEBAR_NAV[engine].forEach(function (item) {
-      html +=
-        '<a class="nav-link nav-link-sub" href="' + projectAddonsRoute(slug, engine) + "#" + esc(item.section) + '" title="' + esc(item.label) + '">' +
-        '<span class="ico">' + item.icon + '</span><span class="nav-label">' + esc(item.label) + "</span></a>";
-    });
-    html += "</div>";
-  }
   html += "</div>";
 
   html +=

@@ -100,6 +100,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Get("/projects/{slug}/addons", h.ListProjectAddons)
 		r.Get("/projects/{slug}/addons/{engine}", h.GetProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}", h.CreateProjectAddon)
+		r.Post("/projects/{slug}/addons/{engine}/provision", h.ProvisionProjectAddon)
 		r.Get("/projects/{slug}/members", h.ListProjectMembers)
 		r.Get("/projects/{slug}/repo", h.GetProjectRepo)
 		r.Get("/projects/{slug}/deploy/plan", h.GetProjectDeployPlan)
