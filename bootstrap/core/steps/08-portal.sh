@@ -150,6 +150,10 @@ fi
 if [[ -n "${NODE_PUBLIC_IP:-}" ]]; then
   SECRET_ARGS+=(--from-literal=NODE_PUBLIC_IP="${NODE_PUBLIC_IP}")
 fi
+if [[ -n "${DOMAIN:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=DOMAIN="${DOMAIN}")
+  SECRET_ARGS+=(--from-literal=REDIS_ZONE="redis.${DOMAIN}")
+fi
 if [[ -n "${ARGOCD_HOST:-}" ]]; then
   SECRET_ARGS+=(--from-literal=ARGOCD_HOST="${ARGOCD_HOST}")
   SECRET_ARGS+=(--from-literal=ARGOCD_URL="https://${ARGOCD_HOST}")

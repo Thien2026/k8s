@@ -3520,6 +3520,20 @@ tr.dns-row td {
   margin-top: 0;
 }
 
+.addon-redis-logs {
+  margin-top: 12px;
+  max-height: 320px;
+  overflow: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .addon-quota-form {
   display: flex;
   flex-wrap: wrap;

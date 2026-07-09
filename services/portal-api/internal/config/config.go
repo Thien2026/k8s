@@ -32,6 +32,8 @@ type Config struct {
 	GHCRPullUser         string
 	GHCRPullToken        string
 	PlatformDomain       string
+	ApexDomain           string
+	RedisZone            string
 	NodePublicIP         string
 	GitHubClientID       string
 	GitHubClientSecret   string
@@ -128,6 +130,8 @@ func Load() Config {
 		GHCRPullUser:         firstNonEmpty(os.Getenv("GHCR_PULL_USER"), os.Getenv("GHCR_ORG")),
 		GHCRPullToken:        os.Getenv("GHCR_PULL_TOKEN"),
 		PlatformDomain:       firstNonEmpty(os.Getenv("PLATFORM_DOMAIN"), os.Getenv("DOMAIN")),
+		ApexDomain:           strings.TrimSpace(os.Getenv("DOMAIN")),
+		RedisZone:            strings.TrimSpace(os.Getenv("REDIS_ZONE")),
 		NodePublicIP:         os.Getenv("NODE_PUBLIC_IP"),
 		GitHubClientID:       os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),

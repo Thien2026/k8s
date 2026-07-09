@@ -193,6 +193,54 @@ func (c *Client) rolloutRestartDeploymentOnce(ctx context.Context, clusterOverri
 	return err
 }
 
+// RolloutRestartStatefulSet khởi động lại pod StatefulSet bằng annotation restartedAt.
+func (c *Client) RolloutRestartStatefulSet(ctx context.Context, clusterOverride, namespace, name string) error {
+	if !c.Enabled() {
+		return fmt.Errorf("rancher not configured")
+	}
+	clusterID, err := c.ClusterID(ctx, clusterOverride)
+	if err != nil {
+		return err
+	}
+	path := fmt.Sprintf("/k8s/clusters/%s/apis/apps/v1/namespaces/%s/statefulsets/%s", clusterID, namespace, name)
+	body, status, err := c.do(ctx, http.MethodGet, path, nil, "application/json")
+	if err != nil {
+		if status == http.StatusNotFound {
+			return fmt.Errorf("statefulset %s/%s không tồn tại", namespace, name)
+		}
+		return err
+	}
+	var sts map[string]any
+	if err := json.Unmarshal(body, &sts); err != nil {
+		return err
+	}
+	spec, _ := sts["spec"].(map[string]any)
+	if spec == nil {
+		return fmt.Errorf("statefulset %s/%s thiếu spec", namespace, name)
+	}
+	tpl, _ := spec["template"].(map[string]any)
+	if tpl == nil {
+		return fmt.Errorf("statefulset %s/%s thiếu template", namespace, name)
+	}
+	meta, _ := tpl["metadata"].(map[string]any)
+	if meta == nil {
+		meta = map[string]any{}
+		tpl["metadata"] = meta
+	}
+	ann, _ := meta["annotations"].(map[string]any)
+	if ann == nil {
+		ann = map[string]any{}
+		meta["annotations"] = ann
+	}
+	ann["kubectl.kubernetes.io/restartedAt"] = time.Now().UTC().Format(time.RFC3339)
+	payload, err := json.Marshal(sts)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.do(ctx, http.MethodPut, path, payload, "application/json")
+	return err
+}
+
 // GetOpaqueSecretData đọc Secret Opaque trên cluster (data base64-decoded).
 func (c *Client) GetOpaqueSecretData(ctx context.Context, clusterOverride, namespace, name string) (map[string]string, bool, error) {
 	if !c.Enabled() {

@@ -204,6 +204,28 @@ async function loadProjectRuntimePage(main, slug, p) {
   }
 }
 
+function renderAddonRedisDashboard(addon, canManage) {
+  const pod = addon.pod;
+  let podHtml = '<p class="muted">Chưa thấy pod Redis trên cluster.</p>';
+  if (pod && pod.name) {
+    podHtml =
+      "<p>Pod: <code>" + esc(pod.name) + "</code> · " + esc(pod.status || "—") +
+      " · restarts <strong>" + esc(pod.restarts || 0) + "</strong>" +
+      (pod.ready ? ' <span class="badge ok">ready</span>' : ' <span class="badge warn">not ready</span>') +
+      "</p>";
+  }
+  return (
+    podHtml +
+    (canManage
+      ? '<div class="addon-redis-ops" style="margin-top:10px">' +
+        '<button type="button" class="btn-ghost btn-sm" id="addon-redis-restart">Restart pod</button> ' +
+        '<button type="button" class="btn-ghost btn-sm" id="addon-redis-load-logs">Xem logs</button>' +
+        "</div>" +
+        '<pre class="addon-redis-logs hidden" id="addon-redis-logs"></pre>'
+      : "")
+  );
+}
+
 function addonStatusBadge(status) {
   const s = String(status || "pending");
   let cls = "badge";
@@ -221,23 +243,40 @@ function addonIcon(engine) {
 }
 
 function renderAddonRedisConnection(addon, canManage) {
+  let html = "";
   if (addon.has_connection && addon.connection_url_masked) {
-    return (
+    html +=
       '<div class="addon-connection-box">' +
-      '<p class="muted">REDIS_URL · runtime env</p>' +
+      '<p class="muted">REDIS_URL · trong cluster</p>' +
       '<div class="addon-connection-row">' +
       '<code class="addon-connection-url">' + esc(addon.connection_url_masked) + "</code>" +
       (canManage
         ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-copy-url">Copy</button>'
         : "") +
-      "</div>" +
+      "</div>";
+    if (addon.connection_url_external_masked) {
+      html +=
+        '<p class="muted" style="margin-top:12px">REDIS_URL · dev từ máy local (NodePort + DNS <code>*.redis.{domain}</code>)</p>' +
+        '<div class="addon-connection-row">' +
+        '<code class="addon-connection-url">' + esc(addon.connection_url_external_masked) + "</code>" +
+        (canManage && addon.connection_url_external
+          ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-copy-url-ext">Copy</button>'
+          : "") +
+        "</div>" +
+        (addon.external_hostname
+          ? '<p class="muted addon-connection-meta">Host: <code>' + esc(addon.external_hostname) + "</code>" +
+            (addon.external_port ? " · port <code>" + esc(addon.external_port) + "</code>" : "") +
+            " · CF DNS only, whitelist IP nếu expose.</p>"
+          : "");
+    }
+    html +=
       (addon.connection_secret
         ? '<p class="muted addon-connection-meta">Secret K8s: <code>' + esc(addon.connection_secret) + "</code></p>"
         : "") +
-      '<p class="muted addon-connection-hint">Giá trị đầy đủ nằm trong biến runtime <code>REDIS_URL</code> và Secret <code>app-env</code>.</p>' +
+      '<p class="muted addon-connection-hint">App trong cluster dùng REDIS_URL runtime. Dev local dùng URL external (nếu có).</p>' +
       (canManage ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision">Re-provision Redis</button>' : "") +
-      "</div>"
-    );
+      "</div>";
+    return html;
   }
   if (addon.status === "provisioning" || addon.status === "pending") {
     return '<p class="loading">Đang provision Redis trên cluster…</p>';
@@ -270,6 +309,7 @@ function renderAddonRedisQuota(addon, canManage) {
 function bindAddonRedisActions(main, slug, p, env, canManage, addon) {
   if (!canManage) return;
   const fullURL = addon && addon.connection_url ? String(addon.connection_url) : "";
+  const fullExtURL = addon && addon.connection_url_external ? String(addon.connection_url_external) : "";
   const copyBtn = document.getElementById("addon-redis-copy-url");
   if (copyBtn && fullURL) {
     copyBtn.onclick = function () {
@@ -278,6 +318,50 @@ function bindAddonRedisActions(main, slug, p, env, canManage, addon) {
   } else if (copyBtn) {
     copyBtn.disabled = true;
     copyBtn.title = "Chưa có REDIS_URL";
+  }
+  const copyExtBtn = document.getElementById("addon-redis-copy-url-ext");
+  if (copyExtBtn && fullExtURL) {
+    copyExtBtn.onclick = function () {
+      copyText(fullExtURL, "Đã copy REDIS_URL external");
+    };
+  }
+  const restartBtn = document.getElementById("addon-redis-restart");
+  if (restartBtn) {
+    restartBtn.onclick = async function () {
+      const ok = await uiConfirm("Restart pod Redis?", { title: "Restart Redis" });
+      if (!ok) return;
+      restartBtn.disabled = true;
+      try {
+        const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/restart", {
+          method: "POST",
+          body: { environment: env },
+        });
+        toastSuccess(res.message || "Đang restart Redis");
+        await loadProjectAddonRedis(main, slug, p);
+      } catch (err) {
+        toastError(err.message || "Restart thất bại");
+        restartBtn.disabled = false;
+      }
+    };
+  }
+  const logsBtn = document.getElementById("addon-redis-load-logs");
+  const logsPre = document.getElementById("addon-redis-logs");
+  if (logsBtn && logsPre) {
+    logsBtn.onclick = async function () {
+      logsBtn.disabled = true;
+      logsPre.classList.remove("hidden");
+      logsPre.textContent = "Đang tải logs…";
+      try {
+        const res = await api(
+          "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/logs" + projectQs({ environment: env, tail: 300 })
+        );
+        logsPre.textContent = res.logs || "(trống)";
+      } catch (err) {
+        logsPre.textContent = err.message || "Không tải được logs";
+      } finally {
+        logsBtn.disabled = false;
+      }
+    };
   }
   async function runProvision(extraBody) {
     const ok = await uiConfirm(
@@ -454,6 +538,7 @@ async function loadProjectAddonRedis(main, slug, p) {
       '<p>Trạng thái: ' + addonStatusBadge(addon.status) + "</p>" +
       '<p class="muted">Release: <code>' + esc(addon.k8s_release || "—") + "</code></p>" +
       '<p class="muted">Namespace: <code>' + esc(data.namespace || "—") + "</code></p>" +
+      renderAddonRedisDashboard(addon, canManage) +
       "</div>" +
       '<div class="addon-redis-section" id="addon-sec-connection">' +
       "<h4>Connection</h4>" +

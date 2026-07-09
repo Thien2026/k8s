@@ -41,9 +41,14 @@ type projectAddonView struct {
 
 type redisAddonAPIView struct {
 	projectAddonView
-	ConnectionURLMasked string `json:"connection_url_masked,omitempty"`
-	ConnectionURL       string `json:"connection_url,omitempty"`
-	ConnectionSecret    string `json:"connection_secret,omitempty"`
+	ConnectionURLMasked           string             `json:"connection_url_masked,omitempty"`
+	ConnectionURL                 string             `json:"connection_url,omitempty"`
+	ConnectionURLExternalMasked   string             `json:"connection_url_external_masked,omitempty"`
+	ConnectionURLExternal         string             `json:"connection_url_external,omitempty"`
+	ExternalHostname              string             `json:"external_hostname,omitempty"`
+	ExternalPort                  int                `json:"external_port,omitempty"`
+	ConnectionSecret              string             `json:"connection_secret,omitempty"`
+	Pod                           *redisAddonPodView `json:"pod,omitempty"`
 }
 
 const (
@@ -296,6 +301,18 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 			},
 		},
 	}
+	if env == "dev" {
+		nodePort := redisAddonNodePort(p.Slug, env)
+		svc["spec"].(map[string]any)["type"] = "NodePort"
+		svc["spec"].(map[string]any)["ports"] = []map[string]any{
+			{
+				"name":       "redis",
+				"port":       redisAddonServicePort,
+				"targetPort": redisAddonServicePort,
+				"nodePort":   nodePort,
+			},
+		}
+	}
 	svcJSON, _ := json.Marshal(svc)
 	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/services", ns, svcJSON); err != nil {
 		return "", fmt.Errorf("service redis: %w", err)
@@ -413,6 +430,11 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 	stsJSON, _ := json.Marshal(sts)
 	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/apis/apps/v1/statefulsets", ns, stsJSON); err != nil {
 		return "", fmt.Errorf("statefulset redis: %w", err)
+	}
+	if env == "prod" {
+		if err := h.applyRedisNetworkPolicy(ctx, release, ns); err != nil {
+			return "", fmt.Errorf("networkpolicy redis: %w", err)
+		}
 	}
 
 	connURL := h.redisAddonURL(release, ns, pass)
@@ -625,7 +647,7 @@ func (h *Handler) GetProjectAddon(w http.ResponseWriter, r *http.Request) {
 	addonPayload := any(item)
 	if engine == "redis" {
 		reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
-		addonPayload = h.buildRedisAddonAPIView(r.Context(), p, reconciled, canManage)
+		addonPayload = h.enrichRedisAddonAPIView(r.Context(), p, reconciled, canManage, "")
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"catalog":     catalogItem,
@@ -738,7 +760,7 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		"engine":      engine,
 		"environment": env,
 		"k8s_release": release,
-		"addon":       h.buildRedisAddonAPIView(r.Context(), p, reconciled, true),
+		"addon":       h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
 	})
 }
 
@@ -822,6 +844,6 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		"status":      "running",
 		"message":     "Đã re-provision Redis — REDIS_URL mới đã sync vào app env",
 		"environment": env,
-		"addon":       h.buildRedisAddonAPIView(r.Context(), p, reconciled, true),
+		"addon":       h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
 	})
 }

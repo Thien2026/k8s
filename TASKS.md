@@ -264,11 +264,11 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 - [x] Route `#/project/{slug}/addons/redis` — dashboard Redis (UI shell)
 - [x] Sidebar addons riêng (không nhét Pods/Deployments vào menu project)
 - [ ] **⏸ Chờ Refactor gate** — các mục dưới làm sau R1+B1
-- [ ] Helm provision Redis trong namespace project (Bitnami)
-- [ ] Sinh Secret `REDIS_URL` + copy / inject env dev
-- [ ] Quota UI: `max_memory_mb`, `max_clients` → apply Helm
-- [ ] Health: status, restart, logs (reuse Runtime pattern)
-- [ ] Prod env + NetworkPolicy
+- [x] Provision Redis trong namespace project (StatefulSet + Secret + PVC)
+- [x] Sinh Secret `REDIS_URL` + copy / inject env dev
+- [x] Quota UI: `max_memory_mb`, `max_clients` → apply provision
+- [x] Health: status pod, restart, logs
+- [x] Dev external URL (NodePort + `*.redis.{domain}`) · Prod NetworkPolicy
 
 ### API
 
