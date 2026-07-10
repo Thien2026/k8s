@@ -10,16 +10,29 @@ Platform inject object storage S3-compatible vào app qua **runtime env** (Secre
 2. Sau provision: `S3_ENDPOINT`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_BUCKET`, `S3_REGION`, `S3_USE_SSL`
 3. Deploy/restart app để pod nhận env
 
+Khi cluster **ha_capable** (Longhorn + ≥2 node), form enable cho chọn topology `standalone` | `distributed`.
+
 ---
 
 ## Topology
 
-| Mode | Trạng thái |
-|------|------------|
-| `standalone` | **MVP hiện tại** — 1 pod + 1 PVC |
-| `distributed` | Phase sau — khi `ha_capable` (Longhorn + ≥2 node) + upgrade có xác nhận |
+| Mode | Điều kiện | Mô tả |
+|------|-----------|--------|
+| `standalone` | Luôn | 1 pod + PVC (local-path / default SC) |
+| `distributed` | `ha_capable` | 4 pods + headless + PVC **Longhorn**; erasure coding |
 
-API trả `ha_capability` / `ha_capable`. **Không** auto-migrate instance đang chạy.
+API trả `ha_capability` / `ha_capable` / `upgrade_available`.
+
+**Không auto-migrate** object từ PVC standalone khi upgrade.
+
+### Upgrade HA
+
+1. Instance đang `standalone` + `ha_capable` → nút **Upgrade HA**
+2. Confirm (danger): object trên PVC cũ **không** tự copy
+3. API `POST /addons/minio/upgrade-ha` với `{ "confirm": true }`
+4. Xóa STS cũ → provision distributed (giữ credentials auth secret)
+
+PVC standalone cũ có thể còn orphan trên cluster (cứu dữ liệu tay nếu cần).
 
 ---
 
@@ -33,6 +46,8 @@ API trả `ha_capability` / `ha_capable`. **Không** auto-migrate instance đang
 | `S3_REGION` | `us-east-1` |
 | `S3_USE_SSL` | `false` (trong cluster) |
 
+Local SDK: path-style + `Copy external JSON` từ Console.
+
 ---
 
 ## Dev vs prod
@@ -43,15 +58,14 @@ API trả `ha_capability` / `ha_capable`. **Không** auto-migrate instance đang
 | Service | **NodePort** + DNS `*.minio.{domain}` | Chỉ ClusterIP |
 | External | `{slug}-minio-dev.minio.{domain}:{nodePort}` | Không expose |
 | NetworkPolicy | Không | Chỉ pod app trong namespace |
-| Promote | Checklist + auto provision prod nếu dev đã có MinIO | |
+| Promote | Checklist + auto provision prod nếu dev đã có MinIO | Topology theo ha_capable |
 
-Ví dụ local (DNS only Cloudflare):
+---
 
-```text
-http://test-harbor-minio-dev.minio.7mlabs.com:3xxxx
-```
+## Ops
 
-SDK cần **path-style** (`forcePathStyle: true`). `S3_ENDPOINT` trong pod vẫn là URL cluster nội bộ.
+- **Restart pod** / **Xem logs** trên trang addon (parity Redis)
+- File/bucket UI: dùng **MinIO Console** (link external trên trang addon)
 
 ---
 

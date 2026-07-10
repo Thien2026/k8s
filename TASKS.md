@@ -250,6 +250,22 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 
 ---
 
+## Phase 10a′ — Data addon: MinIO (sau Redis)
+
+> Object storage S3 per project. Spec: [docs/MINIO-ADDON.md](docs/MINIO-ADDON.md).
+
+- [x] Migration + catalog + provision standalone + inject `S3_*`
+- [x] Dev external NodePort + `*.minio.{domain}` + copy external JSON
+- [x] Promote prod checklist + NetworkPolicy prod
+- [x] Restart / logs trên trang addon
+- [x] HA/distributed gated `ha_capable` (Longhorn + ≥2 node) + Upgrade HA có xác nhận (không auto-migrate)
+- [ ] Metrics/Grafana dashboard MinIO (sau)
+- [ ] Playground upload UI (sau — Console MinIO đủ cho file)
+
+**Xong 10a′ khi:** standalone chạy + UI HA gate đúng trên 1-node; distributed code path sẵn khi đủ điều kiện.
+
+---
+
 ## Phase 10a — Data addon: Redis (làm trước Phase 10 full)
 
 > Slice nhỏ, ship được trước Postgres/Longhorn/Fork. UX: **shell Addons riêng** trong project (sidebar lồng nhau).  

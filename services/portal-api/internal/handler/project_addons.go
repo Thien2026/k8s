@@ -806,8 +806,15 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 	}
 	topology := "standalone"
 	if engine == "minio" {
-		// Phase 1: luôn standalone — distributed chỉ khi upgrade sau.
-		topology = "standalone"
+		topology = normalizeMinioTopology(body.Topology)
+		if topology == "distributed" && !h.minioHACapable(r.Context()) {
+			cap := h.minioHACapability(r.Context())
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error":         "topology distributed cần ha_capable (Longhorn + ≥2 node)",
+				"ha_capability": cap,
+			})
+			return
+		}
 	}
 	storageGB := normalizeMinioStorageGB(body.StorageGB)
 	if engine != "minio" {

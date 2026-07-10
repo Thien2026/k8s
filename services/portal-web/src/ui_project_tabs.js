@@ -1187,6 +1187,13 @@ async function loadProjectAddonMinio(main, slug, p) {
             ha.reasons.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") +
             "</ul>"
           : "") +
+        (ha.capable
+          ? '<p style="margin:10px 0"><label class="muted">Topology </label>' +
+            '<select id="addon-minio-topology">' +
+            '<option value="standalone" selected>standalone</option>' +
+            '<option value="distributed">distributed (4 pods + Longhorn)</option>' +
+            "</select></p>"
+          : "") +
         (data.can_manage
           ? '<button type="button" class="btn-primary" id="addon-minio-enable">+ Bật MinIO</button> ' +
             '<a class="btn-ghost" href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a>'
@@ -1194,14 +1201,19 @@ async function loadProjectAddonMinio(main, slug, p) {
       const enableBtn = document.getElementById("addon-minio-enable");
       if (enableBtn) {
         enableBtn.onclick = async function () {
+          const topoEl = document.getElementById("addon-minio-topology");
+          const topology = topoEl && topoEl.value === "distributed" ? "distributed" : "standalone";
           try {
             await withAppLoading(function () {
               return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio", {
                 method: "POST",
-                body: { environment: env, max_memory_mb: 256, storage_gb: 5, topology: "standalone" },
+                body: { environment: env, max_memory_mb: 256, storage_gb: 5, topology: topology },
                 timeout: 300000,
               });
-            }, { title: "Đang provision MinIO…", detail: "StatefulSet + bucket app + inject S3_*" });
+            }, {
+              title: "Đang provision MinIO…",
+              detail: topology === "distributed" ? "Distributed 4 pods + bucket app" : "StatefulSet + bucket app + inject S3_*",
+            });
             toastSuccess("Đã bật MinIO");
             await loadProjectAddonMinio(main, slug, p);
           } catch (err) {
@@ -1265,11 +1277,19 @@ async function loadProjectAddonMinio(main, slug, p) {
           "</div>"
         : '<p class="muted">Chưa có connection — bấm Re-provision.</p>') +
       (canManage
+        ? '<div class="addon-minio-ops" style="margin-top:12px">' +
+          '<button type="button" class="btn-ghost btn-sm" id="addon-minio-restart">Restart pod</button> ' +
+          '<button type="button" class="btn-ghost btn-sm" id="addon-minio-load-logs">Xem logs</button>' +
+          '</div><pre class="addon-minio-logs hidden" id="addon-minio-logs"></pre>'
+        : "") +
+      (canManage
         ? '<div style="margin-top:16px">' +
           '<button type="button" class="btn-ghost" id="addon-minio-reprovision">Re-provision</button> ' +
           (addon.upgrade_available
-            ? '<button type="button" class="btn-ghost" disabled title="Phase sau">Upgrade HA (sắp có)</button> '
-            : "") +
+            ? '<button type="button" class="btn-primary" id="addon-minio-upgrade-ha">Upgrade HA</button> '
+            : !ha.capable
+              ? '<button type="button" class="btn-ghost" disabled title="Cần Longhorn + ≥2 node">Upgrade HA</button> '
+              : "") +
           '<a class="btn-ghost" href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a></div>'
         : '<p style="margin-top:12px"><a href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a></p>');
 
@@ -1321,6 +1341,70 @@ async function loadProjectAddonMinio(main, slug, p) {
         });
       };
     }
+    const restartBtn = document.getElementById("addon-minio-restart");
+    if (restartBtn) {
+      restartBtn.onclick = async function () {
+        const ok = await uiConfirm("Restart pod MinIO?", { title: "Restart MinIO" });
+        if (!ok) return;
+        restartBtn.disabled = true;
+        try {
+          const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/restart", {
+            method: "POST",
+            body: { environment: env },
+          });
+          toastSuccess(res.message || "Đang restart MinIO");
+          await loadProjectAddonMinio(main, slug, p);
+        } catch (err) {
+          toastError(err.message || "Restart thất bại");
+          restartBtn.disabled = false;
+        }
+      };
+    }
+    const logsBtn = document.getElementById("addon-minio-load-logs");
+    const logsPre = document.getElementById("addon-minio-logs");
+    if (logsBtn && logsPre) {
+      logsBtn.onclick = async function () {
+        logsBtn.disabled = true;
+        logsPre.classList.remove("hidden");
+        logsPre.textContent = "Đang tải logs…";
+        try {
+          const res = await api(
+            "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/logs" + projectQs({ environment: env, tail: 300 })
+          );
+          logsPre.textContent = res.logs || "(trống)";
+        } catch (err) {
+          logsPre.textContent = err.message || "Không tải được logs";
+        } finally {
+          logsBtn.disabled = false;
+        }
+      };
+    }
+    const upgradeBtn = document.getElementById("addon-minio-upgrade-ha");
+    if (upgradeBtn) {
+      upgradeBtn.onclick = async function () {
+        const ok = await uiConfirm({
+          title: "Upgrade MinIO → HA / distributed?",
+          message:
+            "Sẽ tạo 4 pods + PVC Longhorn. Object trên PVC standalone KHÔNG tự migrate. Credentials giữ nguyên. Tiếp tục?",
+          confirmText: "Upgrade HA",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await withAppLoading(function () {
+            return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/upgrade-ha", {
+              method: "POST",
+              body: { environment: env, confirm: true },
+              timeout: 300000,
+            });
+          }, { title: "Đang upgrade MinIO HA…", detail: "Distributed 4 pods + Longhorn" });
+          toastSuccess("Đã upgrade MinIO sang distributed");
+          await loadProjectAddonMinio(main, slug, p);
+        } catch (err) {
+          toastError(err.message || "Upgrade thất bại");
+        }
+      };
+    }
     const repro = document.getElementById("addon-minio-reprovision");
     if (repro) {
       repro.onclick = async function () {
@@ -1335,7 +1419,12 @@ async function loadProjectAddonMinio(main, slug, p) {
           await withAppLoading(function () {
             return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/provision", {
               method: "POST",
-              body: { environment: env, storage_gb: addon.storage_gb || 5, max_memory_mb: addon.max_memory_mb || 256 },
+              body: {
+                environment: env,
+                storage_gb: addon.storage_gb || 5,
+                max_memory_mb: addon.max_memory_mb || 256,
+                topology: addon.topology || "standalone",
+              },
               timeout: 300000,
             });
           }, { title: "Đang re-provision MinIO…", detail: "Cập nhật secret + env" });

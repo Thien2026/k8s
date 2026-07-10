@@ -17,13 +17,15 @@ import (
 )
 
 const (
-	minioAddonImage       = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
-	minioMCImage          = "minio/mc:latest"
-	minioAPIPort          = 9000
-	minioConsolePort      = 9001
-	minioDefaultStorageGB = 5
-	minioDefaultMemoryMB  = 256
-	minioDefaultBucket    = "app"
+	minioAddonImage            = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
+	minioMCImage               = "minio/mc:latest"
+	minioAPIPort               = 9000
+	minioConsolePort           = 9001
+	minioDefaultStorageGB      = 5
+	minioDefaultMemoryMB       = 256
+	minioDefaultBucket         = "app"
+	minioDistributedReplicas   = 4
+	minioDistributedStorageSC  = "longhorn"
 )
 
 type minioAddonAPIView struct {
@@ -156,16 +158,16 @@ func (h *Handler) minioEndpoint(release, namespace string) string {
 	return fmt.Sprintf("http://%s.%s.svc.cluster.local:%d", release, namespace, minioAPIPort)
 }
 
-// minioHACapability — điều kiện bật distributed sau này (không auto-migrate instance đang chạy).
+// minioHACapability — điều kiện bật/upgrade distributed (không auto-migrate object).
 func (h *Handler) minioHACapability(ctx context.Context) map[string]any {
 	out := map[string]any{
-		"capable":           false,
-		"topology_default":  "standalone",
-		"min_volumes":       4,
-		"reasons":           []string{},
-		"longhorn_ready":    false,
-		"node_count":        0,
-		"note":              "Distributed chỉ áp dụng instance mới hoặc upgrade có xác nhận — không auto-migrate.",
+		"capable":          false,
+		"topology_default": "standalone",
+		"min_volumes":      minioDistributedReplicas,
+		"reasons":          []string{},
+		"longhorn_ready":   false,
+		"node_count":       0,
+		"note":             "Distributed: instance mới hoặc Upgrade HA có xác nhận — không auto-migrate object từ PVC standalone.",
 	}
 	reasons := []string{}
 	if h.rancher == nil || !h.rancher.Enabled() || !h.pluginEnabled(ctx, plugins.Rancher) {
@@ -198,13 +200,32 @@ func (h *Handler) minioHACapability(ctx context.Context) map[string]any {
 	if nodeCount < 2 {
 		reasons = append(reasons, fmt.Sprintf("Cần ≥2 node (hiện %d) để HA thực sự", nodeCount))
 	}
-	// Phase 1: chưa bật distributed dù đủ điều kiện — chỉ báo capable để UI hiện badge.
 	if longhorn && nodeCount >= 2 {
 		out["capable"] = true
-		reasons = append(reasons, "Cluster đủ điều kiện cơ bản — distributed provision sẽ mở ở phase sau")
+		reasons = append(reasons, "Đủ điều kiện — có thể tạo distributed hoặc Upgrade HA (có xác nhận)")
 	}
 	out["reasons"] = reasons
 	return out
+}
+
+func (h *Handler) minioHACapable(ctx context.Context) bool {
+	cap := h.minioHACapability(ctx)
+	c, _ := cap["capable"].(bool)
+	return c
+}
+
+func (h *Handler) setProjectAddonTopology(ctx context.Context, projectID int64, engine, env, topology string) {
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_data_addons SET topology=$1, updated_at=now()
+		WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+		normalizeMinioTopology(topology), projectID, engine, env)
+}
+
+func minioDistributedArgs(release, headless, ns string) []string {
+	// MinIO erasure: 4 drives qua StatefulSet + headless DNS.
+	peer := fmt.Sprintf("http://%s-{0...%d}.%s.%s.svc.cluster.local/data",
+		release, minioDistributedReplicas-1, headless, ns)
+	return []string{"server", peer, "--console-address", fmt.Sprintf(":%d", minioConsolePort)}
 }
 
 func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env string, addon *projectAddonView) (string, error) {
@@ -212,8 +233,14 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 		return "", fmt.Errorf("Rancher chưa sẵn sàng")
 	}
 	topology := normalizeMinioTopology(addon.Topology)
-	if topology == "distributed" {
-		return "", fmt.Errorf("topology distributed chưa hỗ trợ — dùng standalone (upgrade sau khi ha_capable)")
+	if topology == "distributed" && !h.minioHACapable(ctx) {
+		cap := h.minioHACapability(ctx)
+		reasons, _ := cap["reasons"].([]string)
+		msg := "topology distributed cần ha_capable (Longhorn + ≥2 node)"
+		if len(reasons) > 0 {
+			msg += ": " + strings.Join(reasons, "; ")
+		}
+		return "", fmt.Errorf("%s", msg)
 	}
 	ns := h.projectNamespace(p, env)
 	release := minioAddonRelease(p.Slug, env)
@@ -310,23 +337,71 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 		return "", fmt.Errorf("service minio: %w", err)
 	}
 
+	replicas := 1
+	serviceName := release
+	minioArgs := []string{"server", "/data", "--console-address", fmt.Sprintf(":%d", minioConsolePort)}
+	var pvcSpec map[string]any
+	pvcSpec = map[string]any{
+		"accessModes": []string{"ReadWriteOnce"},
+		"resources": map[string]any{
+			"requests": map[string]string{
+				"storage": fmt.Sprintf("%dGi", storageGB),
+			},
+		},
+	}
+	if topology == "distributed" {
+		replicas = minioDistributedReplicas
+		hlName := release + "-hl"
+		serviceName = hlName
+		minioArgs = minioDistributedArgs(release, hlName, ns)
+		pvcSpec["storageClassName"] = minioDistributedStorageSC
+		hl := map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Service",
+			"metadata": map[string]any{
+				"name": hlName,
+				"labels": map[string]string{
+					"app.kubernetes.io/name":     "minio",
+					"app.kubernetes.io/instance": release,
+					"platform/minio-role":        "headless",
+				},
+			},
+			"spec": map[string]any{
+				"clusterIP":                "None",
+				"publishNotReadyAddresses": true,
+				"ports": []map[string]any{
+					{"name": "api", "port": minioAPIPort, "targetPort": minioAPIPort},
+					{"name": "console", "port": minioConsolePort, "targetPort": minioConsolePort},
+				},
+				"selector": map[string]string{
+					"app.kubernetes.io/name":     "minio",
+					"app.kubernetes.io/instance": release,
+				},
+			},
+		}
+		hlJSON, _ := json.Marshal(hl)
+		if err := h.rancher.ApplyNamespacedObject(ctx, "", "/api/v1/services", ns, hlJSON); err != nil {
+			return "", fmt.Errorf("service minio headless: %w", err)
+		}
+	}
+
 	sts := map[string]any{
 		"apiVersion": "apps/v1",
 		"kind":       "StatefulSet",
 		"metadata": map[string]any{
 			"name": release,
 			"labels": map[string]string{
-				"app.kubernetes.io/name":       "minio",
-				"app.kubernetes.io/instance":   release,
-				"app.kubernetes.io/part-of":    p.Slug,
-				"platform/addon":               "minio",
-				"platform/environment":         env,
-				"platform/minio-topology":      topology,
+				"app.kubernetes.io/name":     "minio",
+				"app.kubernetes.io/instance": release,
+				"app.kubernetes.io/part-of":  p.Slug,
+				"platform/addon":             "minio",
+				"platform/environment":       env,
+				"platform/minio-topology":    topology,
 			},
 		},
 		"spec": map[string]any{
-			"serviceName": release,
-			"replicas":    1,
+			"serviceName": serviceName,
+			"replicas":    replicas,
 			"selector": map[string]any{
 				"matchLabels": map[string]string{
 					"app.kubernetes.io/name":     "minio",
@@ -346,7 +421,7 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 						{
 							"name":  "minio",
 							"image": minioAddonImage,
-							"args":  []string{"server", "/data", "--console-address", fmt.Sprintf(":%d", minioConsolePort)},
+							"args":  minioArgs,
 							"ports": []map[string]any{
 								{"name": "api", "containerPort": minioAPIPort},
 								{"name": "console", "containerPort": minioConsolePort},
@@ -380,13 +455,13 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 							},
 							"livenessProbe": map[string]any{
 								"httpGet":             map[string]any{"path": "/minio/health/live", "port": minioAPIPort},
-								"initialDelaySeconds": 20,
+								"initialDelaySeconds": 30,
 								"periodSeconds":       15,
 								"timeoutSeconds":      5,
 							},
 							"readinessProbe": map[string]any{
 								"httpGet":             map[string]any{"path": "/minio/health/ready", "port": minioAPIPort},
-								"initialDelaySeconds": 10,
+								"initialDelaySeconds": 15,
 								"periodSeconds":       5,
 								"timeoutSeconds":      3,
 							},
@@ -397,14 +472,7 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 			"volumeClaimTemplates": []map[string]any{
 				{
 					"metadata": map[string]any{"name": "data"},
-					"spec": map[string]any{
-						"accessModes": []string{"ReadWriteOnce"},
-						"resources": map[string]any{
-							"requests": map[string]string{
-								"storage": fmt.Sprintf("%dGi", storageGB),
-							},
-						},
-					},
+					"spec":     pvcSpec,
 				},
 			},
 		},
@@ -661,7 +729,13 @@ func (h *Handler) enrichMinioAddonAPIView(ctx context.Context, p projectRow, v p
 		out.HACapable = true
 	}
 	out.UpgradeAvailable = out.HACapable && out.Topology == "standalone"
-	out.TopologyNote = "MVP: standalone. Distributed mở khi ha_capable + upgrade có xác nhận."
+	if out.Topology == "distributed" {
+		out.TopologyNote = "Distributed (4 pods + Longhorn). Object không tự migrate từ standalone cũ."
+	} else if out.HACapable {
+		out.TopologyNote = "Standalone. Cluster đủ điều kiện HA — có thể Upgrade HA (xác nhận, không auto-migrate object)."
+	} else {
+		out.TopologyNote = "Standalone. Distributed khi ha_capable (Longhorn + ≥2 node) + upgrade có xác nhận."
+	}
 	if !v.HasConnection {
 		return out
 	}
@@ -733,7 +807,7 @@ func (h *Handler) minioAddonPromoteReadiness(ctx context.Context, p projectRow) 
 	}
 	if h.minioProdAddonReady(ctx, p.ID) {
 		item.OK = true
-		item.Detail = "MinIO prod running · ClusterIP (standalone)"
+		item.Detail = "MinIO prod running · ClusterIP"
 		return item
 	}
 	item.OK = false
@@ -758,8 +832,8 @@ func (h *Handler) promoteMinioAddonFromDev(ctx context.Context, p projectRow) er
 			mem = dev.MaxMemoryMB
 		}
 		topology = normalizeMinioTopology(dev.Topology)
-		if topology == "distributed" {
-			topology = "standalone" // prod MVP vẫn standalone cho đến phase HA
+		if topology == "distributed" && !h.minioHACapable(ctx) {
+			topology = "standalone"
 		}
 	}
 	release := minioAddonRelease(p.Slug, "prod")
@@ -828,4 +902,196 @@ func (h *Handler) GetMinioHACapability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, h.minioHACapability(r.Context()))
+}
+
+// UpgradeMinioAddonHA POST /projects/{slug}/addons/minio/upgrade-ha
+// standalone → distributed. Không auto-migrate object; cần confirm: true.
+func (h *Handler) UpgradeMinioAddonHA(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	p, ok := h.requireProjectAccess(w, r, slug)
+	if !ok {
+		return
+	}
+	u, _ := auth.UserFromContext(r.Context())
+	if !h.canManageProject(r.Context(), u, p.ID) {
+		writeAccessDenied(w)
+		return
+	}
+	var body struct {
+		Environment string `json:"environment"`
+		Confirm     bool   `json:"confirm"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	env := strings.TrimSpace(body.Environment)
+	if env == "" {
+		env = "dev"
+	}
+	if !validAddonEnv(env) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
+		return
+	}
+	if env == "prod" && !auth.CanWriteProd(u.Role) {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "Chỉ admin/tech_lead được upgrade MinIO prod"})
+		return
+	}
+	if !body.Confirm {
+		writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error": "Cần confirm: true — Upgrade HA không copy object từ PVC standalone",
+		})
+		return
+	}
+	if !h.minioHACapable(r.Context()) {
+		cap := h.minioHACapability(r.Context())
+		writeJSON(w, http.StatusBadRequest, map[string]any{
+			"error":         "Cluster chưa ha_capable",
+			"ha_capability": cap,
+		})
+		return
+	}
+	addon, err := h.getProjectAddon(r.Context(), p.ID, "minio", env)
+	if err != nil || addon == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "MinIO chưa được bật"})
+		return
+	}
+	if normalizeMinioTopology(addon.Topology) == "distributed" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "Đã là topology distributed"})
+		return
+	}
+	ns := h.projectNamespace(p, env)
+	release := addon.K8sRelease
+	if release == "" {
+		release = minioAddonRelease(p.Slug, env)
+	}
+	if _, ok := h.guardK8sWrite(w, r, ns); !ok {
+		return
+	}
+	// Xóa STS cũ (PVC standalone giữ orphan để cứu nếu cần). volumeClaimTemplates không đổi in-place.
+	_ = h.rancher.DeleteNamespacedObject(r.Context(), "", "/apis/apps/v1/statefulsets", ns, release)
+	h.setProjectAddonTopology(r.Context(), p.ID, "minio", env, "distributed")
+	addon.Topology = "distributed"
+	if err := h.provisionMinioAddon(r.Context(), p, "minio", env, addon); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{"error": "Upgrade HA thất bại: " + err.Error()})
+		return
+	}
+	fresh, _ := h.getProjectAddon(r.Context(), p.ID, "minio", env)
+	if fresh == nil {
+		fresh = addon
+	}
+	reconciled := h.reconcileMinioAddonStatus(r.Context(), p, fresh)
+	auditAction(r.Context(), h, r, "addon.minio.upgrade_ha", slug, map[string]any{
+		"environment": env, "by": u.Email,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ok",
+		"message": "Đã upgrade MinIO sang distributed — PVC standalone cũ không tự migrate",
+		"addon":   h.enrichMinioAddonAPIView(r.Context(), p, reconciled, true),
+	})
+}
+
+// RestartMinioAddon POST /projects/{slug}/addons/minio/restart
+func (h *Handler) RestartMinioAddon(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	p, ok := h.requireProjectAccess(w, r, slug)
+	if !ok {
+		return
+	}
+	u, _ := auth.UserFromContext(r.Context())
+	if !h.canManageProject(r.Context(), u, p.ID) {
+		writeAccessDenied(w)
+		return
+	}
+	if !h.rancherRequired(w, r) || !h.pluginEnabled(r.Context(), plugins.Rancher) {
+		return
+	}
+	var body struct {
+		Environment string `json:"environment"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	env := strings.TrimSpace(body.Environment)
+	if env == "" {
+		env = strings.TrimSpace(r.URL.Query().Get("environment"))
+	}
+	if env == "" {
+		env = "dev"
+	}
+	if !validAddonEnv(env) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
+		return
+	}
+	item, err := h.getProjectAddon(r.Context(), p.ID, "minio", env)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "MinIO chưa được bật"})
+		return
+	}
+	release := item.K8sRelease
+	if release == "" {
+		release = minioAddonRelease(p.Slug, env)
+	}
+	ns := h.projectNamespace(p, env)
+	if _, ok := h.guardK8sWrite(w, r, ns); !ok {
+		return
+	}
+	if err := h.rancher.RolloutRestartStatefulSet(r.Context(), clusterQuery(r), ns, release); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	auditAction(r.Context(), h, r, "addon.minio.restart", slug, map[string]any{
+		"environment": env, "release": release, "by": u.Email,
+	})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":  "ok",
+		"message": "Đang restart MinIO — pod mới sẽ lên trong vài giây",
+	})
+}
+
+// GetMinioAddonLogs GET /projects/{slug}/addons/minio/logs
+func (h *Handler) GetMinioAddonLogs(w http.ResponseWriter, r *http.Request) {
+	slug := chi.URLParam(r, "slug")
+	p, ok := h.requireProjectAccess(w, r, slug)
+	if !ok {
+		return
+	}
+	if !h.rancherRequired(w, r) {
+		return
+	}
+	env := strings.TrimSpace(r.URL.Query().Get("environment"))
+	if env == "" {
+		env = "dev"
+	}
+	if !validAddonEnv(env) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
+		return
+	}
+	item, err := h.getProjectAddon(r.Context(), p.ID, "minio", env)
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "MinIO chưa được bật"})
+		return
+	}
+	release := item.K8sRelease
+	if release == "" {
+		release = minioAddonRelease(p.Slug, env)
+	}
+	ns := h.projectNamespace(p, env)
+	if _, ok := h.guardK8sRead(w, r, "pods", ns); !ok {
+		return
+	}
+	pod := release + "-0"
+	if v := strings.TrimSpace(r.URL.Query().Get("pod")); v != "" {
+		pod = v
+	}
+	tail := 200
+	if v := strings.TrimSpace(r.URL.Query().Get("tail")); v != "" {
+		if n, err := parsePositiveInt(v); err == nil && n > 0 && n <= 2000 {
+			tail = n
+		}
+	}
+	logs, err := h.rancher.GetPodLogs(r.Context(), clusterQuery(r), ns, pod, "minio", tail)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"pod":  pod,
+		"logs": logs,
+	})
 }
