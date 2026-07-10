@@ -59,8 +59,10 @@ Custom domain (khách mang domain riêng): CNAME → `ingress.{DOMAIN}` hoặc A
 |--------------|-------|-----------|--------|---------|
 | `{slug}-redis-dev.{redis-zone}` | `research-labs-redis-dev.redis.7mlabs.com` | TCP :6379 | Portal (tương lai) / tay | Kết nối từ ngoài cluster |
 | Wildcard `*.redis.{DOMAIN}` | `*.redis.7mlabs.com` | TCP :6379 | Tay (wildcard A) | Trỏ về `NODE_PUBLIC_IP`; cần stream/LB phía sau |
+| `{slug}-minio-dev.{minio-zone}` | `test-harbor-minio-dev.minio.7mlabs.com` | HTTP NodePort S3/console | Portal | Dev local SDK / MinIO console |
+| Wildcard `*.minio.{DOMAIN}` | `*.minio.7mlabs.com` | HTTP NodePort | Tay (wildcard A, **DNS only**) | Trỏ về `NODE_PUBLIC_IP` |
 
-**Trong cluster:** Redis dùng `*.svc.cluster.local` — **không** ra internet.
+**Trong cluster:** Redis/MinIO dùng `*.svc.cluster.local` — **không** ra internet (prod).
 
 **Quy ước zone Redis (đề xuất):**
 
@@ -68,6 +70,14 @@ Custom domain (khách mang domain riêng): CNAME → `ingress.{DOMAIN}` hoặc A
 redis.{DOMAIN}          → zone (không bắt buộc record riêng)
 *.redis.{DOMAIN}        → A wildcard → NODE_PUBLIC_IP
 {project}-redis-{env}.redis.{DOMAIN}  → hostname cụ thể (portal sinh sau)
+```
+
+**Quy ước zone MinIO:**
+
+```
+minio.{DOMAIN}          → zone
+*.minio.{DOMAIN}        → A wildcard → NODE_PUBLIC_IP  [CF: DNS only]
+{project}-minio-dev.minio.{DOMAIN}  → hostname cụ thể (portal sinh)
 ```
 
 ---
@@ -84,6 +94,7 @@ Dùng khi zone đã add vào Cloudflare. Chi tiết API / template rule: [CLOUDF
 | `rancher.*`, `harbor.*`, `argocd.*` | A | **DNS only** (xám) hoặc Access | LE trên origin | Không public rộng |
 | `ingress.*` | A → `NODE_PUBLIC_IP` | **DNS only** | — | Chỉ làm CNAME target |
 | `*.redis.*` | A wildcard | **DNS only** (bắt buộc) | — | **Không** có WAF free cho TCP; whitelist IP / Spectrum |
+| `*.minio.*` | A wildcard | **DNS only** (bắt buộc) | — | NodePort HTTP; không proxy CF (port ≠ 80/443) |
 
 **Lưu ý Let's Encrypt:** Lần đầu cấp cert, record engine (`rancher`, `harbor`…) nên **DNS only** để HTTP-01 qua Ingress thành công. Sau khi cert ổn có thể bật proxy (trừ Redis TCP).
 

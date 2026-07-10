@@ -14,6 +14,10 @@ const (
 	ConventionAPIRoutePrefixKey = "API_ROUTE_PREFIX"
 	ConventionRedisURLKey       = "REDIS_URL"
 	ConventionRedisTTLKey       = "REDIS_KEY_TTL_SECONDS"
+	ConventionS3EndpointKey     = "S3_ENDPOINT"
+	ConventionS3AccessKey       = "S3_ACCESS_KEY"
+	ConventionS3SecretKey       = "S3_SECRET_KEY"
+	ConventionS3BucketKey       = "S3_BUCKET"
 )
 
 // DefaultMultiBuildContract — biến build gợi ý khi layout Backend + Frontend.
@@ -49,6 +53,22 @@ func DefaultMultiRuntimeContract() platformcontract.File {
 			ConventionRedisTTLKey: {
 				Required:    false,
 				Description: "TTL mặc định (giây) gợi ý khi app SET key — inject bởi Platform",
+			},
+			ConventionS3EndpointKey: {
+				Required:    false,
+				Description: "Inject bởi Platform khi bật MinIO addon — endpoint S3 trong cluster",
+			},
+			ConventionS3AccessKey: {
+				Required:    false,
+				Description: "Inject bởi Platform khi bật MinIO addon",
+			},
+			ConventionS3SecretKey: {
+				Required:    false,
+				Description: "Inject bởi Platform khi bật MinIO addon",
+			},
+			ConventionS3BucketKey: {
+				Required:    false,
+				Description: "Bucket mặc định (app) — inject bởi Platform",
 			},
 		},
 	}

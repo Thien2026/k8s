@@ -34,6 +34,7 @@ type Config struct {
 	PlatformDomain       string
 	ApexDomain           string
 	RedisZone            string
+	MinioZone            string
 	NodePublicIP         string
 	GitHubClientID       string
 	GitHubClientSecret   string
@@ -132,6 +133,7 @@ func Load() Config {
 		PlatformDomain:       firstNonEmpty(os.Getenv("PLATFORM_DOMAIN"), os.Getenv("DOMAIN")),
 		ApexDomain:           strings.TrimSpace(os.Getenv("DOMAIN")),
 		RedisZone:            strings.TrimSpace(os.Getenv("REDIS_ZONE")),
+		MinioZone:            strings.TrimSpace(os.Getenv("MINIO_ZONE")),
 		NodePublicIP:         os.Getenv("NODE_PUBLIC_IP"),
 		GitHubClientID:       os.Getenv("GITHUB_CLIENT_ID"),
 		GitHubClientSecret:   os.Getenv("GITHUB_CLIENT_SECRET"),

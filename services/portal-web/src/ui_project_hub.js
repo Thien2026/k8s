@@ -93,6 +93,10 @@ async function pageProjectHub(main, slug, tab, addon) {
       await loadProjectAddonRedis(main, slug, p);
       return;
     }
+    if (addon === "minio") {
+      await loadProjectAddonMinio(main, slug, p);
+      return;
+    }
     await loadProjectAddonsHub(main, slug, p);
     return;
   }

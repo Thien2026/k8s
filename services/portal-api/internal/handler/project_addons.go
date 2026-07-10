@@ -29,17 +29,19 @@ type addonCatalogItem struct {
 }
 
 type projectAddonView struct {
-	Engine            string `json:"engine"`
-	Environment       string `json:"environment"`
-	Status            string `json:"status"`
-	K8sRelease        string `json:"k8s_release,omitempty"`
-	MaxMemoryMB       int    `json:"max_memory_mb"`
-	MaxClients        int    `json:"max_clients"`
-	MaxmemoryPolicy   string `json:"maxmemory_policy"`
-	DefaultKeyTTLSec  int    `json:"default_key_ttl_sec"`
-	HasConnection     bool   `json:"has_connection"`
-	CreatedAt         string `json:"created_at,omitempty"`
-	UpdatedAt         string `json:"updated_at,omitempty"`
+	Engine           string `json:"engine"`
+	Environment      string `json:"environment"`
+	Status           string `json:"status"`
+	K8sRelease       string `json:"k8s_release,omitempty"`
+	MaxMemoryMB      int    `json:"max_memory_mb"`
+	MaxClients       int    `json:"max_clients"`
+	MaxmemoryPolicy  string `json:"maxmemory_policy"`
+	DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
+	Topology         string `json:"topology,omitempty"`
+	StorageGB        int    `json:"storage_gb,omitempty"`
+	HasConnection    bool   `json:"has_connection"`
+	CreatedAt        string `json:"created_at,omitempty"`
+	UpdatedAt        string `json:"updated_at,omitempty"`
 }
 
 type redisAddonAPIView struct {
@@ -70,6 +72,13 @@ var addonCatalog = []addonCatalogItem{
 		Available:   true,
 	},
 	{
+		Engine:      "minio",
+		Label:       "MinIO",
+		Description: "Object storage S3 — upload file/media, mỗi project một instance",
+		Icon:        "minio",
+		Available:   true,
+	},
+	{
 		Engine:      "postgres",
 		Label:       "Postgres",
 		Description: "Database qua CNPG — Phase 10b",
@@ -95,6 +104,7 @@ func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]pro
 	rows, err := h.db.Query(ctx, `
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
 		       maxmemory_policy, default_key_ttl_sec,
+		       COALESCE(topology, 'standalone'), COALESCE(storage_gb, 5),
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1
@@ -110,6 +120,7 @@ func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]pro
 		if err := rows.Scan(
 			&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
 			&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
+			&v.Topology, &v.StorageGB,
 			&v.HasConnection,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
@@ -125,12 +136,14 @@ func (h *Handler) getProjectAddon(ctx context.Context, projectID int64, engine, 
 	err := h.db.QueryRow(ctx, `
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
 		       maxmemory_policy, default_key_ttl_sec,
+		       COALESCE(topology, 'standalone'), COALESCE(storage_gb, 5),
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1 AND engine = $2 AND environment = $3`,
 		projectID, engine, env).Scan(
 		&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
 		&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
+		&v.Topology, &v.StorageGB,
 		&v.HasConnection, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
@@ -138,6 +151,9 @@ func (h *Handler) getProjectAddon(ctx context.Context, projectID int64, engine, 
 	}
 	if strings.TrimSpace(v.MaxmemoryPolicy) == "" {
 		v.MaxmemoryPolicy = "allkeys-lru"
+	}
+	if strings.TrimSpace(v.Topology) == "" {
+		v.Topology = "standalone"
 	}
 	return &v, nil
 }
@@ -627,16 +643,20 @@ func (h *Handler) ListProjectAddons(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for i := range items {
-		if items[i].Engine == "redis" {
+		switch items[i].Engine {
+		case "redis":
 			items[i] = h.reconcileRedisAddonStatus(r.Context(), p, &items[i])
+		case "minio":
+			items[i] = h.reconcileMinioAddonStatus(r.Context(), p, &items[i])
 		}
 	}
 	u, _ := auth.UserFromContext(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{
-		"catalog":    addonCatalog,
-		"items":      items,
-		"can_manage": h.canManageProject(r.Context(), u, p.ID),
-		"project":    map[string]string{"slug": p.Slug, "name": p.Name},
+		"catalog":       addonCatalog,
+		"items":         items,
+		"can_manage":    h.canManageProject(r.Context(), u, p.ID),
+		"project":       map[string]string{"slug": p.Slug, "name": p.Name},
+		"ha_capability": h.minioHACapability(r.Context()),
 	})
 }
 
@@ -667,13 +687,17 @@ func (h *Handler) GetProjectAddon(w http.ResponseWriter, r *http.Request) {
 	canManage := h.canManageProject(r.Context(), u, p.ID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, map[string]any{
+			resp := map[string]any{
 				"catalog":     catalogItem,
 				"installed":   false,
 				"can_manage":  canManage,
 				"environment": env,
 				"namespace":   h.projectNamespace(p, env),
-			})
+			}
+			if engine == "minio" {
+				resp["ha_capability"] = h.minioHACapability(r.Context())
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
@@ -686,20 +710,32 @@ func (h *Handler) GetProjectAddon(w http.ResponseWriter, r *http.Request) {
 			_ = h.provisionRedisAddon(r.Context(), p, engine, env, item)
 		}
 	}
+	if engine == "minio" && canManage {
+		needsProvision := !item.HasConnection && (item.Status == "pending" || item.Status == "provisioning" || item.Status == "failed")
+		if needsProvision {
+			_ = h.provisionMinioAddon(r.Context(), p, engine, env, item)
+		}
+	}
 
 	addonPayload := any(item)
+	resp := map[string]any{
+		"catalog":     catalogItem,
+		"installed":   true,
+		"can_manage":  canManage,
+		"environment": env,
+		"namespace":   h.projectNamespace(p, env),
+	}
 	if engine == "redis" {
 		reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
 		addonPayload = h.enrichRedisAddonAPIView(r.Context(), p, reconciled, canManage, "")
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"catalog":     catalogItem,
-		"installed":   true,
-		"addon":       addonPayload,
-		"can_manage":  canManage,
-		"environment": env,
-		"namespace":   h.projectNamespace(p, env),
-	})
+	if engine == "minio" {
+		reconciled := h.reconcileMinioAddonStatus(r.Context(), p, item)
+		addonPayload = h.enrichMinioAddonAPIView(r.Context(), p, reconciled, canManage)
+		resp["ha_capability"] = h.minioHACapability(r.Context())
+	}
+	resp["addon"] = addonPayload
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func addonByEngine(engine string) (addonCatalogItem, bool) {
@@ -735,6 +771,8 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		MaxClients       int    `json:"max_clients"`
 		MaxmemoryPolicy  string `json:"maxmemory_policy"`
 		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
+		StorageGB        int    `json:"storage_gb"`
+		Topology         string `json:"topology"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	env := strings.TrimSpace(body.Environment)
@@ -750,7 +788,11 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxMem := body.MaxMemoryMB
-	if maxMem < 64 || maxMem > 512 {
+	if engine == "minio" {
+		if maxMem < 128 || maxMem > 1024 {
+			maxMem = minioDefaultMemoryMB
+		}
+	} else if maxMem < 64 || maxMem > 512 {
 		maxMem = 128
 	}
 	maxClients := body.MaxClients
@@ -762,6 +804,15 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 	if defaultTTL == 0 && body.DefaultKeyTTLSec == 0 {
 		defaultTTL = 86400
 	}
+	topology := "standalone"
+	if engine == "minio" {
+		// Phase 1: luôn standalone — distributed chỉ khi upgrade sau.
+		topology = "standalone"
+	}
+	storageGB := normalizeMinioStorageGB(body.StorageGB)
+	if engine != "minio" {
+		storageGB = 5
+	}
 
 	ns := h.projectNamespace(p, env)
 	if ns == "" {
@@ -771,16 +822,18 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 
 	release := p.Slug + "-" + engine + "-" + env
 	_, err := h.db.Exec(r.Context(), `
-		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, maxmemory_policy, default_key_ttl_sec)
-		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8)
+		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, maxmemory_policy, default_key_ttl_sec, topology, storage_gb)
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (project_id, engine, environment) DO UPDATE SET
 			status = CASE WHEN project_data_addons.status IN ('stopped', 'failed') THEN 'pending' ELSE project_data_addons.status END,
 			max_memory_mb = EXCLUDED.max_memory_mb,
 			max_clients = EXCLUDED.max_clients,
 			maxmemory_policy = EXCLUDED.maxmemory_policy,
 			default_key_ttl_sec = EXCLUDED.default_key_ttl_sec,
+			topology = EXCLUDED.topology,
+			storage_gb = EXCLUDED.storage_gb,
 			updated_at = now()`,
-		p.ID, engine, env, release, maxMem, maxClients, policy, defaultTTL)
+		p.ID, engine, env, release, maxMem, maxClients, policy, defaultTTL, topology, storageGB)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -795,25 +848,40 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := h.provisionRedisAddon(r.Context(), p, engine, env, addon); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error":       "Provision Redis thất bại: " + err.Error(),
-			"status":      "failed",
-			"engine":      engine,
-			"environment": env,
-			"k8s_release": release,
+
+	switch engine {
+	case "redis":
+		if err := h.provisionRedisAddon(r.Context(), p, engine, env, addon); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Provision Redis thất bại: " + err.Error(), "status": "failed",
+				"engine": engine, "environment": env, "k8s_release": release,
+			})
+			return
+		}
+		reconciled := h.reconcileRedisAddonStatus(r.Context(), p, addon)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "running", "message": "Đã provision Redis, tạo REDIS_URL và sync vào app env",
+			"engine": engine, "environment": env, "k8s_release": release,
+			"addon": h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
 		})
-		return
+	case "minio":
+		if err := h.provisionMinioAddon(r.Context(), p, engine, env, addon); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Provision MinIO thất bại: " + err.Error(), "status": "failed",
+				"engine": engine, "environment": env, "k8s_release": release,
+			})
+			return
+		}
+		reconciled := h.reconcileMinioAddonStatus(r.Context(), p, addon)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "running", "message": "Đã provision MinIO standalone, tạo S3_* và sync vào app env",
+			"engine": engine, "environment": env, "k8s_release": release,
+			"addon":         h.enrichMinioAddonAPIView(r.Context(), p, reconciled, true),
+			"ha_capability": h.minioHACapability(r.Context()),
+		})
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "engine chưa hỗ trợ provision"})
 	}
-	reconciled := h.reconcileRedisAddonStatus(r.Context(), p, addon)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      "running",
-		"message":     "Đã provision Redis, tạo REDIS_URL và sync vào app env",
-		"engine":      engine,
-		"environment": env,
-		"k8s_release": release,
-		"addon":       h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
-	})
 }
 
 // ProvisionProjectAddon POST /projects/{slug}/addons/{engine}/provision
@@ -829,8 +897,8 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		writeAccessDenied(w)
 		return
 	}
-	if engine != "redis" || !validAddonEngine(engine) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "re-provision chỉ hỗ trợ Redis"})
+	if (engine != "redis" && engine != "minio") || !validAddonEngine(engine) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "re-provision chỉ hỗ trợ Redis hoặc MinIO"})
 		return
 	}
 
@@ -840,6 +908,7 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		MaxClients       int    `json:"max_clients"`
 		MaxmemoryPolicy  string `json:"maxmemory_policy"`
 		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
+		StorageGB        int    `json:"storage_gb"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	env := strings.TrimSpace(body.Environment)
@@ -861,57 +930,88 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 	item, err := h.getProjectAddon(r.Context(), p.ID, engine, env)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "addon chưa được bật — dùng POST /addons/redis trước"})
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "addon chưa được bật — dùng POST /addons/" + engine + " trước"})
 			return
 		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if body.MaxMemoryMB >= 64 && body.MaxMemoryMB <= 512 {
-		item.MaxMemoryMB = body.MaxMemoryMB
-		_, _ = h.db.Exec(r.Context(), `
-			UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
-			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
-			item.MaxMemoryMB, p.ID, engine, env)
+	if engine == "redis" {
+		if body.MaxMemoryMB >= 64 && body.MaxMemoryMB <= 512 {
+			item.MaxMemoryMB = body.MaxMemoryMB
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.MaxMemoryMB, p.ID, engine, env)
+		}
+		if body.MaxClients >= 10 && body.MaxClients <= 1000 {
+			item.MaxClients = body.MaxClients
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET max_clients=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.MaxClients, p.ID, engine, env)
+		}
+		if strings.TrimSpace(body.MaxmemoryPolicy) != "" {
+			item.MaxmemoryPolicy = normalizeRedisMaxmemoryPolicy(body.MaxmemoryPolicy)
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET maxmemory_policy=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.MaxmemoryPolicy, p.ID, engine, env)
+		}
+		if body.DefaultKeyTTLSec >= 0 && body.DefaultKeyTTLSec <= 2592000 {
+			item.DefaultKeyTTLSec = normalizeRedisDefaultKeyTTL(body.DefaultKeyTTLSec)
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET default_key_ttl_sec=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.DefaultKeyTTLSec, p.ID, engine, env)
+		}
 	}
-	if body.MaxClients >= 10 && body.MaxClients <= 1000 {
-		item.MaxClients = body.MaxClients
-		_, _ = h.db.Exec(r.Context(), `
-			UPDATE project_data_addons SET max_clients=$1, updated_at=now()
-			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
-			item.MaxClients, p.ID, engine, env)
-	}
-	if strings.TrimSpace(body.MaxmemoryPolicy) != "" {
-		item.MaxmemoryPolicy = normalizeRedisMaxmemoryPolicy(body.MaxmemoryPolicy)
-		_, _ = h.db.Exec(r.Context(), `
-			UPDATE project_data_addons SET maxmemory_policy=$1, updated_at=now()
-			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
-			item.MaxmemoryPolicy, p.ID, engine, env)
-	}
-	if body.DefaultKeyTTLSec >= 0 && body.DefaultKeyTTLSec <= 2592000 {
-		item.DefaultKeyTTLSec = normalizeRedisDefaultKeyTTL(body.DefaultKeyTTLSec)
-		_, _ = h.db.Exec(r.Context(), `
-			UPDATE project_data_addons SET default_key_ttl_sec=$1, updated_at=now()
-			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
-			item.DefaultKeyTTLSec, p.ID, engine, env)
+	if engine == "minio" {
+		if body.MaxMemoryMB >= 128 && body.MaxMemoryMB <= 1024 {
+			item.MaxMemoryMB = body.MaxMemoryMB
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.MaxMemoryMB, p.ID, engine, env)
+		}
+		if body.StorageGB >= 1 && body.StorageGB <= 100 {
+			item.StorageGB = normalizeMinioStorageGB(body.StorageGB)
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET storage_gb=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.StorageGB, p.ID, engine, env)
+		}
 	}
 
 	auditAction(r.Context(), h, r, "addon.provision", slug, map[string]any{
 		"engine": engine, "environment": env, "by": u.Email,
 	})
 
-	if err := h.provisionRedisAddon(r.Context(), p, engine, env, item); err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]any{
-			"error":  "Re-provision Redis thất bại: " + err.Error(),
-			"status": "failed",
+	if engine == "redis" {
+		if err := h.provisionRedisAddon(r.Context(), p, engine, env, item); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Re-provision Redis thất bại: " + err.Error(), "status": "failed",
+			})
+			return
+		}
+		reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "running", "message": "Đã re-provision Redis — REDIS_URL mới đã sync vào app env",
+			"environment": env, "addon": h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
 		})
 		return
 	}
-	reconciled := h.reconcileRedisAddonStatus(r.Context(), p, item)
+
+	if err := h.provisionMinioAddon(r.Context(), p, engine, env, item); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]any{
+			"error": "Re-provision MinIO thất bại: " + err.Error(), "status": "failed",
+		})
+		return
+	}
+	reconciled := h.reconcileMinioAddonStatus(r.Context(), p, item)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":      "running",
-		"message":     "Đã re-provision Redis — REDIS_URL mới đã sync vào app env",
-		"environment": env,
-		"addon":       h.enrichRedisAddonAPIView(r.Context(), p, reconciled, true, ""),
+		"status": "running", "message": "Đã re-provision MinIO — S3_* mới đã sync vào app env",
+		"environment": env, "addon": h.enrichMinioAddonAPIView(r.Context(), p, reconciled, true),
+		"ha_capability": h.minioHACapability(r.Context()),
 	})
 }

@@ -18,7 +18,33 @@
   --ok: #34d399;
   --warn: #fbbf24;
   --bad: #f87171;
+  --link: #67e8f9;
+  --link-hover: #a5f3fc;
   --radius: 16px;
+}
+
+.main a,
+.card a,
+.pipe-link,
+.addon-redis-app-probe a {
+  color: var(--link);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(103, 232, 249, 0.35);
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.main a:hover,
+.card a:hover,
+.pipe-link:hover,
+.addon-redis-app-probe a:hover {
+  color: var(--link-hover);
+  border-bottom-color: rgba(165, 243, 252, 0.7);
+}
+
+.main a code,
+.card a code,
+.addon-redis-app-probe a code {
+  color: inherit;
 }
 
 body {
@@ -804,6 +830,18 @@ body {
   font-size: 12px;
   display: inline-block;
   margin-top: 4px;
+}
+
+/* Nav / brand links giữ style riêng — không dùng underline content-link */
+.sidebar a,
+.nav-link,
+.nav-back,
+.res-link,
+.btn-primary,
+.btn-ghost,
+.btn-danger,
+.btn-logout {
+  border-bottom: none !important;
 }
 
 .live-dot {

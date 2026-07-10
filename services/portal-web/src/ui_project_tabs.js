@@ -859,6 +859,7 @@ function addonStatusBadge(status) {
 
 function addonIcon(engine) {
   if (engine === "redis") return "⚡";
+  if (engine === "minio") return "📦";
   if (engine === "postgres") return "🐘";
   return "🧩";
 }
@@ -1127,9 +1128,21 @@ async function loadProjectAddonsHub(main, slug, p) {
         if (!(await uiConfirm("Thêm " + engine + " cho môi trường " + env.toUpperCase() + "?", { title: "Thêm addon" }))) return;
         btn.disabled = true;
         try {
-          const res = await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/" + encodeURIComponent(engine), {
-            method: "POST",
-            body: { environment: env, max_memory_mb: 128, max_clients: 100 },
+          const body = { environment: env, max_memory_mb: 128, max_clients: 100 };
+          if (engine === "minio") {
+            body.max_memory_mb = 256;
+            body.storage_gb = 5;
+            body.topology = "standalone";
+          }
+          const res = await withAppLoading(function () {
+            return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/" + encodeURIComponent(engine), {
+              method: "POST",
+              body: body,
+              timeout: 300000,
+            });
+          }, {
+            title: "Đang thêm " + engine + "…",
+            detail: "Provision trên cluster — có thể mất 1–2 phút",
           });
           toastSuccess(res.message || "Đã thêm addon");
           location.hash = projectAddonsRoute(slug, engine);
@@ -1142,6 +1155,199 @@ async function loadProjectAddonsHub(main, slug, p) {
     });
   } catch (err) {
     const root = document.getElementById("addons-hub-root");
+    if (root) root.innerHTML = '<p class="error-text">' + esc(err.message) + "</p>";
+  }
+}
+
+async function loadProjectAddonMinio(main, slug, p) {
+  const env = state.projectEnv || "dev";
+  main.innerHTML =
+    projectHeader(p, "MinIO · addon") +
+    projectEnvToolbar(slug, p, function () {
+      pageProjectHub(main, slug, "addons", "minio");
+    }) +
+    '<div id="addon-minio-root" class="card"><p class="loading">Đang tải MinIO…</p></div>';
+  try {
+    const data = await api(
+      "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio" + projectQs({ environment: env })
+    );
+    const root = document.getElementById("addon-minio-root");
+    if (!root) return;
+    const ha = data.ha_capability || {};
+    const haBadge = ha.capable
+      ? '<span class="badge ok">HA capable</span>'
+      : '<span class="badge muted">standalone</span>';
+    if (!data.installed) {
+      root.innerHTML =
+        "<h3>MinIO · " + esc(env.toUpperCase()) + "</h3>" +
+        '<p class="muted">Object storage S3-compatible — mỗi env một instance riêng.</p>' +
+        '<p class="muted">Topology mặc định: <strong>standalone</strong> · ' + haBadge + "</p>" +
+        (Array.isArray(ha.reasons) && ha.reasons.length
+          ? '<ul class="muted" style="margin:8px 0 12px 18px">' +
+            ha.reasons.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") +
+            "</ul>"
+          : "") +
+        (data.can_manage
+          ? '<button type="button" class="btn-primary" id="addon-minio-enable">+ Bật MinIO</button> ' +
+            '<a class="btn-ghost" href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a>'
+          : '<p class="muted">Chỉ owner/admin được bật addon.</p>');
+      const enableBtn = document.getElementById("addon-minio-enable");
+      if (enableBtn) {
+        enableBtn.onclick = async function () {
+          try {
+            await withAppLoading(function () {
+              return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio", {
+                method: "POST",
+                body: { environment: env, max_memory_mb: 256, storage_gb: 5, topology: "standalone" },
+                timeout: 300000,
+              });
+            }, { title: "Đang provision MinIO…", detail: "StatefulSet + bucket app + inject S3_*" });
+            toastSuccess("Đã bật MinIO");
+            await loadProjectAddonMinio(main, slug, p);
+          } catch (err) {
+            toastError(err.message || "Lỗi");
+          }
+        };
+      }
+      return;
+    }
+    const addon = data.addon || {};
+    const canManage = !!data.can_manage;
+    const reasons = (addon.ha_capability && addon.ha_capability.reasons) || ha.reasons || [];
+    root.innerHTML =
+      '<p class="muted">MinIO · <strong>' + esc(env.toUpperCase()) + "</strong> · <code>" +
+      esc(data.namespace || "") + "</code></p>" +
+      "<p>Trạng thái: " + addonStatusBadge(addon.status) +
+      " · Topology: <code>" + esc(addon.topology || "standalone") + "</code> · " + haBadge + "</p>" +
+      '<p class="muted">Release: <code>' + esc(addon.k8s_release || "—") + "</code> · Storage: <code>" +
+      esc(String(addon.storage_gb || 5)) + "Gi</code> · RAM limit: <code>" +
+      esc(String(addon.max_memory_mb || 256)) + "Mi</code></p>" +
+      (addon.topology_note ? '<p class="muted">' + esc(addon.topology_note) + "</p>" : "") +
+      (reasons.length
+        ? '<details class="deploy-raw-details"><summary class="muted">Điều kiện HA / distributed</summary><ul class="muted">' +
+          reasons.map(function (r) { return "<li>" + esc(r) + "</li>"; }).join("") +
+          "</ul></details>"
+        : "") +
+      (addon.has_connection
+        ? '<div class="addon-connection-box" style="margin-top:14px">' +
+          '<p class="muted">S3 endpoint · trong cluster</p>' +
+          '<code class="addon-connection-url">' + esc(addon.endpoint_masked || addon.endpoint || "—") + "</code>" +
+          (addon.endpoint_external_masked
+            ? '<p class="muted" style="margin-top:12px">S3 endpoint · local (NodePort + DNS <code>*.minio.{domain}</code>)</p>' +
+              '<div class="addon-connection-row">' +
+              '<code class="addon-connection-url">' + esc(addon.endpoint_external_masked) + "</code>" +
+              (canManage && addon.endpoint_external
+                ? ' <button type="button" class="btn-ghost btn-sm" id="addon-minio-copy-ext">Copy</button>'
+                : "") +
+              "</div>" +
+              (addon.console_url_external
+                ? '<p class="muted" style="margin-top:8px">Console: <a href="' + esc(addon.console_url_external) +
+                  '" target="_blank" rel="noopener"><code>' + esc(addon.console_url_external) + "</code></a></p>"
+                : "") +
+              (addon.external_hostname
+                ? '<p class="muted" style="font-size:12px">Host <code>' + esc(addon.external_hostname) +
+                  "</code> · API :" + esc(String(addon.external_api_port || "")) +
+                  " · Console :" + esc(String(addon.external_console_port || "")) +
+                  " · Cloudflare DNS only</p>"
+                : "")
+            : "") +
+          '<p class="muted" style="margin-top:10px">Bucket · Access key</p>' +
+          "<p><code>" + esc(addon.bucket || "app") + "</code> · <code>" +
+          esc(addon.access_key_masked || "••••") + "</code></p>" +
+          '<p class="muted" style="margin-top:8px">Env inject (cluster): <code>S3_ENDPOINT</code> <code>S3_ACCESS_KEY</code> <code>S3_SECRET_KEY</code> <code>S3_BUCKET</code></p>' +
+          (canManage && addon.endpoint
+            ? '<button type="button" class="btn-ghost btn-sm" id="addon-minio-copy-endpoint">Copy cluster endpoint</button> ' +
+              (addon.endpoint_external
+                ? '<button type="button" class="btn-ghost btn-sm" id="addon-minio-copy-ext-json">Copy external JSON</button> '
+                : "") +
+              '<button type="button" class="btn-ghost btn-sm" id="addon-minio-copy-keys">Copy keys JSON</button>'
+            : "") +
+          "</div>"
+        : '<p class="muted">Chưa có connection — bấm Re-provision.</p>') +
+      (canManage
+        ? '<div style="margin-top:16px">' +
+          '<button type="button" class="btn-ghost" id="addon-minio-reprovision">Re-provision</button> ' +
+          (addon.upgrade_available
+            ? '<button type="button" class="btn-ghost" disabled title="Phase sau">Upgrade HA (sắp có)</button> '
+            : "") +
+          '<a class="btn-ghost" href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a></div>'
+        : '<p style="margin-top:12px"><a href="' + esc(projectAddonsRoute(slug)) + '">← Catalog</a></p>');
+
+    function minioS3EnvPayload(endpoint) {
+      return JSON.stringify(
+        {
+          S3_ENDPOINT: endpoint || addon.endpoint,
+          S3_ENDPOINT_CLUSTER: addon.endpoint,
+          S3_ACCESS_KEY: addon.access_key,
+          S3_SECRET_KEY: addon.secret_key,
+          S3_BUCKET: addon.bucket || "app",
+          S3_REGION: "us-east-1",
+          S3_USE_SSL: "false",
+          S3_FORCE_PATH_STYLE: "true",
+        },
+        null,
+        2
+      );
+    }
+    const copyEp = document.getElementById("addon-minio-copy-endpoint");
+    if (copyEp && addon.endpoint) {
+      copyEp.onclick = function () {
+        navigator.clipboard.writeText(addon.endpoint).then(function () {
+          toastSuccess("Đã copy cluster endpoint");
+        });
+      };
+    }
+    const copyExt = document.getElementById("addon-minio-copy-ext");
+    if (copyExt && addon.endpoint_external) {
+      copyExt.onclick = function () {
+        navigator.clipboard.writeText(addon.endpoint_external).then(function () {
+          toastSuccess("Đã copy external endpoint");
+        });
+      };
+    }
+    const copyExtJson = document.getElementById("addon-minio-copy-ext-json");
+    if (copyExtJson && addon.access_key && addon.endpoint_external) {
+      copyExtJson.onclick = function () {
+        navigator.clipboard.writeText(minioS3EnvPayload(addon.endpoint_external)).then(function () {
+          toastSuccess("Đã copy external S3 JSON");
+        });
+      };
+    }
+    const copyKeys = document.getElementById("addon-minio-copy-keys");
+    if (copyKeys && addon.access_key) {
+      copyKeys.onclick = function () {
+        navigator.clipboard.writeText(minioS3EnvPayload(addon.endpoint)).then(function () {
+          toastSuccess("Đã copy S3 credentials (cluster)");
+        });
+      };
+    }
+    const repro = document.getElementById("addon-minio-reprovision");
+    if (repro) {
+      repro.onclick = async function () {
+        const ok = await uiConfirm({
+          title: "Re-provision MinIO?",
+          message: "Tạo lại credentials và sync S3_* vào app-env. PVC data giữ nguyên nếu volumeClaim còn.",
+          confirmText: "Re-provision",
+          danger: true,
+        });
+        if (!ok) return;
+        try {
+          await withAppLoading(function () {
+            return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/provision", {
+              method: "POST",
+              body: { environment: env, storage_gb: addon.storage_gb || 5, max_memory_mb: addon.max_memory_mb || 256 },
+              timeout: 300000,
+            });
+          }, { title: "Đang re-provision MinIO…", detail: "Cập nhật secret + env" });
+          toastSuccess("Đã re-provision MinIO");
+          await loadProjectAddonMinio(main, slug, p);
+        } catch (err) {
+          toastError(err.message || "Lỗi");
+        }
+      };
+    }
+  } catch (err) {
+    const root = document.getElementById("addon-minio-root");
     if (root) root.innerHTML = '<p class="error-text">' + esc(err.message) + "</p>";
   }
 }

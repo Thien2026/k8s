@@ -23,7 +23,11 @@ function renderPromotePrepItem(it, slug) {
       ? ' <button type="button" class="btn-ghost btn-sm promote-redis-prod-btn" data-slug="' +
         esc(slug) +
         '">Provision Redis prod</button>'
-      : "";
+      : it.id === "minio_prod" && !it.ok && !isWarn
+        ? ' <button type="button" class="btn-ghost btn-sm promote-minio-prod-btn" data-slug="' +
+          esc(slug) +
+          '">Provision MinIO prod</button>'
+        : "";
   return (
     '<li class="promote-prep-item ' + cls + '">' +
     '<span class="promote-prep-icon">' + icon + "</span>" +
@@ -118,6 +122,31 @@ function bindPromotePrepLinks(slug) {
         }
       } catch (err) {
         toastError(err.message || "Provision Redis prod thất bại");
+        btn.disabled = false;
+      }
+    };
+  });
+  document.querySelectorAll(".promote-minio-prod-btn").forEach(function (btn) {
+    btn.onclick = async function () {
+      const s = btn.dataset.slug;
+      if (!s) return;
+      btn.disabled = true;
+      try {
+        const res = await withAppLoading(function () {
+          return api("/api/v1/projects/" + encodeURIComponent(s) + "/addons/minio/promote-prod", {
+            method: "POST",
+            body: {},
+            timeout: 300000,
+          });
+        }, { title: "Đang provision MinIO prod…", detail: "Tạo instance S3 riêng cho prod" });
+        toastSuccess(res.message || "Đã provision MinIO prod");
+        const main = document.getElementById("main-content");
+        const p = state.currentProject;
+        if (main && p && state.projectTab === "promote") {
+          await loadProjectPromote(main, s, p);
+        }
+      } catch (err) {
+        toastError(err.message || "Provision MinIO prod thất bại");
         btn.disabled = false;
       }
     };

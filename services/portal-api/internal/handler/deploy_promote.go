@@ -64,6 +64,14 @@ func (h *Handler) PromoteProjectDeploy(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if h.minioDevAddonReady(r.Context(), p.ID) && !h.minioProdAddonReady(r.Context(), p.ID) {
+		if err := h.promoteMinioAddonFromDev(r.Context(), p); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Không provision được MinIO prod: " + err.Error(),
+			})
+			return
+		}
+	}
 	if !h.ensurePromoteReady(w, r, p) {
 		return
 	}
@@ -303,6 +311,10 @@ func (h *Handler) promoteReadiness(ctx context.Context, p projectRow) ([]promote
 	redisItem := h.redisAddonPromoteReadiness(ctx, p)
 	markRequired(&redisItem)
 	items = append(items, redisItem)
+
+	minioItem := h.minioAddonPromoteReadiness(ctx, p)
+	markRequired(&minioItem)
+	items = append(items, minioItem)
 
 	h.enrichProjectRegistry(ctx, &p)
 	if strings.EqualFold(strings.TrimSpace(p.RegistryProvider), "harbor") && h.harbor != nil && h.harbor.Enabled() {

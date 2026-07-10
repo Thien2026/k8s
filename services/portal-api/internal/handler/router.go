@@ -104,6 +104,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Get("/projects/{slug}/addons/redis/stats", h.GetRedisAddonStats)
 		r.Get("/projects/{slug}/addons/redis/keys", h.GetRedisAddonKeys)
 		r.Post("/projects/{slug}/addons/redis/play", h.RedisAddonPlay)
+		r.Post("/projects/{slug}/addons/minio/promote-prod", h.PromoteMinioAddon)
+		r.Get("/projects/{slug}/addons/minio/ha-capability", h.GetMinioHACapability)
 		r.Get("/projects/{slug}/addons/{engine}", h.GetProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}", h.CreateProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}/provision", h.ProvisionProjectAddon)
