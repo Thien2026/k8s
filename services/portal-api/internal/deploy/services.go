@@ -201,11 +201,16 @@ func (p Params) imageRefFor(svc ServiceDef) string {
 	if tag == "" {
 		tag = "latest"
 	}
+	return p.ImageRepositoryFor(svc) + ":" + tag
+}
+
+// ImageRepositoryFor trả về image repo không có tag — dùng cho Kustomize images.name.
+func (p Params) ImageRepositoryFor(svc ServiceDef) string {
 	prefix := strings.TrimSpace(p.Registry.ImagePrefix)
 	if prefix == "" {
 		prefix = "YOUR_REGISTRY/" + p.ProjectSlug
 	}
-	return prefix + "/" + svc.Name + ":" + tag
+	return prefix + "/" + svc.Name
 }
 
 // PrimaryService — workload dùng smoke test runtime (web nếu có, không thì service cuối).

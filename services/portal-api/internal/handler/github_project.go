@@ -74,12 +74,26 @@ func (h *Handler) DeployHook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
-	result, err := h.applyProjectDeploy(r.Context(), p, env, tag, body.ClusterID, true, false)
-	if err != nil {
-		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusAccepted, result)
+
+	pSlug := p.Slug
+	clusterID := body.ClusterID
+	deployCtx := context.WithoutCancel(r.Context())
+	go func() {
+		result, err := h.applyProjectDeploy(deployCtx, p, env, tag, clusterID, true, false)
+		if err != nil {
+			log.Printf("deploy hook async project=%s env=%s tag=%s: %v", pSlug, env, tag, err)
+			return
+		}
+		_ = result
+	}()
+
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"status":      "accepted",
+		"message":     "Deploy đã nhận — đang đồng bộ GitOps và cluster",
+		"image_tag":   tag,
+		"environment": env,
+		"project":     p.Slug,
+	})
 }
 
 func (h *Handler) ProjectGitHubSetup(w http.ResponseWriter, r *http.Request) {

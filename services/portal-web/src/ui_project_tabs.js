@@ -204,6 +204,483 @@ async function loadProjectRuntimePage(main, slug, p) {
   }
 }
 
+function renderAddonRedisMonitor() {
+  return (
+    '<div class="addon-redis-monitor">' +
+    '<p class="muted">Số liệu từ Redis INFO + redis_exporter (Prometheus) nếu đã re-provision.</p>' +
+    '<div class="addon-redis-monitor-actions">' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-stats-refresh">Làm mới</button>' +
+    '<div class="monitor-segmented addon-redis-window-segment" id="addon-redis-window-segment">' +
+    '<button type="button" class="seg-btn" data-win="15m">15m</button>' +
+    '<button type="button" class="seg-btn" data-win="1h">1h</button>' +
+    '<button type="button" class="seg-btn active" data-win="6h">6h</button>' +
+    '<button type="button" class="seg-btn" data-win="24h">24h</button>' +
+    "</div>" +
+    '<a class="btn-ghost btn-sm hidden" id="addon-redis-grafana-link" href="#" target="_blank" rel="noopener">Mở Grafana</a>' +
+    '<span class="muted addon-redis-stats-ts" id="addon-redis-stats-ts"></span>' +
+    "</div>" +
+    '<div class="addon-redis-stats-grid" id="addon-redis-stats-grid">' +
+    '<p class="muted">Đang tải metrics…</p>' +
+    "</div>" +
+    '<div class="addon-redis-sparklines hidden" id="addon-redis-sparklines"></div>' +
+    '<div class="addon-redis-policy-box hidden" id="addon-redis-policy-box"></div>' +
+    '<details class="deploy-raw-details addon-redis-slowlog-wrap hidden" id="addon-redis-slowlog-wrap">' +
+    '<summary class="muted">Slow log (15 mới nhất)</summary>' +
+    '<pre class="addon-redis-slowlog" id="addon-redis-slowlog"></pre></details>' +
+    '<details class="deploy-raw-details addon-redis-stats-raw-wrap"><summary class="muted">JSON thô (debug)</summary>' +
+    '<pre class="addon-redis-stats-raw" id="addon-redis-stats-raw"></pre></details>' +
+    "</div>"
+  );
+}
+
+function renderAddonRedisKeys(canManage) {
+  return (
+    '<div class="addon-redis-keys">' +
+    '<p class="muted">Duyệt key bằng SCAN. Bấm một hàng để chọn — double-click xem full value (string).</p>' +
+    '<div class="addon-redis-keys-warn hidden" id="addon-redis-keys-warn"></div>' +
+    '<div class="addon-redis-keys-toolbar">' +
+    '<label>Pattern <input type="text" id="addon-redis-keys-pattern" placeholder="*" value="console:*"></label>' +
+    '<button type="button" class="btn-ghost btn-sm" id="addon-redis-keys-filter-console">console:*</button>' +
+    '<button type="button" class="btn-primary btn-sm" id="addon-redis-keys-scan">Quét</button>' +
+    (canManage
+      ? ' <button type="button" class="btn-ghost btn-sm" id="addon-redis-keys-del-selected" disabled>Xóa key đã chọn</button>'
+      : "") +
+    "</div>" +
+    '<div class="addon-redis-keys-table-wrap">' +
+    '<table class="addon-redis-keys-table" id="addon-redis-keys-table">' +
+    "<thead><tr><th>Key</th><th>Type</th><th>TTL</th><th>Preview</th></tr></thead>" +
+    '<tbody id="addon-redis-keys-body"><tr><td colspan="4" class="muted">Bấm Quét để xem key đang lưu…</td></tr></tbody>' +
+    "</table></div>" +
+    '<pre class="addon-redis-key-full hidden" id="addon-redis-key-full"></pre>' +
+    '<div class="addon-redis-keys-footer">' +
+    '<span class="muted" id="addon-redis-keys-meta"></span> ' +
+    '<button type="button" class="btn-ghost btn-sm hidden" id="addon-redis-keys-more">Tải thêm</button>' +
+    "</div></div>"
+  );
+}
+
+function redisSeriesPoints(series, divisor) {
+  if (!Array.isArray(series)) return [];
+  return series
+    .map(function (p) {
+      if (!p) return null;
+      const t = Number(p.t) || 0;
+      let v = Number(p.v) || 0;
+      if (divisor) v = v / divisor;
+      return [t, v];
+    })
+    .filter(Boolean);
+}
+
+function redisWindowTickCount(windowKey) {
+  if (windowKey === "15m") return 8;
+  if (windowKey === "1h") return 7;
+  if (windowKey === "24h") return 9;
+  return 7;
+}
+
+function redisFormatXAxis(tsSec, windowKey) {
+  const d = new Date((Number(tsSec) || 0) * 1000);
+  if (isNaN(d.getTime())) return "--:--";
+  if (windowKey === "24h") {
+    return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  }
+  return d.toLocaleTimeString("vi-VN", { minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function redisFormatTooltipTime(tsSec, windowKey) {
+  const d = new Date((Number(tsSec) || 0) * 1000);
+  if (isNaN(d.getTime())) return "--:--";
+  if (windowKey === "24h") {
+    return d.toLocaleString("vi-VN", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+  return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function renderAddonRedisSparkline(title, series, opts) {
+  opts = opts || {};
+  const points = redisSeriesPoints(series, opts.divisor || 0);
+  if (!points.length) return "";
+  const unit = opts.unit || "";
+  const digits = opts.digits == null ? 2 : opts.digits;
+  const windowKey = opts.window || "6h";
+  const stats = timelineStats(points);
+  return (
+    '<div class="addon-redis-sparkline">' +
+    '<div class="addon-redis-spark-head"><strong>' + esc(title) + "</strong>" +
+    '<span class="muted">now ' + esc(Number(stats.current).toFixed(digits) + (unit ? " " + unit : "")) + "</span></div>" +
+    lineChart(points, {
+      color: opts.color || "#76a9fa",
+      unit: unit,
+      digits: digits,
+      xTickCount: redisWindowTickCount(windowKey),
+      xLabelFormatter: function (ts) { return redisFormatXAxis(ts, windowKey); },
+      tooltipTimeFormatter: function (ts) { return redisFormatTooltipTime(ts, windowKey); },
+    }) +
+    '<p class="muted addon-redis-spark-meta">avg ' +
+    esc(Number(stats.avg).toFixed(digits) + (unit ? " " + unit : "")) +
+    " · peak " +
+    esc(Number(stats.max).toFixed(digits) + (unit ? " " + unit : "")) +
+    " @ " +
+    esc(fmtClockFromUnix(stats.maxTs)) +
+    "</p></div>"
+  );
+}
+
+function renderAddonRedisStatsGrid(data) {
+  if (!data || !data.ok) {
+    return '<p class="error-text">' + esc((data && data.error) || "Không tải được stats") + "</p>";
+  }
+  const mem = data.memory || {};
+  const ops = data.ops || {};
+  const clients = data.clients || {};
+  const keys = data.keys || {};
+  const k8s = data.k8s || {};
+  let k8sHtml = "";
+  if (k8s.available) {
+    k8sHtml =
+      '<div class="addon-redis-stat"><span class="muted">Pod CPU</span><strong>' +
+      esc(String(k8s.cpu_cores != null ? k8s.cpu_cores : "—")) +
+      ' core</strong></div>' +
+      '<div class="addon-redis-stat"><span class="muted">Pod RAM</span><strong>' +
+      esc(String(k8s.memory_mib != null ? k8s.memory_mib : "—")) +
+      " MiB</strong></div>";
+  }
+  const usedPct = mem.used_pct != null && mem.used_pct > 0 ? mem.used_pct + "%" : "—";
+  const policy = data.policy || {};
+  let policyHtml = "";
+  if (policy.configured) {
+    policyHtml =
+      '<div class="addon-redis-stat addon-redis-stat-wide"><span class="muted">Eviction</span><strong>' +
+      esc(policy.active || policy.configured) +
+      "</strong><span class=\"muted addon-redis-stat-sub\">" +
+      esc(policy.hint || "") +
+      (policy.default_ttl_sec ? " · TTL mặc định app: " + esc(String(policy.default_ttl_sec)) + "s" : "") +
+      "</span></div>";
+  }
+  const exp = data.exporter || {};
+  let expHtml = "";
+  if (exp.available) {
+    expHtml =
+      '<div class="addon-redis-stat"><span class="muted">Exporter ops/s</span><strong>' +
+      esc(String(exp.ops_per_sec != null ? exp.ops_per_sec : "—")) +
+      "</strong></div>";
+  }
+  return (
+    '<div class="addon-redis-stat"><span class="muted">Redis</span><strong>' +
+    esc(data.redis_version || "—") +
+    "</strong></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Memory</span><strong>' +
+    esc(mem.used_human || "—") +
+    "</strong><span class=\"muted addon-redis-stat-sub\">max " +
+    esc(mem.maxmemory_human || "—") +
+    " · " +
+    esc(usedPct) +
+    "</span></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Fragmentation</span><strong>' +
+    esc(mem.fragmentation_ratio != null ? String(mem.fragmentation_ratio) : "—") +
+    "</strong></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Clients</span><strong>' +
+    esc(String(clients.connected != null ? clients.connected : "—")) +
+    "</strong></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Ops/s</span><strong>' +
+    esc(String(ops.instantaneous_ops_per_sec != null ? ops.instantaneous_ops_per_sec : "—")) +
+    "</strong></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Hit rate</span><strong>' +
+    esc(ops.hit_rate_pct != null ? ops.hit_rate_pct + "%" : "—") +
+    "</strong></div>" +
+    '<div class="addon-redis-stat"><span class="muted">Tổng key</span><strong>' +
+    esc(String(keys.total != null ? keys.total : "—")) +
+    "</strong></div>" +
+    expHtml +
+    policyHtml +
+    k8sHtml
+  );
+}
+
+function bindAddonRedisMonitor(slug, env) {
+  const grid = document.getElementById("addon-redis-stats-grid");
+  const tsEl = document.getElementById("addon-redis-stats-ts");
+  const rawEl = document.getElementById("addon-redis-stats-raw");
+  const grafanaLink = document.getElementById("addon-redis-grafana-link");
+  const sparkEl = document.getElementById("addon-redis-sparklines");
+  const policyBox = document.getElementById("addon-redis-policy-box");
+  const slowWrap = document.getElementById("addon-redis-slowlog-wrap");
+  const slowPre = document.getElementById("addon-redis-slowlog");
+  const winSeg = document.getElementById("addon-redis-window-segment");
+  if (!grid) return;
+  const winKey = "addon-redis-window:" + slug + ":" + env;
+  let windowValue = localStorage.getItem(winKey) || "6h";
+  if (!/^(15m|1h|6h|24h)$/.test(windowValue)) windowValue = "6h";
+
+  function paintWindowButtons() {
+    if (!winSeg) return;
+    winSeg.querySelectorAll(".seg-btn").forEach(function (btn) {
+      const w = btn.getAttribute("data-win");
+      btn.classList.toggle("active", w === windowValue);
+    });
+  }
+
+  async function loadStats() {
+    grid.innerHTML = '<p class="muted">Đang tải…</p>';
+    try {
+      const data = await api(
+        "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/stats" + projectQs({ environment: env, window: windowValue })
+      );
+      grid.innerHTML = renderAddonRedisStatsGrid(data);
+      if (tsEl) tsEl.textContent = "cập nhật " + new Date().toLocaleTimeString();
+      if (rawEl && data.ok) {
+        rawEl.textContent = JSON.stringify(data, null, 2);
+      }
+      if (grafanaLink) {
+        if (data.grafana_dashboard_url) {
+          grafanaLink.href = data.grafana_dashboard_url;
+          grafanaLink.classList.remove("hidden");
+        } else {
+          grafanaLink.classList.add("hidden");
+        }
+      }
+      if (sparkEl && data.exporter && data.exporter.available) {
+        const windowLabel = windowValue;
+        sparkEl.classList.remove("hidden");
+        sparkEl.innerHTML =
+          renderAddonRedisSparkline("Memory " + windowLabel, data.exporter.memory_series, {
+            divisor: 1024 * 1024,
+            unit: "MiB",
+            digits: 1,
+            color: "#a78bfa",
+            window: windowValue,
+          }) +
+          renderAddonRedisSparkline("Ops/s " + windowLabel, data.exporter.ops_series, {
+            unit: "ops/s",
+            digits: 2,
+            color: "#60a5fa",
+            window: windowValue,
+          });
+        bindInteractiveCharts(sparkEl);
+      } else if (sparkEl) {
+        sparkEl.classList.add("hidden");
+        sparkEl.innerHTML = "";
+      }
+      if (policyBox && data.memory_doctor) {
+        policyBox.classList.remove("hidden");
+        policyBox.innerHTML =
+          '<p class="muted"><strong>MEMORY DOCTOR</strong></p><pre class="addon-redis-doctor">' +
+          esc(data.memory_doctor) +
+          "</pre>";
+      } else if (policyBox) {
+        policyBox.classList.add("hidden");
+        policyBox.innerHTML = "";
+      }
+      if (slowWrap && slowPre) {
+        const rows = data.slowlog || [];
+        if (rows.length) {
+          slowWrap.classList.remove("hidden");
+          slowPre.textContent = rows
+            .map(function (r) {
+              return (
+                "#" +
+                r.id +
+                " · " +
+                (r.duration_ms != null ? r.duration_ms + "ms" : r.duration_us + "µs") +
+                " · " +
+                (r.command || "")
+              );
+            })
+            .join("\n");
+        } else {
+          slowWrap.classList.add("hidden");
+          slowPre.textContent = "";
+        }
+      }
+    } catch (err) {
+      grid.innerHTML = '<p class="error-text">' + esc(err.message || String(err)) + "</p>";
+    }
+  }
+
+  const refreshBtn = document.getElementById("addon-redis-stats-refresh");
+  if (refreshBtn) refreshBtn.onclick = loadStats;
+  if (winSeg) {
+    winSeg.querySelectorAll(".seg-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        const w = btn.getAttribute("data-win");
+        if (!w || w === windowValue) return;
+        windowValue = w;
+        localStorage.setItem(winKey, windowValue);
+        paintWindowButtons();
+        loadStats();
+      };
+    });
+  }
+  paintWindowButtons();
+  loadStats();
+}
+
+function bindAddonRedisKeys(slug, env, canManage) {
+  const body = document.getElementById("addon-redis-keys-body");
+  const meta = document.getElementById("addon-redis-keys-meta");
+  const moreBtn = document.getElementById("addon-redis-keys-more");
+  const patternEl = document.getElementById("addon-redis-keys-pattern");
+  const warnEl = document.getElementById("addon-redis-keys-warn");
+  const fullPre = document.getElementById("addon-redis-key-full");
+  if (!body) return;
+
+  let cursor = 0;
+  let scanning = false;
+  let lastClickKey = "";
+  let lastClickAt = 0;
+
+  function renderRows(items, append) {
+    if (!append) body.innerHTML = "";
+    if (!items || !items.length) {
+      if (!append) body.innerHTML = '<tr><td colspan="4" class="muted">Không có key khớp pattern.</td></tr>';
+      return;
+    }
+    const html = items
+      .map(function (row) {
+        const ttlCls = row.no_ttl ? " addon-redis-ttl-infinite" : "";
+        return (
+          "<tr data-key=\"" +
+          esc(row.key) +
+          "\" data-type=\"" +
+          esc(row.type) +
+          "\"><td><code class=\"addon-redis-key-name\">" +
+          esc(row.key) +
+          "</code></td><td><span class=\"badge neutral\">" +
+          esc(row.type) +
+          "</span></td><td class=\"" +
+          ttlCls +
+          "\">" +
+          esc(row.ttl) +
+          (row.no_ttl ? " ⚠" : "") +
+          "</td><td class=\"addon-redis-key-preview\">" +
+          esc(row.preview || "") +
+          "</td></tr>"
+        );
+      })
+      .join("");
+    if (append) body.insertAdjacentHTML("beforeend", html);
+    else body.innerHTML = html;
+    body.querySelectorAll("tr[data-key]").forEach(function (tr) {
+      tr.onclick = function () {
+        const key = tr.getAttribute("data-key");
+        const now = Date.now();
+        if (key && key === lastClickKey && now - lastClickAt < 600) {
+          loadFullValue(key, tr.getAttribute("data-type"));
+        }
+        lastClickKey = key;
+        lastClickAt = now;
+        body.querySelectorAll("tr.selected").forEach(function (r) {
+          r.classList.remove("selected");
+        });
+        tr.classList.add("selected");
+        const playKey = document.getElementById("addon-redis-play-key");
+        if (playKey && key) playKey.value = key;
+        const delBtn = document.getElementById("addon-redis-keys-del-selected");
+        if (delBtn) delBtn.disabled = !canManage;
+      };
+    });
+  }
+
+  async function loadFullValue(key, typ) {
+    if (!fullPre || typ !== "string") return;
+    fullPre.classList.remove("hidden");
+    fullPre.textContent = "Đang tải full value…";
+    try {
+      const data = await api(
+        "/api/v1/projects/" +
+          encodeURIComponent(slug) +
+          "/addons/redis/keys" +
+          projectQs({ environment: env, pattern: key, limit: 1, full: 1 })
+      );
+      const item = (data.items || [])[0];
+      fullPre.textContent = item && item.value != null ? item.value : item ? item.preview || "(trống)" : "Không tìm thấy key";
+    } catch (err) {
+      fullPre.textContent = err.message || "Lỗi";
+    }
+  }
+
+  async function scanKeys(append) {
+    if (scanning) return;
+    scanning = true;
+    const pattern = patternEl ? patternEl.value : "*";
+    if (!append) cursor = 0;
+    if (meta) meta.textContent = "Đang quét…";
+    try {
+      const data = await api(
+        "/api/v1/projects/" +
+          encodeURIComponent(slug) +
+          "/addons/redis/keys" +
+          projectQs({ environment: env, pattern: pattern, cursor: append ? cursor : 0, limit: 40 })
+      );
+      cursor = data.cursor || 0;
+      renderRows(data.items || [], append);
+      if (warnEl) {
+        if (data.no_ttl_count > 0) {
+          warnEl.classList.remove("hidden");
+          warnEl.innerHTML =
+            '<p class="badge warn">Có <strong>' +
+            esc(String(data.no_ttl_count)) +
+            "</strong> key không TTL (∞) trong lô này — cân nhắc SET EX hoặc dùng REDIS_KEY_TTL_SECONDS.</p>";
+        } else {
+          warnEl.classList.add("hidden");
+          warnEl.innerHTML = "";
+        }
+      }
+      if (meta) {
+        meta.textContent =
+          (data.count || 0) + " key · pattern " + (data.pattern || pattern) + (data.has_more ? " · còn thêm" : "");
+      }
+      if (moreBtn) moreBtn.classList.toggle("hidden", !data.has_more);
+    } catch (err) {
+      if (!append) body.innerHTML = '<tr><td colspan="4" class="error-text">' + esc(err.message) + "</td></tr>";
+      if (meta) meta.textContent = "";
+    } finally {
+      scanning = false;
+    }
+  }
+
+  const scanBtn = document.getElementById("addon-redis-keys-scan");
+  if (scanBtn) scanBtn.onclick = function () {
+    scanKeys(false);
+  };
+  const filterConsole = document.getElementById("addon-redis-keys-filter-console");
+  if (filterConsole && patternEl) {
+    filterConsole.onclick = function () {
+      patternEl.value = "console:*";
+      scanKeys(false);
+    };
+  }
+  if (moreBtn) moreBtn.onclick = function () {
+    scanKeys(true);
+  };
+  const delBtn = document.getElementById("addon-redis-keys-del-selected");
+  if (delBtn && canManage) {
+    delBtn.onclick = async function () {
+      const sel = body.querySelector("tr.selected");
+      if (!sel) return;
+      const key = sel.getAttribute("data-key");
+      if (!key || !(await uiConfirm("Xóa key `" + key + "`?", { title: "Xóa Redis key" }))) return;
+      try {
+        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis/play", {
+          method: "POST",
+          body: { environment: env, action: "del", key: key },
+        });
+        toastSuccess("Đã xóa key");
+        await scanKeys(false);
+      } catch (err) {
+        toastError(err.message || "Không xóa được");
+      }
+    };
+  }
+}
+
 function renderAddonRedisPlayground(canManage, slug, env) {
   if (!canManage) {
     return '<p class="muted">Chỉ owner/admin dùng playground Redis.</p>';
@@ -227,11 +704,41 @@ function renderAddonRedisPlayground(canManage, slug, env) {
     '<button type="button" class="btn-ghost btn-sm" id="addon-redis-play-del">DEL</button>' +
     "</div></div>" +
   (appURL
-    ? '<p class="muted addon-redis-app-probe">App pilot: <a href="' + appURL + '" target="_blank" rel="noopener"><code>/api/redis/ping</code></a> sau khi deploy branch <code>redis-pilot</code>.</p>'
+    ? '<p class="muted addon-redis-app-probe">App probe: <a href="' + appURL + '" target="_blank" rel="noopener"><code>/api/redis/ping</code></a> (cần template backend có route Redis)</p>'
     : "") +
     '<pre class="addon-redis-play-out muted" id="addon-redis-play-out">Bấm Ping để thử…</pre>' +
     "</div>"
   );
+}
+
+function addonRedisCollapsibleSummary(title, badgeHtml, actionsHtml) {
+  badgeHtml = badgeHtml || "";
+  actionsHtml = actionsHtml || "";
+  return (
+    '<div class="deploy-collapsible-summary-inner">' +
+    '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+    '<div class="deploy-collapsible-title-row">' +
+    "<h3 style=\"margin:0\">" + esc(title) + "</h3>" +
+    (badgeHtml ? '<span class="deploy-collapsible-no-toggle">' + badgeHtml + "</span>" : "") +
+    "</div>" +
+    (actionsHtml
+      ? '<div class="deploy-collapsible-summary-actions deploy-collapsible-no-toggle">' + actionsHtml + "</div>"
+      : "") +
+    "</div>"
+  );
+}
+
+function openAddonRedisHashSection(root) {
+  if (!root) return;
+  const raw = (location.hash || "").replace(/^#/, "");
+  if (!raw || raw.indexOf("addon-sec-") !== 0) return;
+  const el = document.getElementById(raw);
+  if (el && el.tagName === "DETAILS") {
+    el.open = true;
+    setTimeout(function () {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
+  }
 }
 
 function bindAddonRedisPlayground(slug, env) {
@@ -285,6 +792,36 @@ function bindAddonRedisPlayground(slug, env) {
     delBtn.onclick = function () {
       runPlay("del", { key: document.getElementById("addon-redis-play-key").value });
     };
+  }
+}
+
+function addonRedisCollapsibleSummary(title, badgeHtml, actionsHtml) {
+  badgeHtml = badgeHtml || "";
+  actionsHtml = actionsHtml || "";
+  return (
+    '<div class="deploy-collapsible-summary-inner">' +
+    '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+    '<div class="deploy-collapsible-title-row">' +
+    "<h3 style=\"margin:0\">" + esc(title) + "</h3>" +
+    (badgeHtml ? '<span class="deploy-collapsible-no-toggle">' + badgeHtml + "</span>" : "") +
+    "</div>" +
+    (actionsHtml
+      ? '<div class="deploy-collapsible-summary-actions deploy-collapsible-no-toggle">' + actionsHtml + "</div>"
+      : "") +
+    "</div>"
+  );
+}
+
+function openAddonRedisHashSection(root) {
+  if (!root) return;
+  const raw = (location.hash || "").replace(/^#/, "");
+  if (!raw || raw.indexOf("addon-sec-") !== 0) return;
+  const el = document.getElementById(raw);
+  if (el && el.tagName === "DETAILS") {
+    el.open = true;
+    setTimeout(function () {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 80);
   }
 }
 
@@ -357,7 +894,17 @@ function renderAddonRedisConnection(addon, canManage) {
       (addon.connection_secret
         ? '<p class="muted addon-connection-meta">Secret K8s: <code>' + esc(addon.connection_secret) + "</code></p>"
         : "") +
-      '<p class="muted addon-connection-hint">App trong cluster dùng REDIS_URL runtime. Dev local dùng URL external (nếu có).</p>' +
+      '<div class="addon-redis-doc-box">' +
+      "<p><strong>Dùng trong app</strong></p>" +
+      '<ul class="addon-redis-doc-list muted">' +
+      "<li>Runtime env: <code>REDIS_URL</code> (secret) — Platform inject vào <code>app-env</code></li>" +
+      (addon.default_key_ttl_sec
+        ? "<li>TTL gợi ý: <code>REDIS_KEY_TTL_SECONDS=" + esc(String(addon.default_key_ttl_sec)) + "</code></li>"
+        : "<li>TTL gợi ý: <code>REDIS_KEY_TTL_SECONDS</code> (nếu cấu hình ở Quota)</li>") +
+      "<li>Go template: <code>GET /api/redis/ping</code> · <code>/api/redis/demo</code></li>" +
+      "<li>Doc: <code>docs/REDIS-ADDON.md</code> trên repo platform</li>" +
+      "</ul></div>" +
+      '<p class="muted addon-connection-hint">App trong cluster dùng REDIS_URL runtime. Dev local dùng URL external (nếu có). Prod: chỉ ClusterIP + NetworkPolicy.</p>' +
       (canManage ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision">Re-provision Redis</button>' : "") +
       "</div>";
     return html;
@@ -374,19 +921,39 @@ function renderAddonRedisConnection(addon, canManage) {
 function renderAddonRedisQuota(addon, canManage) {
   const mem = addon.max_memory_mb || 128;
   const clients = addon.max_clients || 100;
+  const policy = addon.maxmemory_policy || "allkeys-lru";
+  const ttl = addon.default_key_ttl_sec != null ? addon.default_key_ttl_sec : 86400;
+  const policies = [
+    "allkeys-lru",
+    "volatile-lru",
+    "allkeys-lfu",
+    "volatile-lfu",
+    "volatile-ttl",
+    "noeviction",
+  ];
   if (!canManage) {
     return (
       "<p>RAM: <strong>" + esc(mem) + " MB</strong> · Max clients: <strong>" + esc(clients) + "</strong></p>" +
+      "<p>Eviction: <strong>" + esc(policy) + "</strong> · TTL mặc định app: <strong>" + esc(ttl) + "s</strong></p>" +
+      (addon.policy_hint ? '<p class="muted">' + esc(addon.policy_hint) + "</p>" : "") +
       '<p class="muted">Chỉ owner/admin chỉnh quota.</p>'
     );
   }
+  const policyOpts = policies
+    .map(function (p) {
+      return '<option value="' + esc(p) + '"' + (p === policy ? " selected" : "") + ">" + esc(p) + "</option>";
+    })
+    .join("");
   return (
     '<div class="addon-quota-form">' +
     '<label class="addon-quota-field">RAM (MB)<input type="number" id="addon-redis-mem" min="64" max="512" step="1" value="' + esc(mem) + '"></label>' +
     '<label class="addon-quota-field">Max clients<input type="number" id="addon-redis-clients" min="10" max="1000" step="1" value="' + esc(clients) + '"></label>' +
+    '<label class="addon-quota-field">Eviction policy<select id="addon-redis-policy">' + policyOpts + "</select></label>" +
+    '<label class="addon-quota-field">TTL mặc định app (s)<input type="number" id="addon-redis-default-ttl" min="0" max="2592000" step="1" value="' + esc(ttl) + '"></label>' +
     '<button type="button" class="btn-primary btn-sm" id="addon-redis-quota-apply">Lưu & apply</button>' +
     "</div>" +
-    '<p class="muted">Apply = re-provision Redis với quota mới (redis.conf + memory limit pod).</p>'
+    (addon.policy_hint ? '<p class="muted">' + esc(addon.policy_hint) + "</p>" : "") +
+    '<p class="muted">Apply = re-provision (redis.conf, redis_exporter, inject <code>REDIS_KEY_TTL_SECONDS</code> vào runtime env).</p>'
   );
 }
 
@@ -477,6 +1044,8 @@ function bindAddonRedisActions(main, slug, p, env, canManage, addon) {
     quotaBtn.onclick = function () {
       const mem = parseInt(document.getElementById("addon-redis-mem").value, 10);
       const clients = parseInt(document.getElementById("addon-redis-clients").value, 10);
+      const policyEl = document.getElementById("addon-redis-policy");
+      const ttlEl = document.getElementById("addon-redis-default-ttl");
       if (!(mem >= 64 && mem <= 512)) {
         toastError("RAM phải từ 64–512 MB");
         return;
@@ -485,7 +1054,17 @@ function bindAddonRedisActions(main, slug, p, env, canManage, addon) {
         toastError("Max clients phải từ 10–1000");
         return;
       }
-      runProvision({ max_memory_mb: mem, max_clients: clients });
+      const ttl = ttlEl ? parseInt(ttlEl.value, 10) : 86400;
+      if (!(ttl >= 0 && ttl <= 2592000)) {
+        toastError("TTL mặc định phải từ 0–2592000 giây");
+        return;
+      }
+      runProvision({
+        max_memory_mb: mem,
+        max_clients: clients,
+        maxmemory_policy: policyEl ? policyEl.value : "allkeys-lru",
+        default_key_ttl_sec: ttl,
+      });
     };
   }
 }
@@ -574,7 +1153,7 @@ async function loadProjectAddonRedis(main, slug, p) {
     projectEnvToolbar(slug, p, function () {
       pageProjectHub(main, slug, "addons", "redis");
     }) +
-    '<div id="addon-redis-root" class="card"><p class="loading">Đang tải Redis…</p></div>';
+    '<div id="addon-redis-root"><p class="loading">Đang tải Redis…</p></div>';
   try {
     const data = await api(
       "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/redis" + projectQs({ environment: env })
@@ -609,35 +1188,86 @@ async function loadProjectAddonRedis(main, slug, p) {
     }
     const addon = data.addon || {};
     const canManage = !!data.can_manage;
-    root.innerHTML =
-      "<h3>Redis · " + esc(env.toUpperCase()) + " · <code>" + esc(data.namespace || "") + "</code></h3>" +
-      '<div class="toolbar addon-redis-nav" style="margin:10px 0 14px">' +
-      '<a class="btn-ghost btn-sm" href="#addon-sec-dashboard">Dashboard</a> ' +
-      '<a class="btn-ghost btn-sm" href="#addon-sec-connection">Connection</a> ' +
-      '<a class="btn-ghost btn-sm" href="#addon-sec-quota">Quota</a> ' +
-      '<a class="btn-ghost btn-sm" href="#addon-sec-play">Playground</a>' +
-      (canManage ? ' <button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision-top">Re-provision</button>' : "") +
-      "</div>" +
-      '<div class="addon-redis-section" id="addon-sec-dashboard">' +
-      "<h4>Dashboard</h4>" +
+    const reprovisionBtn = canManage
+      ? '<button type="button" class="btn-ghost btn-sm" id="addon-redis-reprovision-top">Re-provision</button>'
+      : "";
+    const dashBody =
       '<p>Trạng thái: ' + addonStatusBadge(addon.status) + "</p>" +
       '<p class="muted">Release: <code>' + esc(addon.k8s_release || "—") + "</code></p>" +
       '<p class="muted">Namespace: <code>' + esc(data.namespace || "—") + "</code></p>" +
-      renderAddonRedisDashboard(addon, canManage) +
-      "</div>" +
-      '<div class="addon-redis-section" id="addon-sec-connection">' +
-      "<h4>Connection</h4>" +
-      renderAddonRedisConnection(addon, canManage) +
-      "</div>" +
-      '<div class="addon-redis-section" id="addon-sec-quota">' +
-      "<h4>Quota</h4>" +
-      renderAddonRedisQuota(addon, canManage) +
-      "</div>" +
-      '<div class="addon-redis-section" id="addon-sec-play">' +
-      "<h4>Playground</h4>" +
-      renderAddonRedisPlayground(canManage, slug, env) +
-      "</div>" +
+      renderAddonRedisDashboard(addon, canManage);
+    const connBody = renderAddonRedisConnection(addon, canManage);
+    const quotaBody = renderAddonRedisQuota(addon, canManage);
+    const playBody = renderAddonRedisPlayground(canManage, slug, env);
+    const monitorBody = renderAddonRedisMonitor();
+    const keysBody = renderAddonRedisKeys(canManage);
+    root.className = "addon-redis-root";
+    root.innerHTML =
+      '<p class="muted addon-redis-lead">Redis · <strong>' +
+      esc(env.toUpperCase()) +
+      "</strong> · <code>" +
+      esc(data.namespace || "") +
+      "</code></p>" +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-dashboard",
+        addonRedisCollapsibleSummary("Dashboard", addonStatusBadge(addon.status)),
+        dashBody,
+        true,
+        { id: "addon-sec-dashboard", extraClass: "addon-redis-collapsible" }
+      ) +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-monitor",
+        addonRedisCollapsibleSummary("Monitor", '<span class="badge muted">INFO · Prometheus</span>'),
+        monitorBody,
+        false,
+        { id: "addon-sec-monitor", extraClass: "addon-redis-collapsible" }
+      ) +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-keys",
+        addonRedisCollapsibleSummary("Dữ liệu đang lưu", '<span class="badge muted">SCAN keys</span>'),
+        keysBody,
+        false,
+        { id: "addon-sec-keys", extraClass: "addon-redis-collapsible" }
+      ) +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-connection",
+        addonRedisCollapsibleSummary(
+          "Connection",
+          addon.has_connection ? '<span class="badge ok">Đã cấu hình</span>' : '<span class="badge warn">Chưa có URL</span>',
+          reprovisionBtn
+        ),
+        connBody,
+        false,
+        { id: "addon-sec-connection", extraClass: "addon-redis-collapsible" }
+      ) +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-quota",
+        addonRedisCollapsibleSummary(
+          "Quota",
+          '<span class="badge neutral">' + esc(String(addon.max_memory_mb || 128)) + " MB</span>"
+        ),
+        quotaBody,
+        false,
+        { id: "addon-sec-quota", extraClass: "addon-redis-collapsible" }
+      ) +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-redis-play",
+        addonRedisCollapsibleSummary("Playground", canManage ? "" : '<span class="badge muted">Chỉ admin</span>'),
+        playBody,
+        false,
+        { id: "addon-sec-play", extraClass: "addon-redis-collapsible" }
+      ) +
       '<p class="addon-back-wrap"><a class="addon-back-link" href="' + esc(projectAddonsRoute(slug)) + '">← Về catalog addons</a></p>';
+    bindDeployCollapsibleCards(root, slug);
+    openAddonRedisHashSection(root);
+    bindAddonRedisMonitor(slug, env);
+    bindAddonRedisKeys(slug, env, canManage);
     bindAddonRedisActions(main, slug, p, env, canManage, addon);
     bindAddonRedisPlayground(slug, env);
   } catch (err) {
@@ -835,8 +1465,9 @@ async function loadProjectPromote(main, slug, p) {
     }
     main.innerHTML =
       projectHeader(p, "Promote Prod", { help: "deploy" }) +
-      '<div class="card" id="promote-page"><p class="loading">Đang kiểm tra checklist…</p></div>';
+      '<div class="card" id="promote-page"></div>';
     bindDeployHelpTriggers(main);
+    showAppLoading("Đang kiểm tra checklist Promote…", "Quét image dev, contract env và addons prod");
     try {
       const [readiness, activityDev] = await Promise.all([
         api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote-readiness"),
@@ -891,21 +1522,26 @@ async function loadProjectPromote(main, slug, p) {
             confirmText: "Promote",
           });
           if (!ok) return;
-          setButtonLoading(promoteBtn, true, "Đang promote…");
           try {
-            await api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote", {
-              method: "POST",
-              body: { image_tag: t },
+            await withAppLoading(function () {
+              return api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote", {
+                method: "POST",
+                body: { image_tag: t },
+                timeout: 300000,
+              });
+            }, {
+              title: "Đang promote lên Prod…",
+              detail: "Sync GitOps, ArgoCD và runtime — có thể mất 1–3 phút",
             });
             navigateAfterPromote(slug, t);
           } catch (err) {
             toastError(err.message || "Promote prod thất bại");
-          } finally {
-            setButtonLoading(promoteBtn, false, "Promote lên Prod →");
           }
         };
       }
     } catch (err) {
       document.getElementById("promote-page").innerHTML = '<p class="error-text">' + esc(err.message) + "</p>";
+    } finally {
+      hideAppLoading();
     }
 }

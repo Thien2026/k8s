@@ -69,6 +69,15 @@ if [[ -f "${RULE_FILE}" ]]; then
   log "Đã apply PrometheusRule test (PlatformMonitoringStackOK) — xem Alertmanager sau ~2 phút."
 fi
 
+REDIS_DASH="${ROOT_DIR}/platform/monitoring/grafana-dashboard-redis-addon.json"
+if [[ -f "${REDIS_DASH}" ]]; then
+  kubectl -n "${NS}" create configmap grafana-dashboard-redis-addon \
+    --from-file=platform-redis-addon.json="${REDIS_DASH}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "${NS}" label configmap grafana-dashboard-redis-addon grafana_dashboard=1 --overwrite
+  log "Đã import Grafana dashboard Platform Redis addon (uid: platform-redis-addon)."
+fi
+
 GRAFANA_ENV="${ROOT_DIR}/config/grafana.env"
 cat >"${GRAFANA_ENV}" <<EOF
 # Tự sinh bởi monitoring/install.sh — không commit

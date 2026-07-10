@@ -56,6 +56,14 @@ func (h *Handler) PromoteProjectDeploy(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 		return
 	}
+	if h.devUsesRedisAddon(r.Context(), p.ID) && !h.redisProdAddonReady(r.Context(), p.ID) {
+		if err := h.promoteRedisAddonFromDev(r.Context(), p); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]any{
+				"error": "Không provision được Redis prod: " + err.Error(),
+			})
+			return
+		}
+	}
 	if !h.ensurePromoteReady(w, r, p) {
 		return
 	}
@@ -150,6 +158,9 @@ func (h *Handler) promoteReadiness(ctx context.Context, p projectRow) ([]promote
 	}
 	var missing []string
 	for k := range devKeys {
+		if isAddonManagedRuntimeEnvKey(k) {
+			continue
+		}
 		found := false
 		for _, row := range prodEnv {
 			if row.Key == k {
@@ -288,6 +299,10 @@ func (h *Handler) promoteReadiness(ctx context.Context, p projectRow) ([]promote
 	}
 	markRequired(&domItem)
 	items = append(items, domItem)
+
+	redisItem := h.redisAddonPromoteReadiness(ctx, p)
+	markRequired(&redisItem)
+	items = append(items, redisItem)
 
 	h.enrichProjectRegistry(ctx, &p)
 	if strings.EqualFold(strings.TrimSpace(p.RegistryProvider), "harbor") && h.harbor != nil && h.harbor.Enabled() {

@@ -1,6 +1,9 @@
 package deploy
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestIngressRoutesSkipsInternal(t *testing.T) {
 	svcs := []ServiceDef{
@@ -28,6 +31,31 @@ func TestServiceDiscoveryEnvVars(t *testing.T) {
 	}
 	if envs[0]["value"] != "http://engine-matrix:80" {
 		t.Fatalf("unexpected url: %v", envs[0]["value"])
+	}
+}
+
+func TestK8sManifestYAMLIncludesServiceDiscovery(t *testing.T) {
+	p := Params{
+		ProjectSlug: "demo",
+		ProjectName: "demo",
+		Environment: "dev",
+		Namespace:   "demo-dev",
+		ImageTag:    "abc123",
+		Layout:      LayoutMulti,
+		Services: []ServiceDef{
+			{Name: "api", ExposeIngress: true, ContainerPort: 8080, HealthPath: "/health", IngressPath: "/api"},
+			{Name: "worker", ExposeIngress: false, ContainerPort: 8080, HealthPath: "/health", IngressPath: "internal"},
+		},
+	}
+	m, err := K8sManifestForService(p, p.Services[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(m.YAML, "SVC_API_URL") {
+		t.Fatalf("worker yaml missing service discovery: %s", m.YAML)
+	}
+	if !strings.Contains(m.YAML, "http://api:80") {
+		t.Fatalf("worker yaml missing api url: %s", m.YAML)
 	}
 }
 

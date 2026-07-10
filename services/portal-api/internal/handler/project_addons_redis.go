@@ -63,7 +63,8 @@ func (h *Handler) redisAddonExternalURL(slug, env, password string) (hostname st
 	return hostname, port, raw
 }
 
-func (h *Handler) applyRedisNetworkPolicy(ctx context.Context, release, ns string) error {
+func (h *Handler) applyRedisNetworkPolicy(ctx context.Context, release, ns, projectSlug string) error {
+	_ = projectSlug
 	np := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "NetworkPolicy",
@@ -85,7 +86,16 @@ func (h *Handler) applyRedisNetworkPolicy(ctx context.Context, release, ns strin
 			"ingress": []map[string]any{
 				{
 					"from": []map[string]any{
-						{"podSelector": map[string]any{}},
+						{
+							"podSelector": map[string]any{
+								"matchExpressions": []map[string]any{
+									{
+										"key":      "app",
+										"operator": "Exists",
+									},
+								},
+							},
+						},
 					},
 					"ports": []map[string]any{
 						{"protocol": "TCP", "port": redisAddonServicePort},

@@ -104,6 +104,7 @@ function uiConfirm(message, opts) {
   return openDialog({
     title: opts.title || "Xác nhận",
     message: message,
+    details: opts.details,
     confirmText: opts.confirmText || "Đồng ý",
     cancelText: opts.cancelText || "Huỷ",
     danger: !!opts.danger,
@@ -121,4 +122,52 @@ function uiAlert(opts) {
     cancelText: false,
     variant: opts.variant || "default",
   });
+}
+
+let appLoadingCount = 0;
+let appLoadingEl = null;
+
+function showAppLoading(title, detail) {
+  appLoadingCount++;
+  if (!appLoadingEl) {
+    appLoadingEl = document.createElement("div");
+    appLoadingEl.className = "app-loading-overlay";
+    appLoadingEl.setAttribute("role", "status");
+    appLoadingEl.setAttribute("aria-live", "polite");
+    appLoadingEl.innerHTML =
+      '<div class="app-loading-card">' +
+      '<div class="app-loading-spinner" aria-hidden="true"></div>' +
+      '<p class="app-loading-title"></p>' +
+      '<p class="app-loading-detail muted"></p>' +
+      "</div>";
+    document.body.appendChild(appLoadingEl);
+    requestAnimationFrame(function () { appLoadingEl.classList.add("show"); });
+  }
+  const t = appLoadingEl.querySelector(".app-loading-title");
+  const d = appLoadingEl.querySelector(".app-loading-detail");
+  if (t) t.textContent = title || "Đang xử lý…";
+  if (d) {
+    const sub = detail || "";
+    d.textContent = sub;
+    d.style.display = sub ? "" : "none";
+  }
+}
+
+function hideAppLoading() {
+  appLoadingCount = Math.max(0, appLoadingCount - 1);
+  if (appLoadingCount > 0 || !appLoadingEl) return;
+  const el = appLoadingEl;
+  appLoadingEl = null;
+  el.classList.remove("show");
+  setTimeout(function () { el.remove(); }, 220);
+}
+
+async function withAppLoading(fn, opts) {
+  opts = opts || {};
+  showAppLoading(opts.title, opts.detail);
+  try {
+    return await fn();
+  } finally {
+    hideAppLoading();
+  }
 }

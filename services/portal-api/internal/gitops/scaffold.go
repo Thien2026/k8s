@@ -1,15 +1,12 @@
 package gitops
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
 	"sort"
 	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
-	"github.com/Thien2026/k8s/services/portal-api/internal/domains"
-	"gopkg.in/yaml.v3"
 )
 
 // ScaffoldInput đầu vào sinh manifest GitOps cho một project.
@@ -52,18 +49,7 @@ func BuildFiles(in ScaffoldInput) (map[string]string, error) {
 		out[root+"/base/"+fn] = strings.TrimSpace(m.YAML) + "\n"
 		baseResources = append(baseResources, fn)
 	}
-	if len(in.DevRoutes) > 0 && strings.TrimSpace(in.DevHost) != "" {
-		ingRaw, err := domains.IngressManifest(in.DevHost, in.DevParams.Namespace, 1, true, in.DevRoutes)
-		if err != nil {
-			return nil, err
-		}
-		ingYAML, err := jsonToYAML(ingRaw)
-		if err != nil {
-			return nil, err
-		}
-		out[root+"/base/ingress.yaml"] = ingYAML
-		baseResources = append(baseResources, "ingress.yaml")
-	}
+	// Ingress do Console tab Domains quản lý (app-{domainId}) — không đưa vào GitOps để tránh trùng host với ArgoCD sync.
 	sort.Strings(baseResources)
 	out[root+"/base/kustomization.yaml"] = renderBaseKustomization(baseResources)
 
@@ -76,10 +62,42 @@ func BuildFiles(in ScaffoldInput) (map[string]string, error) {
 		{"dev", in.DevParams, in.DevHost, in.DevRoutes},
 		{"prod", in.ProdParams, in.ProdHost, in.ProdRoutes},
 	} {
-		overlay := root + "/overlays/" + env.name + "/kustomization.yaml"
-		out[overlay] = renderOverlayKustomization(env.params, env.host, env.routes, env.name)
+		overlayDir := root + "/overlays/" + env.name
+		out[overlayDir+"/kustomization.yaml"] = renderOverlayKustomization(env.params, env.host, env.routes, env.name)
+		if patch := PullSecretPatchYAML(env.params.ImagePullSecret); patch != "" {
+			out[overlayDir+"/"+pullSecretPatchFile] = patch
+		}
 	}
 	return out, nil
+}
+
+// SyncBaseManifests cập nhật base deployments (service discovery, service mới như worker).
+func SyncBaseManifests(ctx context.Context, client *Client, token string, ref RepoRef, basePath, slug, branch string, params deploy.Params, commitMsg string) error {
+	base := strings.Trim(strings.TrimSpace(basePath), "/")
+	if base == "" {
+		base = "apps"
+	}
+	root := base + "/" + strings.TrimSpace(slug)
+	manifests, err := deploy.K8sManifests(params)
+	if err != nil {
+		return err
+	}
+	var resources []string
+	for _, m := range manifests {
+		name := strings.TrimSpace(m.ServiceName)
+		if name == "" {
+			continue
+		}
+		fn := name + ".yaml"
+		path := root + "/base/" + fn
+		if err := client.PutFile(ctx, token, ref, path, branch, commitMsg+" "+path, strings.TrimSpace(m.YAML)+"\n"); err != nil {
+			return fmt.Errorf("sync base %s: %w", name, err)
+		}
+		resources = append(resources, fn)
+	}
+	sort.Strings(resources)
+	kustPath := root + "/base/kustomization.yaml"
+	return client.PutFile(ctx, token, ref, kustPath, branch, commitMsg+" kustomization", renderBaseKustomization(resources))
 }
 
 func renderBaseKustomization(resources []string) string {
@@ -103,42 +121,18 @@ func renderOverlayKustomization(p deploy.Params, host string, routes []deploy.In
 	if len(svcs) > 0 {
 		b.WriteString("images:\n")
 		for _, svc := range svcs {
-			b.WriteString("  - name: " + p.ImageRefFor(svc) + "\n")
+			b.WriteString("  - name: " + p.ImageRepositoryFor(svc) + "\n")
 			b.WriteString("    newTag: latest\n")
 		}
 	}
-	host = strings.TrimSpace(host)
-	if host != "" && len(routes) > 0 {
+	if secret := strings.TrimSpace(p.ImagePullSecret); secret != "" {
 		b.WriteString("patches:\n")
-		b.WriteString("  - target:\n")
-		b.WriteString("      kind: Ingress\n")
-		b.WriteString("      name: app-1\n")
-		b.WriteString("    patch: |-\n")
-		b.WriteString("      - op: replace\n")
-		b.WriteString("        path: /spec/rules/0/host\n")
-		b.WriteString("        value: " + host + "\n")
-		b.WriteString("      - op: replace\n")
-		b.WriteString("        path: /spec/tls/0/hosts/0\n")
-		b.WriteString("        value: " + host + "\n")
-		b.WriteString("      - op: replace\n")
-		b.WriteString("        path: /spec/tls/0/secretName\n")
-		b.WriteString("        value: tls-app-1\n")
+		b.WriteString("  - path: " + pullSecretPatchFile + "\n")
+		b.WriteString("    target:\n")
+		b.WriteString("      kind: Deployment\n")
 	}
 	_ = env
+	_ = host
+	_ = routes
 	return b.String()
-}
-
-func jsonToYAML(raw []byte) (string, error) {
-	var obj any
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return "", err
-	}
-	var buf bytes.Buffer
-	enc := yaml.NewEncoder(&buf)
-	enc.SetIndent(2)
-	if err := enc.Encode(obj); err != nil {
-		return "", err
-	}
-	_ = enc.Close()
-	return buf.String(), nil
 }

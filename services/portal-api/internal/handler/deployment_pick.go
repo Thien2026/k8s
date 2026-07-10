@@ -127,7 +127,9 @@ func deploymentHistoricalRuntimeNoise(d deploymentRow) bool {
 	return strings.Contains(msg, "image spec") ||
 		strings.Contains(msg, "smoke check") ||
 		strings.Contains(msg, "chưa xác định image") ||
-		strings.Contains(msg, "rollout fleet")
+		strings.Contains(msg, "rollout fleet") ||
+		strings.Contains(msg, "không tồn tại trên cluster") ||
+		strings.Contains(msg, "không có pod")
 }
 
 func (h *Handler) repairHistoricalDeploymentRow(ctx context.Context, p projectRow, d *deploymentRow) bool {
@@ -178,6 +180,19 @@ func (h *Handler) sealSupersededDeploymentRows(ctx context.Context, projectID in
 		  AND newer.status='success' AND newer.runtime_status='success'
 		  AND older.status IN ('in_progress','failed')
 		  AND COALESCE(older.error_phase,'') <> 'build'`, projectID, env)
+	// Row build_started (tag cũ) kẹt in_progress khi deploy mới đã success.
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_deployments older SET
+			status='success', runtime_status='skipped', deploy_status='skipped',
+			runtime_detail='Đã thay bởi deploy mới hơn',
+			error_phase='', error_message='', updated_at=now(),
+			finished_at=COALESCE(older.finished_at, now())
+		FROM project_deployments newer
+		WHERE older.project_id=$1 AND older.environment=$2
+		  AND newer.project_id=older.project_id AND newer.environment=older.environment
+		  AND older.id < newer.id
+		  AND newer.status='success' AND newer.runtime_status='success'
+		  AND older.status='in_progress' AND older.deploy_status IN ('pending','running')`, projectID, env)
 }
 
 func normalizeStaleDeploymentRow(d *deploymentRow) {

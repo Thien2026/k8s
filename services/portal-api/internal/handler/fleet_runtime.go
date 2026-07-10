@@ -240,7 +240,7 @@ func (h *Handler) serviceFleetRolloutStatus(ctx context.Context, p projectRow, n
 	pods := h.listServicePods(ctx, p, envFromNamespace(p, ns), serviceName)
 	if len(pods) == 0 {
 		if !depFound {
-			return "failed", "không có pod", "Deployment " + serviceName + " không tồn tại trên cluster"
+			return "running", "đang chờ ArgoCD tạo " + serviceName, ""
 		}
 		return "running", "không có pod", ""
 	}

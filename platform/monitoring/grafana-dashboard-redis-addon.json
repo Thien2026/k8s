@@ -1,0 +1,119 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "redis_memory_used_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "legendFormat": "used",
+          "refId": "A"
+        },
+        {
+          "expr": "redis_memory_max_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "legendFormat": "max",
+          "refId": "B"
+        }
+      ],
+      "title": "Redis memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "rate(redis_commands_processed_total{namespace=\"$namespace\",pod=~\"$release-.*\"}[5m])",
+          "legendFormat": "ops/s",
+          "refId": "A"
+        }
+      ],
+      "title": "Commands / sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "redis_connected_clients{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Connected clients",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "rate(redis_keyspace_hits_total{namespace=\"$namespace\",pod=~\"$release-.*\"}[5m]) / (rate(redis_keyspace_hits_total{namespace=\"$namespace\",pod=~\"$release-.*\"}[5m]) + rate(redis_keyspace_misses_total{namespace=\"$namespace\",pod=~\"$release-.*\"}[5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Hit rate (5m)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 8 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "redis_db_keys{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Keys (db0)",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["platform", "redis", "addon"],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(redis_up, namespace)",
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "release",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(redis_up{namespace=\"$namespace\"}, pod)",
+        "regex": "/^(.*)-\\d+$/",
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Platform Redis addon",
+  "uid": "platform-redis-addon",
+  "version": 1
+}

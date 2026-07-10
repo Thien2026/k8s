@@ -12,6 +12,8 @@ const (
 	ConventionViteAPIBaseKey    = "VITE_API_BASE"
 	ConventionNextAPIBaseKey    = "NEXT_PUBLIC_API_BASE"
 	ConventionAPIRoutePrefixKey = "API_ROUTE_PREFIX"
+	ConventionRedisURLKey       = "REDIS_URL"
+	ConventionRedisTTLKey       = "REDIS_KEY_TTL_SECONDS"
 )
 
 // DefaultMultiBuildContract — biến build gợi ý khi layout Backend + Frontend.
@@ -39,6 +41,14 @@ func DefaultMultiRuntimeContract() platformcontract.File {
 			ConventionAPIRoutePrefixKey: {
 				Required:    false,
 				Description: "Prefix HTTP route backend — mặc định /api",
+			},
+			ConventionRedisURLKey: {
+				Required:    false,
+				Description: "Inject bởi Platform khi bật Redis addon — app đọc từ runtime env",
+			},
+			ConventionRedisTTLKey: {
+				Required:    false,
+				Description: "TTL mặc định (giây) gợi ý khi app SET key — inject bởi Platform",
 			},
 		},
 	}

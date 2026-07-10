@@ -145,25 +145,30 @@ func (h *Handler) applyProjectDeploy(ctx context.Context, p projectRow, env, ima
 		h.markDeploymentDeployPhase(ctx, deployID, imageRef)
 	}
 	if h.argoEnabled() {
-		appName, appURL, err := h.ensureArgoApplication(ctx, p, params.Environment, imageTag)
+		repo, _ := h.getProjectRepo(ctx, p.ID)
+		if err := h.validateDeployImagesMatchLayout(ctx, p, repo, params, imageTag); err != nil {
+			if deployID > 0 {
+				h.markDeploymentFailed(ctx, deployID, "deploy", err.Error())
+			}
+			return nil, err
+		}
+		appName, appURL, err := h.applyArgoDeploy(ctx, p, repo, params, imageTag, clusterID, deployID)
 		if err != nil {
 			if deployID > 0 {
 				h.markDeploymentFailed(ctx, deployID, "deploy", "ArgoCD apply: "+err.Error())
 			}
-			return nil, fmt.Errorf("argocd application: %w", err)
+			return nil, fmt.Errorf("argocd deploy: %w", err)
 		}
-		if deployID > 0 {
-			_, _ = h.db.Exec(ctx, `
-				UPDATE project_deployments SET deploy_status='running', runtime_status='pending',
-					runtime_detail=$1, updated_at=now()
-				WHERE id=$2`, "ArgoCD application queued: "+appName, deployID)
+		_ = h.syncProjectDomainsForEnv(ctx, p, params.Environment, clusterID, &params, deployID)
+		if deployID > 0 && asyncRuntime {
+			go h.finishDeployRuntime(deployID, p, params, imageTag, clusterID)
 		}
 		result := map[string]any{
 			"status":          "accepted",
 			"environment":     params.Environment,
 			"namespace":       params.Namespace,
 			"image":           deployImageRef(params),
-			"deployments":     []string{params.PrimaryService().Name},
+			"deployments":     serviceNames(params),
 			"deployment":      params.PrimaryService().Name,
 			"deployment_mode": "argocd",
 			"argocd_app":      appName,
@@ -332,6 +337,10 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 	if deployID <= 0 || h.rancher == nil || !h.rancher.Enabled() {
 		return
 	}
+	if h.argoEnabled() {
+		h.finishArgoDeployRuntimeSync(ctx, deployID, p, params, imageTag)
+		return
+	}
 	svcs := params.EffectiveServices()
 	var lastRollout rancher.DeploymentRolloutStatus
 	var waitErr error
@@ -428,4 +437,15 @@ func (h *Handler) finishDeployRuntimeSync(ctx context.Context, deployID int64, p
 
 func deployImageRef(p deploy.Params) string {
 	return p.ImageRef()
+}
+
+func serviceNames(params deploy.Params) []string {
+	svcs := params.EffectiveServices()
+	out := make([]string, 0, len(svcs))
+	for _, svc := range svcs {
+		if name := strings.TrimSpace(svc.Name); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }

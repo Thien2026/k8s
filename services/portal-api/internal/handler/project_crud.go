@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/auth"
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
+	"github.com/Thien2026/k8s/services/portal-api/internal/gitops"
 	"github.com/Thien2026/k8s/services/portal-api/internal/plugins"
 	"github.com/Thien2026/k8s/services/portal-api/internal/registry"
 	"github.com/go-chi/chi/v5"
@@ -183,16 +185,18 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Purge K8s/Harbor có thể >60s — không gắn với request context để client timeout không hủy giữa chừng.
+	purgeCtx := context.WithoutCancel(r.Context())
 	if purgeK8s && h.rancher != nil && h.rancher.Enabled() {
 		for _, ns := range []string{p.NamespaceDev, p.NamespaceProd} {
 			if strings.TrimSpace(ns) == "" {
 				continue
 			}
-			if err := h.rancher.PurgeNamespace(r.Context(), cid, ns); err != nil {
+			if err := h.rancher.PurgeNamespace(purgeCtx, cid, ns); err != nil {
 				warnings = append(warnings, fmt.Sprintf("Namespace %s: %s", ns, err.Error()))
 				continue
 			}
-			if err := h.rancher.WaitNamespaceDeleted(r.Context(), cid, ns, 90*time.Second); err != nil {
+			if err := h.rancher.WaitNamespaceDeleted(purgeCtx, cid, ns, 90*time.Second); err != nil {
 				warnings = append(warnings, err.Error())
 			} else {
 				purged = append(purged, "k8s:"+ns)
@@ -205,11 +209,17 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		harborName = p.Slug
 	}
 	if strings.EqualFold(strings.TrimSpace(p.RegistryProvider), "harbor") && h.registry != nil {
-		if err := h.registry.Deprovision(r.Context(), p.RegistryProvider, p.Slug, harborName); err != nil {
+		if err := h.registry.Deprovision(purgeCtx, p.RegistryProvider, p.Slug, harborName); err != nil {
 			warnings = append(warnings, fmt.Sprintf("Harbor project %s: %s", harborName, err.Error()))
 		} else {
 			purged = append(purged, "harbor:"+harborName)
 		}
+	}
+
+	if err := h.deleteGitOpsProjectFolder(purgeCtx, p.Slug); err != nil {
+		warnings = append(warnings, "GitOps scaffold: "+err.Error())
+	} else {
+		purged = append(purged, "gitops:"+p.Slug)
 	}
 
 	_, err = h.db.Exec(r.Context(), `DELETE FROM projects WHERE id=$1`, p.ID)
@@ -227,8 +237,21 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 		"slug":     slug,
 		"purged":   purged,
 		"warnings": warnings,
-		"note":     "Đã xóa metadata DB, namespace K8s, Harbor và ArgoCD app (nếu có). GitHub Actions / GHCR cloud không xóa.",
+		"note":     "Đã xóa metadata DB, namespace K8s, Harbor, GitOps scaffold và ArgoCD app (nếu có). GitHub Actions / GHCR cloud không xóa.",
 	})
+}
+
+func (h *Handler) deleteGitOpsProjectFolder(ctx context.Context, slug string) error {
+	g := h.loadGitOpsConfig(ctx)
+	if !g.Configured || strings.TrimSpace(g.PushToken) == "" {
+		return nil
+	}
+	ref, err := gitops.ParseRepoURL(g.RepoURL)
+	if err != nil {
+		return err
+	}
+	client := gitops.NewClient()
+	return gitops.DeleteProjectFolder(ctx, client, g.PushToken, ref, g.BasePath, slug, g.RepoBranch)
 }
 
 func (h *Handler) PatchProject(w http.ResponseWriter, r *http.Request) {

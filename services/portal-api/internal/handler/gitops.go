@@ -264,6 +264,8 @@ func (h *Handler) PostProjectGitOpsScaffold(w http.ResponseWriter, r *http.Reque
 	repo, _ := h.getProjectRepo(r.Context(), p.ID)
 	devParams := h.buildDeployParams(r.Context(), p, repo, "dev", "latest", false)
 	prodParams := h.buildDeployParams(r.Context(), p, repo, "prod", "latest", false)
+	devParams.ImagePullSecret = h.deployPullSecretName(p)
+	prodParams.ImagePullSecret = h.deployPullSecretName(p)
 	plat := domains.Platform{Domain: h.cfg.PlatformDomain}
 	devHost := h.primaryDomainHost(r.Context(), p.ID, "dev")
 	if devHost == "" {

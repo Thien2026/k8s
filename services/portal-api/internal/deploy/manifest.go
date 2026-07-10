@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Manifest gồm Deployment + Service JSON (apply qua Rancher).
@@ -194,55 +196,31 @@ func K8sManifestForService(p Params, svc ServiceDef) (Manifest, error) {
 		return Manifest{}, err
 	}
 
-	yaml := fmt.Sprintf(`# Deployment + Service cho %s / %s (%s)
-# Image: %s
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  replicas: %d
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
-  selector:
-    matchLabels:
-      app: %s
-  template:
-    metadata:
-      labels:
-        app: %s
-    spec:
-      containers:
-        - name: %s
-          image: %s
-          ports:
-            - containerPort: %d
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: %s
-  namespace: %s
-spec:
-  selector:
-    app: %s
-  ports:
-    - port: 80
-      targetPort: %d
-`, p.ProjectName, name, p.Environment, image, name, ns, replicas, name, name, name, image, port, name, ns, name, port)
+	yamlText, err := marshalManifestYAML(p, name, image, dep, svcObj)
+	if err != nil {
+		return Manifest{}, err
+	}
 
 	return Manifest{
 		ServiceName: name,
 		Filename:    fmt.Sprintf("k8s/%s-%s-%s.yaml", p.ProjectSlug, name, p.Environment),
 		Deployment:  depJSON,
 		Service:     svcJSON,
-		YAML:        yaml,
+		YAML:        yamlText,
 	}, nil
+}
+
+func marshalManifestYAML(p Params, name, image string, dep, svcObj map[string]any) (string, error) {
+	depBytes, err := yaml.Marshal(dep)
+	if err != nil {
+		return "", err
+	}
+	svcBytes, err := yaml.Marshal(svcObj)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("# Deployment + Service cho %s / %s (%s)\n# Image: %s\n---\n%s---\n%s",
+		p.ProjectName, name, p.Environment, image, depBytes, svcBytes), nil
 }
 
 // IngressRoutesFromServices sinh route Ingress — path dài hơn (/api) trước /; bỏ qua internal.

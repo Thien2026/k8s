@@ -3,3 +3,9 @@ vars:
   API_ROUTE_PREFIX:
     required: false
     description: Prefix HTTP route backend — mặc định /api
+  REDIS_URL:
+    required: false
+    description: Platform inject khi bật Redis addon — redis:// trong cluster
+  REDIS_KEY_TTL_SECONDS:
+    required: false
+    description: TTL mặc định (giây) gợi ý cho SET — Platform inject theo quota addon

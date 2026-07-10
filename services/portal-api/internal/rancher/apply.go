@@ -84,6 +84,20 @@ func (c *Client) PatchNamespacedObject(ctx context.Context, clusterOverride, api
 	return err
 }
 
+// MergePatchNamespacedObject áp dụng strategic merge patch lên resource namespaced.
+func (c *Client) MergePatchNamespacedObject(ctx context.Context, clusterOverride, apiPath, namespace, name string, patch []byte) error {
+	if !c.Enabled() {
+		return fmt.Errorf("rancher not configured")
+	}
+	clusterID, err := c.ClusterID(ctx, clusterOverride)
+	if err != nil {
+		return err
+	}
+	item := fmt.Sprintf("/k8s/clusters/%s%s/%s", clusterID, namespacedAPIPath(apiPath, namespace), name)
+	_, _, err = c.do(ctx, http.MethodPatch, item, patch, "application/merge-patch+json")
+	return err
+}
+
 // ApplyDeploymentAndService đảm bảo namespace rồi apply Deployment + Service.
 func (c *Client) ApplyDeploymentAndService(ctx context.Context, clusterOverride, namespace string, deployment, service []byte) error {
 	if err := c.EnsureNamespace(ctx, clusterOverride, namespace); err != nil {

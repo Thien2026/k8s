@@ -55,6 +55,29 @@ func TestReconcileBuildFromStepsClearsGitHubFalseFail(t *testing.T) {
 	}
 }
 
+func TestReconcilePlatformHookFalseFailure(t *testing.T) {
+	d := &deploymentRow{
+		BuildStatus:    "failed",
+		DeployStatus:   "success",
+		RuntimeStatus:  "running",
+		ErrorPhase:     "build",
+		ErrorMessage:   "GitHub Actions: failure",
+		BuildSteps: []buildStepView{
+			{Name: "Build and push Api", Status: "success"},
+			{Name: "Build and push Web", Status: "success"},
+			{Name: "Deploy to Platform", Status: "failed"},
+		},
+	}
+	reconcilePlatformHookFalseFailure(d)
+	if d.BuildStatus != "success" || d.ErrorMessage != "" {
+		t.Fatalf("expected cleared false hook fail, got build=%s err=%q", d.BuildStatus, d.ErrorMessage)
+	}
+	reconcileDeploymentRow(d)
+	if d.Status == "failed" {
+		t.Fatalf("status should not be failed after reconcile")
+	}
+}
+
 func TestReconcileBuildFailSkipsDownstream(t *testing.T) {
 	d := &deploymentRow{
 		BuildStatus:    "failed",

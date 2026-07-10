@@ -47,9 +47,12 @@ func (c *Client) PurgeNamespace(ctx context.Context, clusterOverride, name strin
 		apiPath  string
 		resource string
 	}{
+		{"/apis/apps/v1/statefulsets", "statefulsets"},
 		{"/apis/apps/v1/deployments", "deployments"},
 		{"/api/v1/services", "services"},
 		{"/apis/networking.k8s.io/v1/ingresses", "ingresses"},
+		{"/api/v1/secrets", "secrets"},
+		{"/api/v1/configmaps", "configmaps"},
 	} {
 		list, err := c.ListK8s(ctx, clusterOverride, kind.resource, name, 1, 200)
 		if err != nil {

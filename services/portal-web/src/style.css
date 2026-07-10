@@ -3147,6 +3147,64 @@ tr.dns-row td {
   opacity: 1;
 }
 
+/* ── Global loading overlay (delete, fetch, deploy…) ── */
+.app-loading-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 12000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 6, 14, 0.78);
+  backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 0.22s ease;
+  pointer-events: all;
+}
+
+.app-loading-overlay.show {
+  opacity: 1;
+}
+
+.app-loading-card {
+  min-width: 260px;
+  max-width: 360px;
+  padding: 28px 32px 24px;
+  border-radius: 18px;
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  background: linear-gradient(165deg, rgba(22, 28, 48, 0.98), rgba(14, 18, 32, 0.98));
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  text-align: center;
+}
+
+.app-loading-spinner {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  border: 3px solid rgba(139, 92, 246, 0.2);
+  border-top-color: #a78bfa;
+  animation: app-loading-spin 0.85s linear infinite;
+}
+
+@keyframes app-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
+.app-loading-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.app-loading-detail {
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
 .ui-dialog {
   position: relative;
   width: min(440px, 100%);
@@ -3461,6 +3519,25 @@ tr.dns-row td {
   background: var(--purple-dim);
 }
 
+.addon-redis-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.addon-redis-lead {
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.addon-redis-collapsible.deploy-collapsible {
+  margin-bottom: 12px;
+}
+
+.addon-redis-collapsible .deploy-collapsible-body {
+  padding-top: 4px;
+}
+
 .addon-redis-section {
   margin-top: 16px;
   padding-top: 12px;
@@ -3584,8 +3661,262 @@ tr.dns-row td {
   font-size: 12px;
 }
 
+.addon-redis-monitor-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.addon-redis-stats-ts {
+  font-size: 12px;
+}
+
+.addon-redis-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.addon-redis-stat {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.22);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.addon-redis-stat strong {
+  font-size: 15px;
+  color: #e9d5ff;
+}
+
+.addon-redis-stat-sub {
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.addon-redis-keys-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.addon-redis-keys-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+  min-width: 200px;
+}
+
+.addon-redis-keys-toolbar input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+}
+
+.addon-redis-keys-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  max-height: 360px;
+}
+
+.addon-redis-keys-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.addon-redis-keys-table th,
+.addon-redis-keys-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  text-align: left;
+  vertical-align: top;
+}
+
+.addon-redis-keys-table th {
+  position: sticky;
+  top: 0;
+  background: rgba(15, 15, 26, 0.95);
+  z-index: 1;
+}
+
+.addon-redis-keys-table tr {
+  cursor: pointer;
+}
+
+.addon-redis-keys-table tr:hover {
+  background: rgba(139, 92, 246, 0.08);
+}
+
+.addon-redis-keys-table tr.selected {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+.addon-redis-key-name {
+  word-break: break-all;
+  font-size: 11px;
+}
+
+.addon-redis-key-preview {
+  color: var(--muted);
+  max-width: 280px;
+  word-break: break-word;
+}
+
+.addon-redis-keys-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  gap: 10px;
+}
+
 .addon-redis-app-probe {
   margin: 8px 0;
+}
+
+.addon-redis-stat-wide {
+  grid-column: span 2;
+}
+
+.addon-redis-sparklines {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 14px 0;
+}
+
+.addon-redis-sparkline {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.18);
+  padding: 14px 16px;
+}
+
+.addon-redis-spark-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.addon-redis-spark-head strong {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.addon-redis-spark-head .muted {
+  font-size: 14px;
+}
+
+.addon-redis-sparkline .chart-interactive {
+  margin: 0;
+}
+
+.addon-redis-sparkline .chart-interactive .chart-svg {
+  height: 240px;
+}
+
+.addon-redis-sparkline .chart-interactive .chart-svg text {
+  font-size: 13px;
+}
+
+.addon-redis-sparkline .chart-interactive .chart-tooltip .tt-time {
+  font-size: 12px;
+}
+
+.addon-redis-sparkline .chart-interactive .chart-tooltip .tt-val {
+  font-size: 16px;
+}
+
+.addon-redis-spark-meta {
+  margin: 10px 0 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.addon-redis-policy-box,
+.addon-redis-doctor {
+  font-size: 12px;
+  margin: 10px 0;
+}
+
+.addon-redis-doctor {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+}
+
+.addon-redis-slowlog {
+  font-size: 11px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.addon-redis-keys-warn {
+  margin-bottom: 10px;
+}
+
+.addon-redis-ttl-infinite {
+  color: var(--warn, #e6a23c);
+  font-weight: 600;
+}
+
+.addon-redis-key-full {
+  margin-top: 10px;
+  font-size: 12px;
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.addon-redis-doc-box {
+  margin: 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+  font-size: 13px;
+}
+
+.addon-redis-doc-list {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.addon-redis-doc-list li {
+  margin-bottom: 4px;
+}
+
+.promote-redis-prod-btn {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.addon-quota-field select {
+  min-width: 140px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
 }
 
 .addon-quota-form {

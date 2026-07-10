@@ -63,18 +63,20 @@ function openCreateProjectDialog(providers, defaultProvider, userItems) {
       const submitBtn = form.querySelector('button[type="submit"]');
       submitBtn.disabled = true;
       try {
-        const res = await api("/api/v1/projects", {
-          method: "POST",
-          body: {
-            name: fd.get("name"),
-            slug: fd.get("slug"),
-            description: fd.get("description"),
-            namespace_dev: fd.get("namespace_dev"),
-            namespace_prod: fd.get("namespace_prod"),
-            registry_provider: fd.get("registry_provider") || "ghcr",
-            member_ids: memberIds,
-          },
-        });
+        const res = await withAppLoading(function () {
+          return api("/api/v1/projects", {
+            method: "POST",
+            body: {
+              name: fd.get("name"),
+              slug: fd.get("slug"),
+              description: fd.get("description"),
+              namespace_dev: fd.get("namespace_dev"),
+              namespace_prod: fd.get("namespace_prod"),
+              registry_provider: fd.get("registry_provider") || "ghcr",
+              member_ids: memberIds,
+            },
+          });
+        }, { title: "Đang tạo project…", detail: "Khởi tạo namespace và registry" });
         close(res);
       } catch (err) {
         toastError(err.message);
@@ -466,12 +468,19 @@ function registrySelectHtml(providers, selected, defaultProvider) {
 }
 
 async function pagePlatformProjects(main) {
-  main.innerHTML = '<p class="loading">Đang tải…</p>';
-  const projects = await api("/api/v1/projects");
-  const providersRes = await api("/api/v1/registry/providers").catch(function () { return { items: [], default: "ghcr" }; });
+  showAppLoading("Đang tải danh sách project…");
+  let projects;
+  let providersRes;
+  let users;
+  try {
+    projects = await api("/api/v1/projects");
+    providersRes = await api("/api/v1/registry/providers").catch(function () { return { items: [], default: "ghcr" }; });
+    users = canManagePlatformProjects() ? await api("/api/v1/team/users").catch(() => ({ items: [] })) : { items: [] };
+  } finally {
+    hideAppLoading();
+  }
   const providers = providersRes.items || [];
   const defaultProvider = providersRes.default || "ghcr";
-  const users = canManagePlatformProjects() ? await api("/api/v1/team/users").catch(() => ({ items: [] })) : { items: [] };
   const userItems = users.items || [];
 
   let page = 1;
@@ -541,6 +550,7 @@ async function pagePlatformProjects(main) {
             "Namespace dev: " + nsDev + " — xóa pod, deployment, ingress, secret",
             "Namespace prod: " + nsProd + " — xóa toàn bộ workload",
             "Harbor project (nếu dùng Harbor) — xóa image trên VPS",
+            "GitOps scaffold apps/{slug} — xóa manifest cũ (tránh tạo lại bị dính env)",
             "DB platform — lịch sử deploy, env, domains (GitHub/GHCR cloud giữ nguyên)",
           ],
           confirmText: "Xóa vĩnh viễn",
@@ -548,9 +558,15 @@ async function pagePlatformProjects(main) {
         });
         if (!ok) return;
         try {
-          const res = await api("/api/v1/projects/" + encodeURIComponent(slug), {
-            method: "DELETE",
-            body: { purge_k8s: true },
+          const res = await withAppLoading(function () {
+            return api("/api/v1/projects/" + encodeURIComponent(slug), {
+              method: "DELETE",
+              body: { purge_k8s: true },
+              timeout: 300000,
+            });
+          }, {
+            title: "Đang xóa project…",
+            detail: "Dọn namespace, Harbor, GitOps — có thể mất 1–3 phút",
           });
           const idx = projects.findIndex(function (p) { return p.slug === slug; });
           if (idx >= 0) projects.splice(idx, 1);

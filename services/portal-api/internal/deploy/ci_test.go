@@ -148,4 +148,10 @@ func TestGitHubWorkflowGitOpsSyncStep(t *testing.T) {
 	if !strings.Contains(wf.Content, "apps/shop/overlays/dev/kustomization.yaml") {
 		t.Fatal("expected gitops overlay path")
 	}
+	if strings.Contains(wf.Content, "python3 - <<'PY'\nfrom pathlib") {
+		t.Fatal("python heredoc must be indented inside run block (invalid YAML)")
+	}
+	if !strings.Contains(wf.Content, "python3 - <<'PY'\n          from pathlib") {
+		t.Fatal("expected indented python heredoc in gitops sync step")
+	}
 }

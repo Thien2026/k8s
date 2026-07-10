@@ -25,6 +25,7 @@ func reconcileDeploymentRow(d *deploymentRow) {
 	if d == nil {
 		return
 	}
+	reconcilePlatformHookFalseFailure(d)
 	propagateSkippedDownstream(d)
 
 	if strings.TrimSpace(d.ErrorMessage) != "" {
@@ -102,6 +103,14 @@ func reconcileDeploymentRow(d *deploymentRow) {
 func propagateSkippedDownstream(d *deploymentRow) {
 	bs := strings.ToLower(strings.TrimSpace(d.BuildStatus))
 	if bs != "failed" && bs != "cancelled" {
+		return
+	}
+	// Cluster đã deploy — không ghi đè khi chỉ hook GitHub fail ảo.
+	if stageStatus(d.DeployStatus) == "success" {
+		return
+	}
+	if (stageStatus(d.RuntimeStatus) == "success" || stageStatus(d.RuntimeStatus) == "running") &&
+		strings.HasPrefix(strings.ToLower(strings.TrimSpace(d.ErrorMessage)), "github actions:") {
 		return
 	}
 	markSkipped := func(field *string) {
@@ -197,12 +206,55 @@ func deploymentFailedMayRecover(d deploymentRow) bool {
 		"containercreating",
 		"certificate is valid for ingress.local",
 		"failed to verify certificate",
+		"không tồn tại trên cluster",
+		"không có pod",
+		"đang chờ argocd",
 	} {
 		if strings.Contains(msg, frag) {
 			return true
 		}
 	}
 	return false
+}
+
+// reconcilePlatformHookFalseFailure — build/push OK, cluster đã deploy nhưng step curl hook GitHub fail (502/timeout).
+func reconcilePlatformHookFalseFailure(d *deploymentRow) {
+	if d == nil {
+		return
+	}
+	dep := stageStatus(d.DeployStatus)
+	rt := stageStatus(d.RuntimeStatus)
+	if dep != "success" && dep != "running" && rt != "success" && rt != "running" {
+		return
+	}
+	msg := strings.ToLower(strings.TrimSpace(d.ErrorMessage))
+	if !strings.HasPrefix(msg, "github actions:") && d.ErrorPhase != "build" {
+		return
+	}
+	buildOK := len(d.BuildSteps) > 0
+	hookFailed := false
+	for _, s := range d.BuildSteps {
+		name := strings.ToLower(strings.TrimSpace(s.Name))
+		st := stageStatus(s.Status)
+		if strings.Contains(name, "deploy to platform") {
+			if st == "failed" {
+				hookFailed = true
+			}
+			continue
+		}
+		if strings.HasPrefix(name, "post ") {
+			continue
+		}
+		if st != "success" && st != "skipped" {
+			buildOK = false
+		}
+	}
+	if !buildOK || !hookFailed {
+		return
+	}
+	d.BuildStatus = "success"
+	d.ErrorPhase = ""
+	d.ErrorMessage = ""
 }
 
 func deploymentNeedsFastPoll(d deploymentRow) bool {

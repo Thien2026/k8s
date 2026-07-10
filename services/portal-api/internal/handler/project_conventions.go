@@ -41,6 +41,12 @@ func (h *Handler) backFrontConventionsPayload(ctx context.Context, projectID int
 		"recommended_runtime": map[string]string{
 			deploy.ConventionAPIRoutePrefixKey: deploy.ConventionAPIBasePath,
 		},
+		"redis_addon": map[string]any{
+			"enabled":     true,
+			"runtime_keys": []string{deploy.ConventionRedisURLKey, deploy.ConventionRedisTTLKey},
+			"doc_path":    "docs/REDIS-ADDON.md",
+			"probe_paths": []string{"/api/redis/ping", "/api/redis/demo"},
+		},
 	}
 }
 

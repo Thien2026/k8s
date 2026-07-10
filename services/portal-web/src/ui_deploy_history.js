@@ -11,11 +11,18 @@ function renderPromotePrepItem(it, slug) {
         esc(slug) +
         "/" +
         esc(it.tab) +
+        (it.id === "redis_prod" ? "/redis" : "") +
         '" data-promote-tab="' +
         esc(it.tab) +
         '" data-promote-env="' +
         esc(prepEnv) +
         '">Cấu hình →</a>'
+      : "";
+  const actionBtn =
+    it.id === "redis_prod" && !it.ok && !isWarn
+      ? ' <button type="button" class="btn-ghost btn-sm promote-redis-prod-btn" data-slug="' +
+        esc(slug) +
+        '">Provision Redis prod</button>'
       : "";
   return (
     '<li class="promote-prep-item ' + cls + '">' +
@@ -23,6 +30,7 @@ function renderPromotePrepItem(it, slug) {
     "<span><strong>" + esc(it.label) + "</strong>" +
     (it.detail ? '<span class="muted"> — ' + esc(it.detail) + "</span>" : "") +
     tabLink +
+    actionBtn +
     "</span></li>"
   );
 }
@@ -85,6 +93,32 @@ function bindPromotePrepLinks(slug) {
       if (tab === "env") {
         state.projectEnv = prepEnv || "prod";
         localStorage.setItem("project-env", prepEnv || "prod");
+      }
+      if (tab === "addons") {
+        state.projectEnv = "prod";
+        localStorage.setItem("project-env", "prod");
+      }
+    };
+  });
+  document.querySelectorAll(".promote-redis-prod-btn").forEach(function (btn) {
+    btn.onclick = async function () {
+      const s = btn.dataset.slug;
+      if (!s) return;
+      btn.disabled = true;
+      try {
+        const res = await api("/api/v1/projects/" + encodeURIComponent(s) + "/addons/redis/promote-prod", {
+          method: "POST",
+          body: {},
+        });
+        toastSuccess(res.message || "Đã provision Redis prod");
+        const main = document.getElementById("main-content");
+        const p = state.currentProject;
+        if (main && p && state.projectTab === "promote") {
+          await loadProjectPromote(main, s, p);
+        }
+      } catch (err) {
+        toastError(err.message || "Provision Redis prod thất bại");
+        btn.disabled = false;
       }
     };
   });

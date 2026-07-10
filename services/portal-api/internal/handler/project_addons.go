@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,19 +29,23 @@ type addonCatalogItem struct {
 }
 
 type projectAddonView struct {
-	Engine        string `json:"engine"`
-	Environment   string `json:"environment"`
-	Status        string `json:"status"`
-	K8sRelease    string `json:"k8s_release,omitempty"`
-	MaxMemoryMB   int    `json:"max_memory_mb"`
-	MaxClients    int    `json:"max_clients"`
-	HasConnection bool   `json:"has_connection"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	Engine            string `json:"engine"`
+	Environment       string `json:"environment"`
+	Status            string `json:"status"`
+	K8sRelease        string `json:"k8s_release,omitempty"`
+	MaxMemoryMB       int    `json:"max_memory_mb"`
+	MaxClients        int    `json:"max_clients"`
+	MaxmemoryPolicy   string `json:"maxmemory_policy"`
+	DefaultKeyTTLSec  int    `json:"default_key_ttl_sec"`
+	HasConnection     bool   `json:"has_connection"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
 }
 
 type redisAddonAPIView struct {
 	projectAddonView
+	PolicyHint                    string             `json:"policy_hint,omitempty"`
+	GrafanaDashboardURL           string             `json:"grafana_dashboard_url,omitempty"`
 	ConnectionURLMasked           string             `json:"connection_url_masked,omitempty"`
 	ConnectionURL                 string             `json:"connection_url,omitempty"`
 	ConnectionURLExternalMasked   string             `json:"connection_url_external_masked,omitempty"`
@@ -89,6 +94,7 @@ func validAddonEnv(env string) bool {
 func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]projectAddonView, error) {
 	rows, err := h.db.Query(ctx, `
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
+		       maxmemory_policy, default_key_ttl_sec,
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1
@@ -103,7 +109,8 @@ func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]pro
 		var v projectAddonView
 		if err := rows.Scan(
 			&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
-			&v.MaxMemoryMB, &v.MaxClients, &v.HasConnection,
+			&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
+			&v.HasConnection,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -117,16 +124,20 @@ func (h *Handler) getProjectAddon(ctx context.Context, projectID int64, engine, 
 	var v projectAddonView
 	err := h.db.QueryRow(ctx, `
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
+		       maxmemory_policy, default_key_ttl_sec,
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1 AND engine = $2 AND environment = $3`,
 		projectID, engine, env).Scan(
 		&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
-		&v.MaxMemoryMB, &v.MaxClients, &v.HasConnection,
-		&v.CreatedAt, &v.UpdatedAt,
+		&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
+		&v.HasConnection, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(v.MaxmemoryPolicy) == "" {
+		v.MaxmemoryPolicy = "allkeys-lru"
 	}
 	return &v, nil
 }
@@ -260,7 +271,8 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 
 	limitMi := redisMemoryLimitMi(addon.MaxMemoryMB)
 	requestMi := redisRequestMi(limitMi)
-	conf := fmt.Sprintf("bind 0.0.0.0\nport %d\nappendonly yes\nmaxmemory %dmb\nmaxmemory-policy allkeys-lru\nmaxclients %d\n", redisAddonServicePort, limitMi, addon.MaxClients)
+	policy := normalizeRedisMaxmemoryPolicy(addon.MaxmemoryPolicy)
+	conf := fmt.Sprintf("bind 0.0.0.0\nport %d\nappendonly yes\nmaxmemory %dmb\nmaxmemory-policy %s\nmaxclients %d\n", redisAddonServicePort, limitMi, policy, addon.MaxClients)
 	confMap := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "ConfigMap",
@@ -294,6 +306,11 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 					"port":       redisAddonServicePort,
 					"targetPort": redisAddonServicePort,
 				},
+				{
+					"name":       "metrics",
+					"port":       redisExporterPort,
+					"targetPort": redisExporterPort,
+				},
 			},
 			"selector": map[string]string{
 				"app.kubernetes.io/name":     "redis",
@@ -310,6 +327,11 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 				"port":       redisAddonServicePort,
 				"targetPort": redisAddonServicePort,
 				"nodePort":   nodePort,
+			},
+			{
+				"name":       "metrics",
+				"port":       redisExporterPort,
+				"targetPort": redisExporterPort,
 			},
 		}
 	}
@@ -396,6 +418,7 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 								"timeoutSeconds":      3,
 							},
 						},
+						redisExporterContainer(authSecretName),
 					},
 					"volumes": []map[string]any{
 						{
@@ -432,7 +455,7 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 		return "", fmt.Errorf("statefulset redis: %w", err)
 	}
 	if env == "prod" {
-		if err := h.applyRedisNetworkPolicy(ctx, release, ns); err != nil {
+		if err := h.applyRedisNetworkPolicy(ctx, release, ns, p.Slug); err != nil {
 			return "", fmt.Errorf("networkpolicy redis: %w", err)
 		}
 	}
@@ -457,6 +480,16 @@ func (h *Handler) applyRedisAddonObjects(ctx context.Context, p projectRow, env 
 
 	if err := h.upsertRuntimeEnvVar(ctx, p.ID, env, "REDIS_URL", connURL, true); err != nil {
 		return "", fmt.Errorf("save env REDIS_URL: %w", err)
+	}
+	ttl := normalizeRedisDefaultKeyTTL(addon.DefaultKeyTTLSec)
+	if ttl > 0 {
+		if err := h.upsertRuntimeEnvVar(ctx, p.ID, env, "REDIS_KEY_TTL_SECONDS", strconv.Itoa(ttl), false); err != nil {
+			return "", fmt.Errorf("save env REDIS_KEY_TTL_SECONDS: %w", err)
+		}
+	}
+	smJSON, _ := json.Marshal(redisExporterServiceMonitor(release, ns))
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/apis/monitoring.coreos.com/v1/servicemonitors", ns, smJSON); err != nil {
+		return "", fmt.Errorf("servicemonitor redis-exporter: %w", err)
 	}
 	if err := h.syncAppEnvSecret(ctx, p, env, "", true); err != nil {
 		return "", fmt.Errorf("sync app-env: %w", err)
@@ -540,6 +573,12 @@ func (h *Handler) reconcileRedisAddonStatus(ctx context.Context, p projectRow, a
 
 func (h *Handler) buildRedisAddonAPIView(ctx context.Context, p projectRow, v projectAddonView, exposeFullURL bool) redisAddonAPIView {
 	out := redisAddonAPIView{projectAddonView: v}
+	out.PolicyHint = redisMaxmemoryPolicyHint(v.MaxmemoryPolicy)
+	release := v.K8sRelease
+	if release == "" {
+		release = redisAddonRelease(p.Slug, v.Environment)
+	}
+	out.GrafanaDashboardURL = grafanaRedisAddonDashboardURL(h.cfg.GrafanaURL, h.projectNamespace(p, v.Environment), release)
 	if !v.HasConnection {
 		return out
 	}
@@ -691,9 +730,11 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Environment string `json:"environment"`
-		MaxMemoryMB int    `json:"max_memory_mb"`
-		MaxClients  int    `json:"max_clients"`
+		Environment      string `json:"environment"`
+		MaxMemoryMB      int    `json:"max_memory_mb"`
+		MaxClients       int    `json:"max_clients"`
+		MaxmemoryPolicy  string `json:"maxmemory_policy"`
+		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	env := strings.TrimSpace(body.Environment)
@@ -716,6 +757,11 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 	if maxClients < 10 || maxClients > 1000 {
 		maxClients = 100
 	}
+	policy := normalizeRedisMaxmemoryPolicy(body.MaxmemoryPolicy)
+	defaultTTL := normalizeRedisDefaultKeyTTL(body.DefaultKeyTTLSec)
+	if defaultTTL == 0 && body.DefaultKeyTTLSec == 0 {
+		defaultTTL = 86400
+	}
 
 	ns := h.projectNamespace(p, env)
 	if ns == "" {
@@ -725,14 +771,16 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 
 	release := p.Slug + "-" + engine + "-" + env
 	_, err := h.db.Exec(r.Context(), `
-		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients)
-		VALUES ($1, $2, $3, 'pending', $4, $5, $6)
+		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, maxmemory_policy, default_key_ttl_sec)
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8)
 		ON CONFLICT (project_id, engine, environment) DO UPDATE SET
 			status = CASE WHEN project_data_addons.status IN ('stopped', 'failed') THEN 'pending' ELSE project_data_addons.status END,
 			max_memory_mb = EXCLUDED.max_memory_mb,
 			max_clients = EXCLUDED.max_clients,
+			maxmemory_policy = EXCLUDED.maxmemory_policy,
+			default_key_ttl_sec = EXCLUDED.default_key_ttl_sec,
 			updated_at = now()`,
-		p.ID, engine, env, release, maxMem, maxClients)
+		p.ID, engine, env, release, maxMem, maxClients, policy, defaultTTL)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -787,9 +835,11 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		Environment string `json:"environment"`
-		MaxMemoryMB int    `json:"max_memory_mb"`
-		MaxClients  int    `json:"max_clients"`
+		Environment      string `json:"environment"`
+		MaxMemoryMB      int    `json:"max_memory_mb"`
+		MaxClients       int    `json:"max_clients"`
+		MaxmemoryPolicy  string `json:"maxmemory_policy"`
+		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	env := strings.TrimSpace(body.Environment)
@@ -830,6 +880,20 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 			UPDATE project_data_addons SET max_clients=$1, updated_at=now()
 			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
 			item.MaxClients, p.ID, engine, env)
+	}
+	if strings.TrimSpace(body.MaxmemoryPolicy) != "" {
+		item.MaxmemoryPolicy = normalizeRedisMaxmemoryPolicy(body.MaxmemoryPolicy)
+		_, _ = h.db.Exec(r.Context(), `
+			UPDATE project_data_addons SET maxmemory_policy=$1, updated_at=now()
+			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+			item.MaxmemoryPolicy, p.ID, engine, env)
+	}
+	if body.DefaultKeyTTLSec >= 0 && body.DefaultKeyTTLSec <= 2592000 {
+		item.DefaultKeyTTLSec = normalizeRedisDefaultKeyTTL(body.DefaultKeyTTLSec)
+		_, _ = h.db.Exec(r.Context(), `
+			UPDATE project_data_addons SET default_key_ttl_sec=$1, updated_at=now()
+			WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+			item.DefaultKeyTTLSec, p.ID, engine, env)
 	}
 
 	auditAction(r.Context(), h, r, "addon.provision", slug, map[string]any{

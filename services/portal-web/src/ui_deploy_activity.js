@@ -238,17 +238,20 @@ function bindDeployActivityActions(slug, env, promoteReadiness) {
         confirmText: "Promote lên Prod",
       });
       if (!ok) return;
-      setButtonLoading(promoteBtn, true, "Đang promote…");
       try {
-        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote", {
-          method: "POST",
-          body: { image_tag: tag },
+        await withAppLoading(function () {
+          return api("/api/v1/projects/" + encodeURIComponent(slug) + "/deploy/promote", {
+            method: "POST",
+            body: { image_tag: tag },
+            timeout: 300000,
+          });
+        }, {
+          title: "Đang promote lên Prod…",
+          detail: "Sync GitOps, ArgoCD và runtime — có thể mất 1–3 phút",
         });
         navigateAfterPromote(slug, tag);
       } catch (err) {
         toastError(err.message || "Promote prod thất bại");
-      } finally {
-        setButtonLoading(promoteBtn, false, "Promote lên Prod →");
       }
     };
   }

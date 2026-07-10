@@ -461,6 +461,9 @@ function lineChart(points, opts) {
   const color = opts.color || "#6EE7FF";
   const unit = opts.unit || "";
   const digits = opts.digits == null ? 2 : opts.digits;
+  const xTickCount = Math.max(2, Number(opts.xTickCount) || 5);
+  const xLabelFormatter = typeof opts.xLabelFormatter === "function" ? opts.xLabelFormatter : fmtClockFromUnix;
+  const tooltipTimeFormatter = typeof opts.tooltipTimeFormatter === "function" ? opts.tooltipTimeFormatter : fmtChartDateTime;
   if (!points.length) {
     return '<div class="muted">Chưa có dữ liệu timeline</div>';
   }
@@ -490,18 +493,24 @@ function lineChart(points, opts) {
     const y = m.top + ratio * ch;
     yGrid.push({ y: y, val: val });
   }
-  const tickCount = 5;
   const xTicks = [];
-  for (let i = 0; i < tickCount; i++) {
-    const idx = Math.round((points.length - 1) * (i / (tickCount - 1)));
+  for (let i = 0; i < xTickCount; i++) {
+    const idx = Math.round((points.length - 1) * (i / (xTickCount - 1)));
     const ts = Number(points[idx][0]) || 0;
-    xTicks.push({ x: xPos(idx), label: fmtClockFromUnix(ts) });
+    xTicks.push({ x: xPos(idx), label: xLabelFormatter(ts) });
   }
   const last = points[points.length - 1];
   const lastX = xPos(points.length - 1);
   const lastY = yPos(last[1]);
   const chartId = "chart-" + (++chartSeq);
-  chartRegistry.set(chartId, { points: points, color: color, unit: unit, digits: digits, layout: layout });
+  chartRegistry.set(chartId, {
+    points: points,
+    color: color,
+    unit: unit,
+    digits: digits,
+    layout: layout,
+    tooltipTimeFormatter: tooltipTimeFormatter,
+  });
 
   return (
     '<div class="chart-interactive" data-chart-id="' + chartId + '">' +
@@ -591,7 +600,7 @@ function bindInteractiveCharts(root) {
         return {
           px: geom.left + xNorm * geom.width,
           py: geom.top + geom.height * (1 - yNorm),
-          time: fmtChartDateTime(p[0]),
+          time: meta.tooltipTimeFormatter ? meta.tooltipTimeFormatter(p[0]) : fmtChartDateTime(p[0]),
           val: Number(p[1]).toFixed(meta.digits) + unitSuffix,
         };
       });

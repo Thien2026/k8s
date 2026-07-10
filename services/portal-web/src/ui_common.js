@@ -140,8 +140,11 @@ function projectAddonsRoute(slug, engine) {
 const ADDON_SIDEBAR_NAV = {
   redis: [
     { section: "overview", label: "Tổng quan", icon: "◉" },
+    { section: "monitor", label: "Monitor", icon: "📈" },
+    { section: "keys", label: "Dữ liệu", icon: "🗂" },
     { section: "connection", label: "Connection", icon: "🔗" },
     { section: "quota", label: "Quota", icon: "📊" },
+    { section: "play", label: "Playground", icon: "🎮" },
   ],
 };
 

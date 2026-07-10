@@ -31,8 +31,19 @@ frontend/dist/index.html    # hoặc build SPA vào dist/
 |------|---------|
 | `VITE_API_BASE` (build dev) | `/api` |
 | `API_ROUTE_PREFIX` (runtime) | `/api` |
+| `REDIS_URL` (runtime) | Platform inject khi bật **Addons → Redis** |
+| `REDIS_KEY_TTL_SECONDS` (runtime) | TTL mặc định gợi ý khi SET key (tuỳ quota addon) |
 
 Tab **Cấu hình app** trên Console.
+
+### Redis (tuỳ chọn)
+
+1. Console → **Addons** → bật Redis **dev**
+2. App đọc `REDIS_URL` từ runtime env (secret `app-env`)
+3. Thử: `GET /api/redis/ping` · `GET /api/redis/demo` (template backend)
+4. Promote prod → checklist **Redis addon (prod)** → Platform provision instance prod riêng
+
+Chi tiết: `docs/REDIS-ADDON.md` trên repo platform.
 
 ---
 
