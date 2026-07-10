@@ -77,7 +77,11 @@ function buildAddonsSidebarHtml(nav, slug, engine, p, installed) {
     '<a class="nav-link" data-route="addons/' + esc(slug) + '" href="' + projectAddonsRoute(slug) + '" title="Catalog addons">' +
     '<span class="ico">🧩</span><span class="nav-label">Catalog</span></a>';
 
-  const engines = installed.length ? installed.map(function (it) { return it.engine; }) : [];
+  const engines = [];
+  installed.forEach(function (it) {
+    const eng = String(it.engine || "").trim();
+    if (eng && engines.indexOf(eng) < 0) engines.push(eng);
+  });
   if (engine && engines.indexOf(engine) < 0) engines.push(engine);
 
   engines.forEach(function (eng) {
