@@ -50,16 +50,20 @@ else
   echo "WARN: node không có — bỏ qua syntax check (nên build trên máy dev trước)"
 fi
 rm -f "$TMPJS"
-cat >"$DIR/dist/index.html" <<EOF
+cat >"$DIR/dist/index.html" <<'HTMLEOF'
 <!doctype html>
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
     <title>Platform Console</title>
     <style>
-${CSS}
-    </style>
+HTMLEOF
+# Append CSS/JS without shell expanding $ in source
+{
+  printf '%s\n' "${CSS}"
+  echo '    </style>
   </head>
   <body>
     <div class="layout">
@@ -79,10 +83,10 @@ ${CSS}
         <p class="loading">Đang tải…</p>
       </main>
     </div>
-    <script>
-${JS}
-    </script>
+    <script>'
+  printf '%s' "${JS}"
+  echo '</script>
   </body>
-</html>
-EOF
+</html>'
+} >>"$DIR/dist/index.html"
 echo "Built dist/index.html ($(wc -c <"$DIR/dist/index.html") bytes)"

@@ -25,6 +25,18 @@ func TestDeployProfileLabel(t *testing.T) {
 	}
 }
 
+func TestApplySnapshotFields_EmptyLayoutNoSingleBadge(t *testing.T) {
+	var d deploymentRow
+	d.applySnapshotFields("", "feature/minio-files", nil, nil)
+	if d.DeployLayout != "" || d.DeployProfile != "" {
+		t.Fatalf("empty layout must not become single: layout=%q profile=%q", d.DeployLayout, d.DeployProfile)
+	}
+	d.applySnapshotFields("multi", "feature/minio-files", []byte(`[{"name":"api"},{"name":"web"}]`), nil)
+	if d.DeployLayout != deploy.LayoutMulti || d.DeployProfile != "multi · api+web" {
+		t.Fatalf("multi snapshot: layout=%q profile=%q", d.DeployLayout, d.DeployProfile)
+	}
+}
+
 func TestSnapServicesToDefs_ApiWebIngress(t *testing.T) {
 	defs := snapServicesToDefs(
 		[]deployServiceSnap{{Name: "api"}, {Name: "web"}},

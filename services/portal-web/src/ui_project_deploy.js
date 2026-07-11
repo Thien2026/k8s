@@ -46,80 +46,106 @@ async function loadProjectDeploy(main, slug, p, data, env, ns) {
       projectEnvToolbar(slug, p, function () { pageProjectHub(main, slug, "deploy"); }) +
       renderGitOpsProjectCard(slug, gitopsPub, gitopsStatus, canWriteK8s()) +
       renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghReposPlaceholder, canWriteK8s()) +
-      '<div class="card" style="margin-bottom:16px"><h3>Tóm tắt</h3>' +
-      '<div class="meta-chips">' +
-      chip(reg.label || p.registry_provider || "GHCR", reg.provider || p.registry_provider) +
-      chip("Môi trường", env) +
-      chip("Namespace", plan.namespace || ns) +
-      (reg.ready || plan.registry_ready ? '<span class="badge ok">Registry OK</span>' : '<span class="badge warn">Registry chưa sẵn sàng</span>') +
-      "</div>" +
-      (plan.image ? '<p class="muted" style="margin-top:8px">Image: <code>' + esc(plan.image) + "</code></p>" : "") +
-      (repo.auto_deploy_enabled
-        ? '<p class="muted" style="margin-top:6px">Auto-deploy · branch <code>' + esc(repo.branch || "main") + "</code></p>"
-        : "") +
-      "</div>" +
-      renderDeployActivityCard({ loading: true }) +
-      '<div class="card" style="margin-bottom:16px"><h3>Deploy thủ công (fallback)</h3>' +
-      '<p class="muted">Dùng khi cần hotfix nhanh hoặc muốn deploy lại tag cụ thể.</p>' +
-      '<form id="deploy-apply-form" class="login-form" style="max-width:420px">' +
-      '<label>Image tag<input name="image_tag" value="latest" placeholder="latest hoặc git sha" /></label>' +
-      (plan.can_apply && canWriteK8s()
-        ? '<button type="submit" class="btn-primary" style="margin-top:12px">Deploy ngay</button>'
-        : '<p class="muted" style="margin-top:12px">' +
-          (plan.rancher_ready
-            ? "Bạn không có quyền deploy."
-            : "Rancher chưa sẵn sàng — bật addon Rancher và cài cluster trước.") +
-          "</p>") +
-      "</form></div>" +
+      renderDeployCollapsibleCard(
+        slug,
+        "summary",
+        '<div class="deploy-collapsible-summary-inner">' +
+          '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+          '<div class="deploy-collapsible-title-row"><h3 style="margin:0">Tóm tắt</h3>' +
+          (reg.ready || plan.registry_ready
+            ? '<span class="badge ok">Registry OK</span>'
+            : '<span class="badge warn">Registry?</span>') +
+          "</div></div>",
+        '<div class="meta-chips">' +
+          chip(reg.label || p.registry_provider || "GHCR", reg.provider || p.registry_provider) +
+          chip("Môi trường", env) +
+          chip("Namespace", plan.namespace || ns) +
+          (reg.ready || plan.registry_ready
+            ? '<span class="badge ok">Registry OK</span>'
+            : '<span class="badge warn">Registry chưa sẵn sàng</span>') +
+          "</div>" +
+          (plan.image ? '<p class="muted" style="margin-top:8px">Image: <code>' + esc(plan.image) + "</code></p>" : "") +
+          (repo.auto_deploy_enabled
+            ? '<p class="muted" style="margin-top:6px">Auto-deploy · branch <code>' + esc(repo.branch || "main") + "</code></p>"
+            : ""),
+        false
+      ) +
+      renderDeployActivityCard({ loading: true }, { slug: slug, expectedEnv: env }) +
+      renderDeployCollapsibleCard(
+        slug,
+        "manual",
+        '<div class="deploy-collapsible-summary-inner">' +
+          '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+          '<div class="deploy-collapsible-title-row"><h3 style="margin:0">Deploy thủ công</h3>' +
+          '<span class="badge muted">fallback</span></div></div>',
+        '<p class="muted">Dùng khi cần hotfix nhanh hoặc muốn deploy lại tag cụ thể.</p>' +
+          '<form id="deploy-apply-form" class="login-form" style="max-width:420px">' +
+          '<label>Image tag<input name="image_tag" value="latest" placeholder="latest hoặc git sha" /></label>' +
+          (plan.can_apply && canWriteK8s()
+            ? '<button type="submit" class="btn-primary" style="margin-top:12px">Deploy ngay</button>'
+            : '<p class="muted" style="margin-top:12px">' +
+              (plan.rancher_ready
+                ? "Bạn không có quyền deploy."
+                : "Rancher chưa sẵn sàng — bật addon Rancher và cài cluster trước.") +
+              "</p>") +
+          "</form>",
+        false
+      ) +
       (plan.error
         ? '<div class="card"><p class="error-text">' + esc(plan.error) + "</p></div>"
-        : '<details class="card" style="margin-bottom:16px"><summary style="cursor:pointer"><strong>Nâng cao (Git config, workflow, manifest)</strong></summary>' +
-          '<div style="margin-top:12px">' +
-          '<form id="project-repo-form" class="login-form" style="max-width:560px">' +
-          '<label>Git URL<input name="git_url" type="url" value="' + esc(repo.git_url || "") + '" placeholder="https://github.com/org/repo" /></label>' +
-          '<div class="form-row"><label>Branch<input name="branch" value="' + esc(repo.branch || "main") + '" /></label></div>' +
-          '<label>Dockerfile (để quét)<input name="dockerfile_path" value="' +
-          esc(repo.dockerfile_path || "Dockerfile") +
-          '" placeholder="Dockerfile" /><span class="muted" style="font-size:12px;display:block;margin-top:4px">Platform ưu tiên file này, rồi <code>Dockerfile</code>, <code>docker/Dockerfile</code>.</span></label>' +
-          '<label>Build context<input name="build_context" value="' + esc(repo.build_context || ".") + '" /></label>' +
-          (canWriteK8s()
-            ? '<button type="submit" class="btn-primary">Lưu cấu hình</button>'
-            : '<p class="muted">Read-only — không chỉnh sửa được.</p>') +
-          "</form>" +
-          '<ol class="deploy-steps">' + (stepsHtml || "<li>Chưa có bước</li>") + "</ol>" +
-          (secretsHtml ? '<p class="muted">Secrets GitHub Actions:</p><ul>' + secretsHtml + "</ul>" : "") +
-          (plan.workflow && plan.workflow.content
-            ? snippetBlock(
-                "deploy-wf-" + slug,
-                "GitHub Actions — " + (plan.workflow.filename || "workflow.yml"),
-                plan.workflow.content,
-                "Copy workflow"
-              )
-            : "") +
-          (plan.manifest && plan.manifest.yaml
-            ? snippetBlock(
-                "deploy-manifest-" + slug,
-                "Kubernetes — " + (plan.manifest.filename || "manifest.yaml"),
-                plan.manifest.yaml,
-                "Copy manifest"
-              )
-            : "") +
-          ((plan.manifests || []).length > 1
-            ? plan.manifests
-                .slice(1)
-                .map(function (m, i) {
-                  return m && m.yaml
-                    ? snippetBlock(
-                        "deploy-manifest-" + slug + "-" + i,
-                        "Kubernetes — " + (m.filename || "manifest-" + i),
-                        m.yaml,
-                        "Copy manifest"
-                      )
-                    : "";
-                })
-                .join("")
-            : "") +
-          "</div></details>");
+        : renderDeployCollapsibleCard(
+            slug,
+            "advanced",
+            '<div class="deploy-collapsible-summary-inner">' +
+              '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+              '<div class="deploy-collapsible-title-row"><h3 style="margin:0">Nâng cao</h3>' +
+              '<span class="badge muted">Git · workflow · manifest</span></div></div>',
+            '<form id="project-repo-form" class="login-form" style="max-width:560px">' +
+              '<label>Git URL<input name="git_url" type="url" value="' + esc(repo.git_url || "") + '" placeholder="https://github.com/org/repo" /></label>' +
+              '<div class="form-row"><label>Branch<input name="branch" value="' + esc(repo.branch || "main") + '" /></label></div>' +
+              '<label>Dockerfile (để quét)<input name="dockerfile_path" value="' +
+              esc(repo.dockerfile_path || "Dockerfile") +
+              '" placeholder="Dockerfile" /><span class="muted" style="font-size:12px;display:block;margin-top:4px">Platform ưu tiên file này, rồi <code>Dockerfile</code>, <code>docker/Dockerfile</code>.</span></label>' +
+              '<label>Build context<input name="build_context" value="' + esc(repo.build_context || ".") + '" /></label>' +
+              (canWriteK8s()
+                ? '<button type="submit" class="btn-primary">Lưu cấu hình</button>'
+                : '<p class="muted">Read-only — không chỉnh sửa được.</p>') +
+              "</form>" +
+              '<ol class="deploy-steps">' + (stepsHtml || "<li>Chưa có bước</li>") + "</ol>" +
+              (secretsHtml ? '<p class="muted">Secrets GitHub Actions:</p><ul>' + secretsHtml + "</ul>" : "") +
+              (plan.workflow && plan.workflow.content
+                ? snippetBlock(
+                    "deploy-wf-" + slug,
+                    "GitHub Actions — " + (plan.workflow.filename || "workflow.yml"),
+                    plan.workflow.content,
+                    "Copy workflow"
+                  )
+                : "") +
+              (plan.manifest && plan.manifest.yaml
+                ? snippetBlock(
+                    "deploy-manifest-" + slug,
+                    "Kubernetes — " + (plan.manifest.filename || "manifest.yaml"),
+                    plan.manifest.yaml,
+                    "Copy manifest"
+                  )
+                : "") +
+              ((plan.manifests || []).length > 1
+                ? plan.manifests
+                    .slice(1)
+                    .map(function (m, i) {
+                      return m && m.yaml
+                        ? snippetBlock(
+                            "deploy-manifest-" + slug + "-" + i,
+                            "Kubernetes — " + (m.filename || "manifest-" + i),
+                            m.yaml,
+                            "Copy manifest"
+                          )
+                        : "";
+                    })
+                    .join("")
+                : ""),
+            false
+          ));
 
     bindSnippetCopyButtons(main);
     bindPipelineSetupForm(main, slug, svcData, repo, ghStatus, env, navToken);

@@ -38,7 +38,10 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, r *http.Request) {
 		menu = append(menu, item{Key: "addons", Label: "Addons", Section: "platform", Group: "Platform", Type: "page"})
 	}
 	if u.Role == auth.RoleAdmin {
-		menu = append(menu, item{Key: "gitops", Label: "GitOps", Section: "platform", Group: "Platform", Type: "page"})
+		menu = append(menu,
+			item{Key: "policy", Label: "Platform Policy", Section: "platform", Group: "Platform", Type: "page"},
+			item{Key: "gitops", Label: "GitOps", Section: "platform", Group: "Platform", Type: "page"},
+		)
 	}
 
 	rancherOn, _ := h.plugins.Enabled(r.Context(), plugins.Rancher)

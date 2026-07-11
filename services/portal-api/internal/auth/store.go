@@ -54,6 +54,17 @@ func (s *Store) GetUserByID(ctx context.Context, id int64) (User, error) {
 	return u, nil
 }
 
+func (s *Store) GetDBUserByID(ctx context.Context, id int64) (DBUser, error) {
+	var u DBUser
+	var lockedUntil *time.Time
+	err := s.db.QueryRow(ctx, `
+		SELECT id, email, COALESCE(display_name,''), password_hash, role, active, locked_until
+		FROM users WHERE id=$1`, id).
+		Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.Role, &u.Active, &lockedUntil)
+	u.LockedUntil = lockedUntil
+	return u, err
+}
+
 func (s *Store) GetUserRowByID(ctx context.Context, id int64) (User, error) {
 	var u User
 	err := s.db.QueryRow(ctx, `

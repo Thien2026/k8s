@@ -24,7 +24,7 @@ const ROLE_HELP = [
     role: "admin",
     title: "Admin",
     desc: "Toàn quyền platform",
-    perms: ["Quản lý user (tạo, đổi role, vô hiệu)", "Xem audit log", "Thêm worker node", "Xem & thao tác mọi project/namespace", "Xóa project (sau này)"],
+    perms: ["Quản lý user (tạo, đổi role, vô hiệu)", "Platform Policy (trần Redis/MinIO/Ingress + Unlock)", "Xem audit log", "Thêm worker node", "Xem & thao tác mọi project/namespace", "Xóa project (sau này)"],
   },
   {
     role: "tech_lead",

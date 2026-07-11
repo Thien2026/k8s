@@ -136,13 +136,10 @@ func (h *Handler) deploymentRowFromRun(ctx context.Context, p projectRow, deploy
 		d.RegistryStatus = "success"
 		runDone := strings.EqualFold(strings.TrimSpace(run.Status), "completed")
 		if !withRuntime {
-			if !runDone {
-				d.Status = "in_progress"
-				d.DeployStatus = "pending"
-				d.RuntimeStatus = "pending"
-				return d
-			}
-			d.Status = "success"
+			// Build GitHub xong ≠ deploy/runtime xong — không tô success sớm
+			// (tránh UI: success → lại in_progress khi poll runtime).
+			_ = runDone
+			d.Status = "in_progress"
 			d.DeployStatus = "pending"
 			d.RuntimeStatus = "pending"
 			return d

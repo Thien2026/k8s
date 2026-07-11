@@ -21,12 +21,23 @@ function projectQs(extra) {
 async function api(path, opts) {
   opts = opts || {};
   const isAuth = path.indexOf("/auth/") >= 0;
+  const method = String(opts.method || "GET").toUpperCase();
+  const isWrite = method !== "GET" && method !== "HEAD" && method !== "OPTIONS";
+  // Loading mặc định cho mọi thao tác ghi; GET chỉ khi opts.loading === true.
+  // Tắt bằng opts.noLoading / opts.loading === false (poll, silent, auth refresh).
+  const wantLoading =
+    opts.loading === true ||
+    (isWrite && opts.loading !== false && !opts.noLoading && !opts.silent401 && path !== "/api/v1/auth/refresh");
+  const loadingTitle = opts.loadingTitle || (isWrite ? "Đang xử lý…" : "Đang tải…");
+  const loadingDetail = opts.loadingDetail || "";
+  if (wantLoading) showAppLoading(loadingTitle, loadingDetail);
+
   const timeoutMs = opts.timeout != null ? opts.timeout : 60000;
   const ctrl = new AbortController();
   const timer = timeoutMs > 0 ? setTimeout(function () { ctrl.abort(); }, timeoutMs) : null;
   async function doFetch() {
     return fetch(path, {
-      method: opts.method || "GET",
+      method: method,
       credentials: "include",
       signal: opts.signal || ctrl.signal,
       headers: Object.assign(
@@ -61,5 +72,6 @@ async function api(path, opts) {
     throw err;
   } finally {
     if (timer) clearTimeout(timer);
+    if (wantLoading) hideAppLoading();
   }
 }

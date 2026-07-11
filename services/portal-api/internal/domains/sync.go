@@ -14,12 +14,13 @@ type Syncer struct {
 }
 
 type DomainInput struct {
-	ID          int64
-	Hostname    string
-	Environment string
-	TLSEnabled  bool
-	Namespace   string
-	Routes      []deploy.IngressRoute
+	ID             int64
+	Hostname       string
+	Environment    string
+	TLSEnabled     bool
+	Namespace      string
+	Routes         []deploy.IngressRoute
+	ProxyBodySize  string
 }
 
 func (s *Syncer) Ready() bool {
@@ -33,7 +34,7 @@ func (s *Syncer) SyncIngress(ctx context.Context, clusterID string, d DomainInpu
 	if err := s.Rancher.EnsureNamespace(ctx, clusterID, d.Namespace); err != nil {
 		return err
 	}
-	payload, err := IngressManifest(d.Hostname, d.Namespace, d.ID, d.TLSEnabled, d.Routes)
+	payload, err := IngressManifest(d.Hostname, d.Namespace, d.ID, d.TLSEnabled, d.Routes, d.ProxyBodySize)
 	if err != nil {
 		return err
 	}

@@ -203,6 +203,9 @@ if [[ -n "${PLATFORM_ADMIN_PASSWORD:-}" ]]; then
   SECRET_ARGS+=(--from-literal=PLATFORM_ADMIN_EMAIL="${PLATFORM_ADMIN_EMAIL}")
   SECRET_ARGS+=(--from-literal=PLATFORM_ADMIN_PASSWORD="${PLATFORM_ADMIN_PASSWORD}")
 fi
+if [[ -n "${POLICY_UNLOCK_PASSPHRASE:-}" ]]; then
+  SECRET_ARGS+=(--from-literal=POLICY_UNLOCK_PASSPHRASE="${POLICY_UNLOCK_PASSPHRASE}")
+fi
 
 kubectl -n "${NS}" create secret generic portal-api-env \
   "${SECRET_ARGS[@]}" \
@@ -308,6 +311,7 @@ metadata:
   namespace: ${NS}
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-body-size: "32m"
     nginx.ingress.kubernetes.io/enable-gzip: "true"
     nginx.ingress.kubernetes.io/gzip-types: "text/css application/javascript application/json text/plain text/html"
     nginx.ingress.kubernetes.io/ssl-session-cache: "true"

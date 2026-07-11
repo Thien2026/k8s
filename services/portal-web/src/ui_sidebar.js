@@ -324,7 +324,7 @@ function setGroupCollapsed(group, collapsed) {
 }
 
 const NAV_ICONS = {
-  overview: "◉", "my-projects": "▣", "platform-projects": "＋", addons: "🧩", gitops: "⎇", audit: "📋", users: "👤", "add-worker": "⊕", clusters: "◎", projects: "▣", namespaces: "▤", nodes: "⬡",
+  overview: "◉", "my-projects": "▣", "platform-projects": "＋", addons: "🧩", policy: "🛡", gitops: "⎇", audit: "📋", users: "👤", "add-worker": "⊕", clusters: "◎", projects: "▣", namespaces: "▤", nodes: "⬡",
   events: "⚡", deployments: "▶", statefulsets: "▧", daemonsets: "▨",
   jobs: "⏱", cronjobs: "↻", pods: "●", services: "🔗", ingresses: "🌐",
   horizontalpodautoscalers: "📈", persistentvolumeclaims: "💾",

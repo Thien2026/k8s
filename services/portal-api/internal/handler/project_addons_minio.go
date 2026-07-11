@@ -23,6 +23,7 @@ const (
 	minioConsolePort           = 9001
 	minioDefaultStorageGB      = 5
 	minioDefaultMemoryMB       = 256
+	minioDefaultMaxObjectMB    = 100
 	minioDefaultBucket         = "app"
 	minioDistributedReplicas   = 4
 	minioDistributedStorageSC  = "longhorn"
@@ -30,24 +31,25 @@ const (
 
 type minioAddonAPIView struct {
 	projectAddonView
-	ConnectionSecret      string         `json:"connection_secret,omitempty"`
-	EndpointMasked        string         `json:"endpoint_masked,omitempty"`
-	Endpoint              string         `json:"endpoint,omitempty"`
-	EndpointExternal      string         `json:"endpoint_external,omitempty"`
-	EndpointExternalMasked string        `json:"endpoint_external_masked,omitempty"`
-	ConsoleURLExternal    string         `json:"console_url_external,omitempty"`
-	Bucket                string         `json:"bucket,omitempty"`
-	AccessKeyMasked       string         `json:"access_key_masked,omitempty"`
-	AccessKey             string         `json:"access_key,omitempty"`
-	SecretKeyMasked       string         `json:"secret_key_masked,omitempty"`
-	SecretKey             string         `json:"secret_key,omitempty"`
-	ExternalHostname      string         `json:"external_hostname,omitempty"`
-	ExternalAPIPort       int            `json:"external_api_port,omitempty"`
-	ExternalConsolePort   int            `json:"external_console_port,omitempty"`
-	HACapable             bool           `json:"ha_capable"`
-	HACapability          map[string]any `json:"ha_capability,omitempty"`
-	TopologyNote          string         `json:"topology_note,omitempty"`
-	UpgradeAvailable      bool           `json:"upgrade_available"`
+	ConnectionSecret       string         `json:"connection_secret,omitempty"`
+	EndpointMasked         string         `json:"endpoint_masked,omitempty"`
+	Endpoint               string         `json:"endpoint,omitempty"`
+	EndpointExternal       string         `json:"endpoint_external,omitempty"`
+	EndpointExternalMasked string         `json:"endpoint_external_masked,omitempty"`
+	ConsoleURLExternal     string         `json:"console_url_external,omitempty"`
+	Bucket                 string         `json:"bucket,omitempty"`
+	AccessKeyMasked        string         `json:"access_key_masked,omitempty"`
+	AccessKey              string         `json:"access_key,omitempty"`
+	SecretKeyMasked        string         `json:"secret_key_masked,omitempty"`
+	SecretKey              string         `json:"secret_key,omitempty"`
+	ExternalHostname       string         `json:"external_hostname,omitempty"`
+	ExternalAPIPort        int            `json:"external_api_port,omitempty"`
+	ExternalConsolePort    int            `json:"external_console_port,omitempty"`
+	HACapable              bool           `json:"ha_capable"`
+	HACapability           map[string]any `json:"ha_capability,omitempty"`
+	TopologyNote           string         `json:"topology_note,omitempty"`
+	UpgradeAvailable       bool           `json:"upgrade_available"`
+	GrafanaDashboardURL    string         `json:"grafana_dashboard_url,omitempty"`
 }
 
 func minioAddonRelease(slug, env string) string {
@@ -114,12 +116,22 @@ func normalizeMinioTopology(raw string) string {
 	}
 }
 
+func normalizeMinioMaxObjectMB(n int) int {
+	if n < 1 {
+		return minioDefaultMaxObjectMB
+	}
+	if n > 51200 {
+		return 51200
+	}
+	return n
+}
+
 func normalizeMinioStorageGB(n int) int {
 	if n < 1 {
 		return minioDefaultStorageGB
 	}
-	if n > 100 {
-		return 100
+	if n > 2000 {
+		return 2000
 	}
 	return n
 }
@@ -268,6 +280,7 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 	}
 	bucket := minioDefaultBucket
 	storageGB := normalizeMinioStorageGB(addon.StorageGB)
+	maxObjectMB := normalizeMinioMaxObjectMB(addon.MaxObjectMB)
 	limitMi := addon.MaxMemoryMB
 	if limitMi < 128 {
 		limitMi = minioDefaultMemoryMB
@@ -306,6 +319,7 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 			"labels": map[string]string{
 				"app.kubernetes.io/name":     "minio",
 				"app.kubernetes.io/instance": release,
+				"platform/metrics":           "true",
 			},
 		},
 		"spec": map[string]any{
@@ -439,6 +453,8 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 										"secretKeyRef": map[string]string{"name": authSecretName, "key": "rootPassword"},
 									},
 								},
+								// Cho phép Prometheus scrape /minio/v2/metrics/* không cần bearer token.
+								{"name": "MINIO_PROMETHEUS_AUTH_TYPE", "value": "public"},
 							},
 							"resources": map[string]any{
 								"requests": map[string]string{
@@ -519,6 +535,7 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 								},
 								{"name": "MINIO_ENDPOINT", "value": endpoint},
 								{"name": "MINIO_BUCKET", "value": bucket},
+								{"name": "MINIO_STORAGE_GB", "value": fmt.Sprintf("%d", storageGB)},
 							},
 							"command": []string{"/bin/sh", "-c"},
 							"args": []string{
@@ -529,7 +546,9 @@ until mc alias set local "$MINIO_ENDPOINT" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSW
 done
 mc mb -p "local/$MINIO_BUCKET" || true
 mc anonymous set none "local/$MINIO_BUCKET" || true
-echo "bucket ready: $MINIO_BUCKET"`,
+# Hard quota ≈ Storage GB (PVC). Scanner-based — có thể vượt nhẹ tạm thời; PVC vẫn là trần cứng disk.
+mc admin bucket quota "local/$MINIO_BUCKET" --hard "${MINIO_STORAGE_GB}gb" || mc quota set "local/$MINIO_BUCKET" --size "${MINIO_STORAGE_GB}Gi" || true
+echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 							},
 						},
 					},
@@ -550,6 +569,11 @@ echo "bucket ready: $MINIO_BUCKET"`,
 		}
 	}
 
+	smJSON, _ := json.Marshal(minioAddonServiceMonitor(release, ns))
+	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/apis/monitoring.coreos.com/v1/servicemonitors", ns, smJSON); err != nil {
+		return "", fmt.Errorf("servicemonitor minio: %w", err)
+	}
+
 	connSecretName := minioAddonConnectionSecretName(release)
 	connSecret := map[string]any{
 		"apiVersion": "v1",
@@ -563,12 +587,13 @@ echo "bucket ready: $MINIO_BUCKET"`,
 		},
 		"type": "Opaque",
 		"stringData": map[string]string{
-			"S3_ENDPOINT":   endpoint,
-			"S3_ACCESS_KEY": accessKey,
-			"S3_SECRET_KEY": secretKey,
-			"S3_BUCKET":     bucket,
-			"S3_REGION":     "us-east-1",
-			"S3_USE_SSL":    "false",
+			"S3_ENDPOINT":       endpoint,
+			"S3_ACCESS_KEY":     accessKey,
+			"S3_SECRET_KEY":     secretKey,
+			"S3_BUCKET":         bucket,
+			"S3_REGION":         "us-east-1",
+			"S3_USE_SSL":        "false",
+			"S3_MAX_OBJECT_MB":  fmt.Sprintf("%d", maxObjectMB),
 		},
 	}
 	connJSON, _ := json.Marshal(connSecret)
@@ -586,6 +611,7 @@ echo "bucket ready: $MINIO_BUCKET"`,
 		{"S3_BUCKET", bucket, false},
 		{"S3_REGION", "us-east-1", false},
 		{"S3_USE_SSL", "false", false},
+		{"S3_MAX_OBJECT_MB", fmt.Sprintf("%d", maxObjectMB), false},
 	}
 	for _, e := range envPairs {
 		if err := h.upsertRuntimeEnvVar(ctx, p.ID, env, e.key, e.val, e.secret); err != nil {
@@ -723,6 +749,9 @@ func (h *Handler) enrichMinioAddonAPIView(ctx context.Context, p projectRow, v p
 	if out.StorageGB <= 0 {
 		out.StorageGB = minioDefaultStorageGB
 	}
+	if out.MaxObjectMB <= 0 {
+		out.MaxObjectMB = minioDefaultMaxObjectMB
+	}
 	cap := h.minioHACapability(ctx)
 	out.HACapability = cap
 	if c, _ := cap["capable"].(bool); c {
@@ -736,6 +765,12 @@ func (h *Handler) enrichMinioAddonAPIView(ctx context.Context, p projectRow, v p
 	} else {
 		out.TopologyNote = "Standalone. Distributed khi ha_capable (Longhorn + ≥2 node) + upgrade có xác nhận."
 	}
+	nsForDash := h.projectNamespace(p, v.Environment)
+	relForDash := v.K8sRelease
+	if relForDash == "" {
+		relForDash = minioAddonRelease(p.Slug, v.Environment)
+	}
+	out.GrafanaDashboardURL = grafanaMinioAddonDashboardURL(h.cfg.GrafanaURL, nsForDash, relForDash)
 	if !v.HasConnection {
 		return out
 	}
@@ -825,9 +860,11 @@ func (h *Handler) promoteMinioAddonFromDev(ctx context.Context, p projectRow) er
 	dev, err := h.getProjectAddon(ctx, p.ID, "minio", "dev")
 	storageGB := minioDefaultStorageGB
 	mem := minioDefaultMemoryMB
+	maxObjectMB := minioDefaultMaxObjectMB
 	topology := "standalone"
 	if err == nil && dev != nil {
 		storageGB = normalizeMinioStorageGB(dev.StorageGB)
+		maxObjectMB = normalizeMinioMaxObjectMB(dev.MaxObjectMB)
 		if dev.MaxMemoryMB >= 128 {
 			mem = dev.MaxMemoryMB
 		}
@@ -838,15 +875,16 @@ func (h *Handler) promoteMinioAddonFromDev(ctx context.Context, p projectRow) er
 	}
 	release := minioAddonRelease(p.Slug, "prod")
 	_, err = h.db.Exec(ctx, `
-		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, topology, storage_gb)
-		VALUES ($1, 'minio', 'prod', 'pending', $2, $3, 100, $4, $5)
+		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, topology, storage_gb, max_object_mb)
+		VALUES ($1, 'minio', 'prod', 'pending', $2, $3, 100, $4, $5, $6)
 		ON CONFLICT (project_id, engine, environment) DO UPDATE SET
 			max_memory_mb = EXCLUDED.max_memory_mb,
 			topology = EXCLUDED.topology,
 			storage_gb = EXCLUDED.storage_gb,
+			max_object_mb = EXCLUDED.max_object_mb,
 			status = CASE WHEN project_data_addons.status IN ('stopped', 'failed') THEN 'pending' ELSE project_data_addons.status END,
 			updated_at = now()`,
-		p.ID, release, mem, topology, storageGB)
+		p.ID, release, mem, topology, storageGB, maxObjectMB)
 	if err != nil {
 		return err
 	}

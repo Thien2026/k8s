@@ -280,7 +280,7 @@ func (h *Handler) resolveRollbackParams(ctx context.Context, p projectRow, repo 
 }
 
 func (d *deploymentRow) applySnapshotFields(layout, branch string, svcRaw, imgRaw []byte) {
-	d.DeployLayout = deploy.NormalizeLayout(layout)
+	rawLayout := strings.TrimSpace(layout)
 	d.GitBranch = strings.TrimSpace(branch)
 	if len(svcRaw) > 0 {
 		_ = json.Unmarshal(svcRaw, &d.DeployServices)
@@ -288,9 +288,14 @@ func (d *deploymentRow) applySnapshotFields(layout, branch string, svcRaw, imgRa
 	if len(imgRaw) > 0 {
 		_ = json.Unmarshal(imgRaw, &d.DeployImages)
 	}
-	if d.DeployLayout != "" {
-		d.DeployProfile = deployProfileLabel(d.DeployLayout, d.DeployServices)
+	// Layout trống = chưa ghi snapshot (build mới tạo) — không ép thành single · app.
+	if rawLayout == "" {
+		d.DeployLayout = ""
+		d.DeployProfile = ""
+		return
 	}
+	d.DeployLayout = deploy.NormalizeLayout(rawLayout)
+	d.DeployProfile = deployProfileLabel(d.DeployLayout, d.DeployServices)
 }
 
 func (h *Handler) consoleDeployProfile(ctx context.Context, projectID int64, repo projectRepoRow) deployProfileView {

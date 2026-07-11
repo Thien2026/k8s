@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/Thien2026/k8s/services/portal-api/internal/deploy"
 )
@@ -75,9 +76,13 @@ func IngressPathsPatch(routes []deploy.IngressRoute) ([]byte, error) {
 
 // IngressManifest JSON cho networking.k8s.io/v1 Ingress.
 // routes rỗng → single app (backward compat).
-func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool, routes []deploy.IngressRoute) ([]byte, error) {
+// proxyBodySize rỗng → "32m".
+func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool, routes []deploy.IngressRoute, proxyBodySize string) ([]byte, error) {
 	name := IngressName(domainID)
 	paths := IngressHTTPPaths(routes)
+	if strings.TrimSpace(proxyBodySize) == "" {
+		proxyBodySize = "32m"
+	}
 	obj := map[string]any{
 		"apiVersion": "networking.k8s.io/v1",
 		"kind":       "Ingress",
@@ -86,6 +91,10 @@ func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool
 			"namespace": namespace,
 			"labels": map[string]string{
 				"app.kubernetes.io/managed-by": "platform-console",
+			},
+			"annotations": map[string]string{
+				// Upload multipart (MinIO demo, form…) — mặc định nginx 1m → 413.
+				"nginx.ingress.kubernetes.io/proxy-body-size": proxyBodySize,
 			},
 		},
 		"spec": map[string]any{
@@ -103,9 +112,8 @@ func IngressManifest(hostname, namespace string, domainID int64, tlsEnabled bool
 	if tlsEnabled {
 		secret := TLSSecretName(domainID)
 		meta := obj["metadata"].(map[string]any)
-		meta["annotations"] = map[string]string{
-			"cert-manager.io/cluster-issuer": "letsencrypt-prod",
-		}
+		ann := meta["annotations"].(map[string]string)
+		ann["cert-manager.io/cluster-issuer"] = "letsencrypt-prod"
 		spec := obj["spec"].(map[string]any)
 		spec["tls"] = []map[string]any{
 			{

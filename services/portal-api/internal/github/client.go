@@ -337,17 +337,55 @@ func (c *Client) RepoPathExists(ctx context.Context, token, owner, repo, path, r
 	if ref = strings.TrimSpace(ref); ref != "" {
 		p += "?ref=" + url.QueryEscape(ref)
 	}
-	_, code, err := c.api(ctx, token, http.MethodGet, p, nil)
-	if code == 404 {
-		return false, nil
+
+	var lastCode int
+	var lastBody string
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(time.Duration(attempt) * 400 * time.Millisecond):
+			}
+		}
+		raw, code, err := c.api(ctx, token, http.MethodGet, p, nil)
+		lastCode = code
+		lastBody = strings.TrimSpace(string(raw))
+		lastErr = err
+		if err != nil {
+			continue
+		}
+		if code == 404 {
+			return false, nil
+		}
+		// GitHub đôi khi 502/503/429 tạm thời khi sync branch mới.
+		if code == 429 || code == 502 || code == 503 || code == 504 {
+			continue
+		}
+		if code >= 400 {
+			msg := lastBody
+			if len(msg) > 180 {
+				msg = msg[:180] + "…"
+			}
+			if msg == "" {
+				msg = http.StatusText(code)
+			}
+			return false, fmt.Errorf("check path %s@%s → HTTP %d (%s)", path, ref, code, msg)
+		}
+		return true, nil
 	}
-	if err != nil {
-		return false, err
+	if lastErr != nil {
+		return false, fmt.Errorf("check path %s@%s: %w", path, ref, lastErr)
 	}
-	if code >= 400 {
-		return false, fmt.Errorf("check path %d", code)
+	msg := lastBody
+	if len(msg) > 180 {
+		msg = msg[:180] + "…"
 	}
-	return true, nil
+	if msg == "" {
+		msg = http.StatusText(lastCode)
+	}
+	return false, fmt.Errorf("check path %s@%s → HTTP %d sau vài lần thử (%s)", path, ref, lastCode, msg)
 }
 
 func (c *Client) PutWorkflowFile(ctx context.Context, token, owner, repo, path, message, content, branch string) error {

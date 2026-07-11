@@ -39,6 +39,7 @@ type projectAddonView struct {
 	DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
 	Topology         string `json:"topology,omitempty"`
 	StorageGB        int    `json:"storage_gb,omitempty"`
+	MaxObjectMB      int    `json:"max_object_mb,omitempty"`
 	HasConnection    bool   `json:"has_connection"`
 	CreatedAt        string `json:"created_at,omitempty"`
 	UpdatedAt        string `json:"updated_at,omitempty"`
@@ -105,6 +106,7 @@ func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]pro
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
 		       maxmemory_policy, default_key_ttl_sec,
 		       COALESCE(topology, 'standalone'), COALESCE(storage_gb, 5),
+		       COALESCE(max_object_mb, 100),
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1
@@ -120,7 +122,7 @@ func (h *Handler) listProjectAddons(ctx context.Context, projectID int64) ([]pro
 		if err := rows.Scan(
 			&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
 			&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
-			&v.Topology, &v.StorageGB,
+			&v.Topology, &v.StorageGB, &v.MaxObjectMB,
 			&v.HasConnection,
 			&v.CreatedAt, &v.UpdatedAt,
 		); err != nil {
@@ -137,13 +139,14 @@ func (h *Handler) getProjectAddon(ctx context.Context, projectID int64, engine, 
 		SELECT engine, environment, status, k8s_release, max_memory_mb, max_clients,
 		       maxmemory_policy, default_key_ttl_sec,
 		       COALESCE(topology, 'standalone'), COALESCE(storage_gb, 5),
+		       COALESCE(max_object_mb, 100),
 		       (connection_secret <> ''), created_at::text, updated_at::text
 		FROM project_data_addons
 		WHERE project_id = $1 AND engine = $2 AND environment = $3`,
 		projectID, engine, env).Scan(
 		&v.Engine, &v.Environment, &v.Status, &v.K8sRelease,
 		&v.MaxMemoryMB, &v.MaxClients, &v.MaxmemoryPolicy, &v.DefaultKeyTTLSec,
-		&v.Topology, &v.StorageGB,
+		&v.Topology, &v.StorageGB, &v.MaxObjectMB,
 		&v.HasConnection, &v.CreatedAt, &v.UpdatedAt,
 	)
 	if err != nil {
@@ -772,6 +775,7 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		MaxmemoryPolicy  string `json:"maxmemory_policy"`
 		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
 		StorageGB        int    `json:"storage_gb"`
+		MaxObjectMB      int    `json:"max_object_mb"`
 		Topology         string `json:"topology"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
@@ -788,16 +792,65 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	maxMem := body.MaxMemoryMB
+	maxClients := body.MaxClients
+	storageGB := body.StorageGB
+	maxObjectMB := body.MaxObjectMB
+	pol, _, _ := h.loadPlatformPolicy(r.Context())
 	if engine == "minio" {
-		if maxMem < 128 || maxMem > 1024 {
+		if maxMem < 128 {
 			maxMem = minioDefaultMemoryMB
 		}
-	} else if maxMem < 64 || maxMem > 512 {
-		maxMem = 128
-	}
-	maxClients := body.MaxClients
-	if maxClients < 10 || maxClients > 1000 {
-		maxClients = 100
+		if maxMem > pol.MinioMaxMemoryMB {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("max_memory_mb vượt trần Platform Policy (%d Mi)", pol.MinioMaxMemoryMB),
+				"code":  "above_platform_ceiling",
+				"max":   pol.MinioMaxMemoryMB,
+			})
+			return
+		}
+		storageGB = normalizeMinioStorageGB(storageGB)
+		if storageGB > pol.MinioMaxStorageGB {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("storage_gb vượt trần Platform Policy (%d Gi)", pol.MinioMaxStorageGB),
+				"code":  "above_platform_ceiling",
+				"max":   pol.MinioMaxStorageGB,
+			})
+			return
+		}
+		maxObjectMB = normalizeMinioMaxObjectMB(maxObjectMB)
+		if maxObjectMB > pol.MinioMaxObjectMB {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("max_object_mb vượt trần Platform Policy (%d Mi)", pol.MinioMaxObjectMB),
+				"code":  "above_platform_ceiling",
+				"max":   pol.MinioMaxObjectMB,
+			})
+			return
+		}
+	} else {
+		if maxMem < 64 {
+			maxMem = 128
+		}
+		if maxMem > pol.RedisMaxMemoryMB {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("max_memory_mb vượt trần Platform Policy (%d Mi)", pol.RedisMaxMemoryMB),
+				"code":  "above_platform_ceiling",
+				"max":   pol.RedisMaxMemoryMB,
+			})
+			return
+		}
+		if maxClients < 10 {
+			maxClients = 100
+		}
+		if maxClients > pol.RedisMaxClients {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("max_clients vượt trần Platform Policy (%d)", pol.RedisMaxClients),
+				"code":  "above_platform_ceiling",
+				"max":   pol.RedisMaxClients,
+			})
+			return
+		}
+		storageGB = 5
+		maxObjectMB = minioDefaultMaxObjectMB
 	}
 	policy := normalizeRedisMaxmemoryPolicy(body.MaxmemoryPolicy)
 	defaultTTL := normalizeRedisDefaultKeyTTL(body.DefaultKeyTTLSec)
@@ -816,10 +869,6 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	storageGB := normalizeMinioStorageGB(body.StorageGB)
-	if engine != "minio" {
-		storageGB = 5
-	}
 
 	ns := h.projectNamespace(p, env)
 	if ns == "" {
@@ -829,8 +878,8 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 
 	release := p.Slug + "-" + engine + "-" + env
 	_, err := h.db.Exec(r.Context(), `
-		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, maxmemory_policy, default_key_ttl_sec, topology, storage_gb)
-		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO project_data_addons (project_id, engine, environment, status, k8s_release, max_memory_mb, max_clients, maxmemory_policy, default_key_ttl_sec, topology, storage_gb, max_object_mb)
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9, $10, $11)
 		ON CONFLICT (project_id, engine, environment) DO UPDATE SET
 			status = CASE WHEN project_data_addons.status IN ('stopped', 'failed') THEN 'pending' ELSE project_data_addons.status END,
 			max_memory_mb = EXCLUDED.max_memory_mb,
@@ -839,8 +888,9 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 			default_key_ttl_sec = EXCLUDED.default_key_ttl_sec,
 			topology = EXCLUDED.topology,
 			storage_gb = EXCLUDED.storage_gb,
+			max_object_mb = EXCLUDED.max_object_mb,
 			updated_at = now()`,
-		p.ID, engine, env, release, maxMem, maxClients, policy, defaultTTL, topology, storageGB)
+		p.ID, engine, env, release, maxMem, maxClients, policy, defaultTTL, topology, storageGB, maxObjectMB)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -916,6 +966,7 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		MaxmemoryPolicy  string `json:"maxmemory_policy"`
 		DefaultKeyTTLSec int    `json:"default_key_ttl_sec"`
 		StorageGB        int    `json:"storage_gb"`
+		MaxObjectMB      int    `json:"max_object_mb"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	env := strings.TrimSpace(body.Environment)
@@ -944,15 +995,22 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if engine == "redis" {
-		if body.MaxMemoryMB >= 64 && body.MaxMemoryMB <= 512 {
+		pol, _, _ := h.loadPlatformPolicy(r.Context())
+		if body.MaxMemoryMB >= 64 {
 			item.MaxMemoryMB = body.MaxMemoryMB
+			if item.MaxMemoryMB > pol.RedisMaxMemoryMB {
+				item.MaxMemoryMB = pol.RedisMaxMemoryMB
+			}
 			_, _ = h.db.Exec(r.Context(), `
 				UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
 				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
 				item.MaxMemoryMB, p.ID, engine, env)
 		}
-		if body.MaxClients >= 10 && body.MaxClients <= 1000 {
+		if body.MaxClients >= 10 {
 			item.MaxClients = body.MaxClients
+			if item.MaxClients > pol.RedisMaxClients {
+				item.MaxClients = pol.RedisMaxClients
+			}
 			_, _ = h.db.Exec(r.Context(), `
 				UPDATE project_data_addons SET max_clients=$1, updated_at=now()
 				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
@@ -974,19 +1032,51 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if engine == "minio" {
-		if body.MaxMemoryMB >= 128 && body.MaxMemoryMB <= 1024 {
+		pol, _, _ := h.loadPlatformPolicy(r.Context())
+		if body.MaxMemoryMB >= 128 {
+			if body.MaxMemoryMB > pol.MinioMaxMemoryMB {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": fmt.Sprintf("max_memory_mb vượt trần Platform Policy (%d Mi)", pol.MinioMaxMemoryMB),
+					"code":  "above_platform_ceiling",
+					"max":   pol.MinioMaxMemoryMB,
+				})
+				return
+			}
 			item.MaxMemoryMB = body.MaxMemoryMB
 			_, _ = h.db.Exec(r.Context(), `
 				UPDATE project_data_addons SET max_memory_mb=$1, updated_at=now()
 				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
 				item.MaxMemoryMB, p.ID, engine, env)
 		}
-		if body.StorageGB >= 1 && body.StorageGB <= 100 {
+		if body.StorageGB >= 1 {
+			if body.StorageGB > pol.MinioMaxStorageGB {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": fmt.Sprintf("storage_gb vượt trần Platform Policy (%d Gi)", pol.MinioMaxStorageGB),
+					"code":  "above_platform_ceiling",
+					"max":   pol.MinioMaxStorageGB,
+				})
+				return
+			}
 			item.StorageGB = normalizeMinioStorageGB(body.StorageGB)
 			_, _ = h.db.Exec(r.Context(), `
 				UPDATE project_data_addons SET storage_gb=$1, updated_at=now()
 				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
 				item.StorageGB, p.ID, engine, env)
+		}
+		if body.MaxObjectMB >= 1 {
+			if body.MaxObjectMB > pol.MinioMaxObjectMB {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": fmt.Sprintf("max_object_mb vượt trần Platform Policy (%d Mi)", pol.MinioMaxObjectMB),
+					"code":  "above_platform_ceiling",
+					"max":   pol.MinioMaxObjectMB,
+				})
+				return
+			}
+			item.MaxObjectMB = normalizeMinioMaxObjectMB(body.MaxObjectMB)
+			_, _ = h.db.Exec(r.Context(), `
+				UPDATE project_data_addons SET max_object_mb=$1, updated_at=now()
+				WHERE project_id=$2 AND engine=$3 AND environment=$4`,
+				item.MaxObjectMB, p.ID, engine, env)
 		}
 	}
 

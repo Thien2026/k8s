@@ -30,7 +30,19 @@ func (h *Handler) upsertDeployment(ctx context.Context, projectID int64, env, im
 }
 
 func (h *Handler) markDeploymentBuildStarted(ctx context.Context, projectID int64, env, imageTag string) {
-	_, _ = h.upsertDeployment(ctx, projectID, env, imageTag)
+	id, err := h.upsertDeployment(ctx, projectID, env, imageTag)
+	if err != nil || id <= 0 {
+		return
+	}
+	// Ghi snapshot Console ngay khi build bắt đầu — tránh badge mặc định "single · app"
+	// khi deploy_layout còn trống (trước đây chỉ ghi lúc apply cluster).
+	p, err := h.getProjectByID(ctx, projectID)
+	if err != nil {
+		return
+	}
+	repo, _ := h.getProjectRepo(ctx, p.ID)
+	params := h.buildDeployParams(ctx, p, repo, env, imageTag, false)
+	h.saveDeploymentSnapshot(ctx, id, h.buildDeploySnapshot(p, repo, params))
 }
 
 // markDeploymentDeploySkipped — CI đã build image nhưng hook không apply cluster (auto-deploy tắt).

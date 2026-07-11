@@ -78,6 +78,15 @@ if [[ -f "${REDIS_DASH}" ]]; then
   log "Đã import Grafana dashboard Platform Redis addon (uid: platform-redis-addon)."
 fi
 
+MINIO_DASH="${ROOT_DIR}/platform/monitoring/grafana-dashboard-minio-addon.json"
+if [[ -f "${MINIO_DASH}" ]]; then
+  kubectl -n "${NS}" create configmap grafana-dashboard-minio-addon \
+    --from-file=platform-minio-addon.json="${MINIO_DASH}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  kubectl -n "${NS}" label configmap grafana-dashboard-minio-addon grafana_dashboard=1 --overwrite
+  log "Đã import Grafana dashboard Platform MinIO addon (uid: platform-minio-addon)."
+fi
+
 GRAFANA_ENV="${ROOT_DIR}/config/grafana.env"
 cat >"${GRAFANA_ENV}" <<EOF
 # Tự sinh bởi monitoring/install.sh — không commit

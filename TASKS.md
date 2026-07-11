@@ -259,7 +259,7 @@ Tick `[x]` khi xong. Làm **theo thứ tự**, không nhảy phase.
 - [x] Promote prod checklist + NetworkPolicy prod
 - [x] Restart / logs trên trang addon
 - [x] HA/distributed gated `ha_capable` (Longhorn + ≥2 node) + Upgrade HA có xác nhận (không auto-migrate)
-- [ ] Metrics/Grafana dashboard MinIO (sau)
+- [x] Metrics/Grafana dashboard MinIO + link trên trang addon
 - [ ] Playground upload UI (sau — Console MinIO đủ cho file)
 
 **Xong 10a′ khi:** standalone chạy + UI HA gate đúng trên 1-node; distributed code path sẵn khi đủ điều kiện.

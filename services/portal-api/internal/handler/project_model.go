@@ -98,6 +98,22 @@ func (h *Handler) getProjectBySlug(ctx context.Context, slug string) (projectRow
 	return p, err
 }
 
+func (h *Handler) getProjectByID(ctx context.Context, id int64) (projectRow, error) {
+	var p projectRow
+	var created time.Time
+	err := h.db.QueryRow(ctx, `
+		SELECT id, name, slug, COALESCE(layout,'single'), COALESCE(description,''), namespace_dev, namespace_prod,
+		       COALESCE(harbor_project,''), COALESCE(registry_provider,'ghcr'), created_at
+		FROM projects WHERE id = $1`, id).Scan(
+		&p.ID, &p.Name, &p.Slug, &p.Layout, &p.Description, &p.NamespaceDev, &p.NamespaceProd,
+		&p.HarborProject, &p.RegistryProvider, &created,
+	)
+	if err == nil {
+		p.CreatedAt = created.UTC().Format(time.RFC3339)
+	}
+	return p, err
+}
+
 func (h *Handler) enrichProjectRegistry(ctx context.Context, p *projectRow) {
 	if h.registry == nil {
 		return

@@ -33,3 +33,37 @@ func TestMergeDeploymentItemsKeepsDevAndProdSameTag(t *testing.T) {
 		t.Fatalf("dev github_run_id=%d want 99", dev.GitHubRunID)
 	}
 }
+
+func TestMergeGhDeploymentDoesNotPromoteSuccessFromBuildOnly(t *testing.T) {
+	existing := deploymentRow{
+		ID:             10,
+		Environment:    "dev",
+		ImageTag:       "9897ba5",
+		Status:         "in_progress",
+		BuildStatus:    "running",
+		DeployStatus:   "pending",
+		RuntimeStatus:  "pending",
+		DeployLayout:   "multi",
+		DeployProfile:  "multi · api+web",
+	}
+	g := deploymentRow{
+		Environment:    "dev",
+		ImageTag:       "9897ba5",
+		Status:         "success", // GH row sai: build xong nhưng deploy chưa
+		BuildStatus:    "success",
+		RegistryStatus: "success",
+		DeployStatus:   "pending",
+		RuntimeStatus:  "pending",
+		GitHubRunID:    42,
+	}
+	out := mergeGhDeployment(existing, g)
+	if out.Status != "in_progress" {
+		t.Fatalf("status=%q want in_progress (không tô success từ GH)", out.Status)
+	}
+	if out.BuildStatus != "success" {
+		t.Fatalf("build_status=%q want success", out.BuildStatus)
+	}
+	if out.GitHubRunID != 42 {
+		t.Fatalf("github_run_id=%d", out.GitHubRunID)
+	}
+}

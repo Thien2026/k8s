@@ -14,7 +14,7 @@ import (
 
 func main() {
 	email := flag.String("email", "", "admin email")
-	password := flag.String("password", "", "admin password (min 12 chars)")
+	password := flag.String("password", "", "admin password (min 10 chars)")
 	display := flag.String("name", "Platform Admin", "display name")
 	role := flag.String("role", auth.RoleAdmin, "role")
 	force := flag.Bool("force", false, "cập nhật mật khẩu nếu user đã tồn tại")

@@ -112,6 +112,94 @@ function uiConfirm(message, opts) {
   });
 }
 
+/** Modal form: fields = [{id,label,type,placeholder,autocomplete}] → {ok, values} */
+function uiFormDialog(opts) {
+  opts = opts || {};
+  return new Promise(function (resolve) {
+    const fields = opts.fields || [];
+    const fieldsHtml = fields
+      .map(function (f) {
+        return (
+          '<label class="ui-dialog-field">' +
+          esc(f.label || f.id) +
+          '<input type="' +
+          esc(f.type || "text") +
+          '" id="ui-dlg-' +
+          esc(f.id) +
+          '" autocomplete="' +
+          esc(f.autocomplete || "off") +
+          '" placeholder="' +
+          esc(f.placeholder || "") +
+          '" />' +
+          "</label>"
+        );
+      })
+      .join("");
+    const overlay = document.createElement("div");
+    overlay.className = "ui-overlay";
+    overlay.innerHTML =
+      '<div class="ui-dialog ui-dialog-default" role="dialog" aria-modal="true">' +
+      '<div class="ui-dialog-glow"></div>' +
+      '<h3 class="ui-dialog-title">' +
+      esc(opts.title || "Xác thực") +
+      "</h3>" +
+      (opts.message ? '<p class="ui-dialog-message">' + esc(opts.message) + "</p>" : "") +
+      '<div class="ui-dialog-form">' +
+      fieldsHtml +
+      "</div>" +
+      '<div class="ui-dialog-actions">' +
+      '<button type="button" class="btn-ghost ui-dialog-cancel">' +
+      esc(opts.cancelText || "Huỷ") +
+      "</button>" +
+      '<button type="button" class="btn-primary ui-dialog-ok">' +
+      esc(opts.confirmText || "Xác nhận") +
+      "</button></div></div>";
+
+    function close(result) {
+      overlay.classList.remove("show");
+      setTimeout(function () {
+        overlay.remove();
+        document.removeEventListener("keydown", onKey);
+        resolve(result);
+      }, 200);
+    }
+
+    function collect() {
+      const values = {};
+      fields.forEach(function (f) {
+        const el = overlay.querySelector("#ui-dlg-" + f.id);
+        values[f.id] = el ? el.value : "";
+      });
+      return values;
+    }
+
+    function onKey(e) {
+      if (e.key === "Escape") close({ ok: false });
+      if (e.key === "Enter") {
+        e.preventDefault();
+        close({ ok: true, values: collect() });
+      }
+    }
+
+    overlay.querySelector(".ui-dialog-ok").onclick = function () {
+      close({ ok: true, values: collect() });
+    };
+    overlay.querySelector(".ui-dialog-cancel").onclick = function () {
+      close({ ok: false });
+    };
+    overlay.onclick = function (e) {
+      if (e.target === overlay) close({ ok: false });
+    };
+    document.body.appendChild(overlay);
+    document.addEventListener("keydown", onKey);
+    requestAnimationFrame(function () {
+      overlay.classList.add("show");
+      const first = overlay.querySelector("input");
+      if (first) first.focus();
+    });
+  });
+}
+
 function uiAlert(opts) {
   if (typeof opts === "string") opts = { message: opts };
   return openDialog({

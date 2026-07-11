@@ -78,3 +78,56 @@ func (tc TokenConfig) ParseAccess(token string) (Claims, error) {
 	}
 	return claims, nil
 }
+
+const (
+	StepUpPurposePlatformPolicy = "platform_policy"
+	HeaderPlatformStepUp        = "X-Platform-Step-Up"
+)
+
+// StepUpClaims — token ngắn hạn sau khi xác thực 2 lớp (login pass + policy unlock).
+type StepUpClaims struct {
+	UserID  int64  `json:"uid"`
+	Purpose string `json:"purpose"`
+	jwt.RegisteredClaims
+}
+
+func (tc TokenConfig) SignStepUp(userID int64, purpose string, ttl time.Duration) (string, time.Time, error) {
+	if ttl <= 0 {
+		ttl = 10 * time.Minute
+	}
+	now := time.Now()
+	exp := now.Add(ttl)
+	claims := StepUpClaims{
+		UserID:  userID,
+		Purpose: purpose,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   fmt.Sprintf("%d", userID),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(exp),
+			Issuer:    "platform-console-stepup",
+		},
+	}
+	t := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signed, err := t.SignedString(tc.Secret)
+	return signed, exp, err
+}
+
+func (tc TokenConfig) ParseStepUp(token, purpose string) (StepUpClaims, error) {
+	var claims StepUpClaims
+	parsed, err := jwt.ParseWithClaims(token, &claims, func(t *jwt.Token) (any, error) {
+		if t.Method != jwt.SigningMethodHS256 {
+			return nil, fmt.Errorf("unexpected signing method")
+		}
+		return tc.Secret, nil
+	})
+	if err != nil {
+		return StepUpClaims{}, err
+	}
+	if !parsed.Valid {
+		return StepUpClaims{}, jwt.ErrTokenInvalidClaims
+	}
+	if claims.Purpose != purpose {
+		return StepUpClaims{}, fmt.Errorf("step-up purpose không khớp")
+	}
+	return claims, nil
+}

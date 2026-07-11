@@ -592,6 +592,297 @@ async function pagePlatformProjects(main) {
   renderList();
 }
 
+async function pagePlatformPolicy(main) {
+  if (!state.user || state.user.role !== "admin") {
+    main.innerHTML =
+      '<div class="page-header"><h2 class="page-title">Platform Policy</h2></div>' +
+      '<div class="card"><p class="error-text">Chỉ admin được xem/sửa policy.</p></div>';
+    return;
+  }
+  let pol;
+  try {
+    pol = await api("/api/v1/admin/policy");
+  } catch (err) {
+    main.innerHTML =
+      '<div class="page-header"><h2 class="page-title">Platform Policy</h2></div>' +
+      '<div class="card"><p class="error-text">' + esc(err.message) + "</p></div>";
+    return;
+  }
+
+  async function stepUpThen() {
+    const dlg = await uiFormDialog({
+      title: "Xác thực 2 lớp",
+      message: "Nhập mật khẩu đăng nhập + Policy Unlock passphrase để lưu thay đổi.",
+      confirmText: "Mở khoá & tiếp tục",
+      fields: [
+        { id: "password", label: "Mật khẩu đăng nhập admin", type: "password", autocomplete: "current-password" },
+        { id: "unlock", label: "Policy Unlock passphrase", type: "password", autocomplete: "off" },
+      ],
+    });
+    if (!dlg.ok) return null;
+    try {
+      const res = await api("/api/v1/admin/policy/step-up", {
+        method: "POST",
+        body: {
+          password: dlg.values.password,
+          unlock_passphrase: dlg.values.unlock,
+        },
+        loadingTitle: "Đang xác thực…",
+      });
+      return res.step_up_token;
+    } catch (err) {
+      toastError(err.message);
+      return null;
+    }
+  }
+
+  function policySummary(title, badgeHtml) {
+    return (
+      '<div class="deploy-collapsible-summary-inner">' +
+      '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+      '<div class="deploy-collapsible-title-row">' +
+      '<h3 style="margin:0">' +
+      esc(title) +
+      "</h3>" +
+      (badgeHtml ? '<span class="deploy-collapsible-no-toggle">' + badgeHtml + "</span>" : "") +
+      "</div></div>"
+    );
+  }
+
+  const unlockBadge = pol.unlock_configured
+    ? '<span class="badge ok">đã cấu hình</span>'
+    : '<span class="badge bad">chưa có</span>';
+
+  const infra = pol.infra || {};
+  let infraHtml =
+    '<div class="policy-infra">' +
+    '<p class="policy-help"><strong>Policy là gì?</strong> Trần tối đa mỗi project được xin. App của dev tự giới hạn upload; Platform canh sức chứa MinIO (PVC). Console upload chỉ là quản trị phụ.</p>';
+  if (infra.disk_ready) {
+    const pct = Math.round(Number(infra.disk_used_pct) || 0);
+    const warnClass = pct >= 85 ? "policy-infra-warn" : pct >= 70 ? "policy-infra-caution" : "";
+    infraHtml +=
+      '<div class="policy-infra-grid ' +
+      warnClass +
+      '">' +
+      '<div><span class="muted">Disk trống</span><strong>' +
+      esc(String(infra.disk_free_gib)) +
+      " / " +
+      esc(String(infra.disk_total_gib)) +
+      " GiB</strong></div>" +
+      '<div><span class="muted">Disk đã dùng</span><strong>' +
+      esc(String(pct)) +
+      "%</strong></div>" +
+      '<div><span class="muted">Đã cấp MinIO addon</span><strong>' +
+      esc(String(infra.minio_allocated_gb || 0)) +
+      " GiB</strong></div>" +
+      '<div><span class="muted">RAM / CPU trống (ước lượng)</span><strong>' +
+      esc(String(infra.memory_free_gib)) +
+      " GiB · " +
+      esc(String(infra.cpu_free_cores)) +
+      " core</strong></div>" +
+      "</div>";
+  }
+  infraHtml +=
+    '<p class="muted policy-infra-hint">' +
+    esc(infra.hint || "Đang ước lượng hạ tầng…") +
+    "</p></div>";
+
+  const overviewBody =
+    infraHtml +
+    "<p>Unlock: " +
+    unlockBadge +
+    (pol.updated_at ? ' · Cập nhật: <code>' + esc(pol.updated_at) + "</code>" : "") +
+    "</p>" +
+    '<p class="muted">Sửa policy / đổi Unlock cần mật khẩu login + Policy Unlock passphrase.</p>';
+
+  const redisBody =
+    '<p class="policy-help">Trần <strong>mỗi</strong> Redis addon (dev/prod). Project không xin được cao hơn. Nên ≤ RAM node trống.</p>' +
+    '<div class="form-row">' +
+    '<label>Max RAM (MB)<input form="policy-form" name="redis_max_memory_mb" type="number" min="64" max="4096" value="' +
+    esc(String(pol.redis_max_memory_mb)) +
+    '" required /></label>' +
+    '<label>Max clients<input form="policy-form" name="redis_max_clients" type="number" min="10" max="10000" value="' +
+    esc(String(pol.redis_max_clients)) +
+    '" required /></label></div>';
+
+  const minioBody =
+    '<p class="policy-help"><strong>Max storage</strong> = PVC + hard quota bucket mỗi MinIO project. ' +
+    "<strong>Max object</strong> = trần 1 file (project Quota ≤ trần này; Console + <code>S3_MAX_OBJECT_MB</code>). " +
+    "<strong>Upload Console</strong> chỉ giới hạn nút Files trên Console.</p>" +
+    (infra.disk_ready
+      ? '<p class="muted">Gợi ý: trần storage ≪ disk trống (~' +
+        esc(String(infra.disk_free_gib)) +
+        " GiB), đã cấp MinIO " +
+        esc(String(infra.minio_allocated_gb || 0)) +
+        " GiB.</p>"
+      : "") +
+    '<div class="form-row">' +
+    '<label>Max storage (GB)<input form="policy-form" name="minio_max_storage_gb" type="number" min="1" max="2000" value="' +
+    esc(String(pol.minio_max_storage_gb)) +
+    '" required /></label>' +
+    '<label>Max RAM pod (MB)<input form="policy-form" name="minio_max_memory_mb" type="number" min="128" max="8192" value="' +
+    esc(String(pol.minio_max_memory_mb)) +
+    '" required /></label></div>' +
+    '<div class="form-row">' +
+    '<label>Max object (MiB)<input form="policy-form" name="minio_max_object_mb" type="number" min="1" max="51200" value="' +
+    esc(String(pol.minio_max_object_mb != null ? pol.minio_max_object_mb : 5120)) +
+    '" required /></label>' +
+    '<label>Upload Console (MiB)<input form="policy-form" name="minio_console_upload_mb" type="number" min="1" max="512" value="' +
+    esc(String(pol.minio_console_upload_mb)) +
+    '" required /></label></div>';
+
+  const ingressBody =
+    '<p class="policy-help">Giới hạn body HTTP qua Ingress hostname app (upload multipart qua web). Không áp dụng khi app gọi MinIO trong cluster.</p>' +
+    '<div class="form-row">' +
+    '<label>proxy-body-size<input form="policy-form" name="ingress_proxy_body_size" type="text" value="' +
+    esc(pol.ingress_proxy_body_size || "32m") +
+    '" required placeholder="32m" /></label></div>';
+
+  const securityBody =
+    '<p class="muted">Passphrase lớp 2 — không phải mật khẩu đăng nhập. Chỉ admin biết passphrase mới sửa được policy.</p>' +
+    '<button type="button" class="btn-ghost" id="policy-rotate-unlock"' +
+    (pol.unlock_configured ? "" : " disabled") +
+    ">Đổi Unlock passphrase</button>";
+
+  const applyBody =
+    '<p class="muted">Lưu toàn bộ trần Redis · MinIO · Ingress (cần xác thực 2 lớp).</p>' +
+    '<form id="policy-form" class="policy-form">' +
+    '<button type="submit" class="btn-primary"' +
+    (pol.unlock_configured ? "" : " disabled") +
+    ">Lưu policy</button></form>";
+
+  const slug = "platform-policy";
+  main.innerHTML =
+    '<div class="page-header"><h2 class="page-title">Platform Policy</h2>' +
+    '<p class="page-subtitle">Trần cứng toàn platform — sửa cần mật khẩu login + Policy Unlock</p></div>' +
+    '<div id="policy-root" class="policy-root">' +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-overview",
+      policySummary("Tổng quan", unlockBadge),
+      overviewBody,
+      true,
+      { id: "policy-sec-overview" }
+    ) +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-redis",
+      policySummary(
+        "Redis",
+        '<span class="badge muted">' +
+          esc(String(pol.redis_max_memory_mb)) +
+          " MB · " +
+          esc(String(pol.redis_max_clients)) +
+          " clients</span>"
+      ),
+      redisBody,
+      true,
+      { id: "policy-sec-redis" }
+    ) +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-minio",
+      policySummary(
+        "MinIO",
+        '<span class="badge muted">' +
+          esc(String(pol.minio_max_storage_gb)) +
+          " Gi · obj " +
+          esc(String(pol.minio_max_object_mb != null ? pol.minio_max_object_mb : 5120)) +
+          " Mi · console " +
+          esc(String(pol.minio_console_upload_mb)) +
+          " MiB</span>"
+      ),
+      minioBody,
+      true,
+      { id: "policy-sec-minio" }
+    ) +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-ingress",
+      policySummary(
+        "Ingress",
+        '<span class="badge muted">' + esc(pol.ingress_proxy_body_size || "32m") + "</span>"
+      ),
+      ingressBody,
+      false,
+      { id: "policy-sec-ingress" }
+    ) +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-security",
+      policySummary("Bảo mật Unlock", unlockBadge),
+      securityBody,
+      false,
+      { id: "policy-sec-security" }
+    ) +
+    renderDeployCollapsibleCard(
+      slug,
+      "policy-apply",
+      policySummary("Áp dụng", '<span class="badge muted">Lưu · step-up</span>'),
+      applyBody,
+      true,
+      { id: "policy-sec-apply" }
+    ) +
+    "</div>";
+
+  bindDeployCollapsibleCards(document.getElementById("policy-root"), slug);
+
+  document.getElementById("policy-form").onsubmit = async function (e) {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    // Inputs dùng form="policy-form" nằm ngoài thẻ form — FormData vẫn lấy được.
+    const body = {
+      redis_max_memory_mb: Number(fd.get("redis_max_memory_mb")),
+      redis_max_clients: Number(fd.get("redis_max_clients")),
+      minio_max_storage_gb: Number(fd.get("minio_max_storage_gb")),
+      minio_max_memory_mb: Number(fd.get("minio_max_memory_mb")),
+      minio_max_object_mb: Number(fd.get("minio_max_object_mb")),
+      minio_console_upload_mb: Number(fd.get("minio_console_upload_mb")),
+      ingress_proxy_body_size: String(fd.get("ingress_proxy_body_size") || "").trim(),
+    };
+    const token = await stepUpThen();
+    if (!token) return;
+    try {
+      await api("/api/v1/admin/policy", {
+        method: "PATCH",
+        body: body,
+        headers: { "X-Platform-Step-Up": token },
+        loadingTitle: "Đang lưu policy…",
+      });
+      toastSuccess("Đã lưu Platform Policy");
+      pagePlatformPolicy(main);
+    } catch (err) {
+      toastError(err.message);
+    }
+  };
+
+  const rotateBtn = document.getElementById("policy-rotate-unlock");
+  if (rotateBtn) {
+    rotateBtn.onclick = async function () {
+      const token = await stepUpThen();
+      if (!token) return;
+      const dlg = await uiFormDialog({
+        title: "Đổi Policy Unlock",
+        message: "Passphrase mới (tối thiểu 10 ký tự).",
+        confirmText: "Đổi passphrase",
+        fields: [{ id: "next", label: "Passphrase mới", type: "password", autocomplete: "new-password" }],
+      });
+      if (!dlg.ok) return;
+      try {
+        await api("/api/v1/admin/policy/unlock-passphrase", {
+          method: "POST",
+          body: { new_unlock_passphrase: dlg.values.next },
+          headers: { "X-Platform-Step-Up": token },
+        });
+        toastSuccess("Đã đổi Unlock passphrase");
+        pagePlatformPolicy(main);
+      } catch (err) {
+        toastError(err.message);
+      }
+    };
+  }
+}
+
 async function pageAudit(main) {
   const data = await api("/api/v1/admin/audit");
   main.innerHTML =
@@ -649,7 +940,7 @@ async function pageUsers(main) {
     '<form id="create-user-form" class="login-form" style="max-width:520px">' +
     '<div class="form-row"><label>Email<input name="email" type="email" required /></label>' +
     '<label>Tên hiển thị<input name="display_name" type="text" placeholder="Nguyễn Văn A" /></label></div>' +
-    '<div class="form-row"><label>Mật khẩu<input name="password" type="password" minlength="12" required placeholder="≥12 ký tự, chữ + số" /></label>' +
+    '<div class="form-row"><label>Mật khẩu<input name="password" type="password" minlength="10" required placeholder="≥10 ký tự, chữ + số" /></label>' +
     '<label>Role<select name="role">' +
     roleOptions.map(function (o) { return '<option value="' + o.v + '">' + o.l + "</option>"; }).join("") +
     "</select></label></div>" +

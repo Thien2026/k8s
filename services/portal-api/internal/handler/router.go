@@ -34,7 +34,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   origins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Join-Gate"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Join-Gate", "X-Platform-Step-Up"},
 		AllowCredentials: true,
 	}))
 
@@ -108,7 +108,12 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 		r.Post("/projects/{slug}/addons/minio/upgrade-ha", h.UpgradeMinioAddonHA)
 		r.Post("/projects/{slug}/addons/minio/restart", h.RestartMinioAddon)
 		r.Get("/projects/{slug}/addons/minio/logs", h.GetMinioAddonLogs)
+		r.Get("/projects/{slug}/addons/minio/stats", h.GetMinioAddonStats)
 		r.Get("/projects/{slug}/addons/minio/ha-capability", h.GetMinioHACapability)
+		r.Get("/projects/{slug}/addons/minio/objects/download", h.DownloadMinioAddonObject)
+		r.Get("/projects/{slug}/addons/minio/objects", h.GetMinioAddonObjects)
+		r.Post("/projects/{slug}/addons/minio/objects", h.UploadMinioAddonObject)
+		r.Delete("/projects/{slug}/addons/minio/objects", h.DeleteMinioAddonObject)
 		r.Get("/projects/{slug}/addons/{engine}", h.GetProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}", h.CreateProjectAddon)
 		r.Post("/projects/{slug}/addons/{engine}/provision", h.ProvisionProjectAddon)
@@ -180,6 +185,8 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 			r.Get("/admin/plugins", h.AdminListPlugins)
 		})
 
+		r.Get("/platform/policy/ceilings", h.GetPlatformPolicyCeilings)
+
 		r.Group(func(r chi.Router) {
 			r.Use(h.requireRole(auth.RoleAdmin))
 			r.Patch("/admin/plugins/{name}", h.AdminPatchPlugin)
@@ -189,8 +196,14 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config, rancherClient *rancher.Clien
 			r.Get("/admin/gitops", h.GetAdminGitOps)
 			r.Patch("/admin/gitops", h.PatchAdminGitOps)
 			r.Post("/admin/gitops/test", h.PostAdminGitOpsTest)
+			r.Get("/admin/policy", h.GetAdminPlatformPolicy)
+			r.With(httprate.LimitByIP(10, time.Minute)).Post("/admin/policy/step-up", h.PostAdminPolicyStepUp)
+			r.Patch("/admin/policy", h.PatchAdminPlatformPolicy)
+			r.Post("/admin/policy/unlock-passphrase", h.PostAdminPolicyUnlockPassphrase)
 		})
 	})
+
+	h.ensurePolicyUnlockSeed(context.Background())
 
 	return r
 }

@@ -22,36 +22,49 @@ function parseRoute() {
 async function navigate() {
   const navToken = nextNavToken();
   const parsed = parseRoute();
-  await buildSidebarForRoute(parsed);
-  if (!isNavTokenActive(navToken)) return;
-  const main = $("#main");
+  showAppLoading("Đang tải trang…", parsed.type === "project" ? (parsed.slug || "") : (parsed.key || ""));
   try {
-    if (parsed.type === "view") {
-      await pageResourceDetail(main, parsed.resource, parsed.ns, parsed.name);
-      return;
-    }
-    if (parsed.type === "project") {
-      await pageProjectHub(main, parsed.slug, parsed.tab, parsed.addon);
-      return;
-    }
-    if (routes[parsed.key]) {
-      await routes[parsed.key](main);
-      return;
-    }
-    const menu = await api("/api/v1/explorer/menu");
-    const item = menu.find((m) => m.key === parsed.key);
-    if (item && item.type === "k8s") {
-      await pageK8s(main, item.key, item.label);
-      return;
-    }
+    await buildSidebarForRoute(parsed);
     if (!isNavTokenActive(navToken)) return;
-    main.innerHTML = '<p class="error">Không tìm thấy trang: ' + esc(parsed.key) + "</p>";
-  } catch (e) {
-    if (!isNavTokenActive(navToken)) return;
-    main.innerHTML =
-      '<p class="error">Lỗi: ' +
-      esc(errorMessage(e)) +
-      '</p><p class="muted" style="margin-top:8px"><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></p>';
+    const main = $("#main");
+    try {
+      if (parsed.type === "view") {
+        await pageResourceDetail(main, parsed.resource, parsed.ns, parsed.name);
+        return;
+      }
+      if (parsed.type === "project") {
+        await pageProjectHub(main, parsed.slug, parsed.tab, parsed.addon);
+        return;
+      }
+      if (routes[parsed.key]) {
+        await routes[parsed.key](main);
+        return;
+      }
+      // Fallback: một số page type từ explorer menu
+      if (parsed.key === "policy" && typeof pagePlatformPolicy === "function") {
+        await pagePlatformPolicy(main);
+        return;
+      }
+      const menu = await api("/api/v1/explorer/menu", { noLoading: true });
+      const item = menu.find((m) => m.key === parsed.key);
+      if (item && item.type === "k8s") {
+        await pageK8s(main, item.key, item.label);
+        return;
+      }
+      if (!isNavTokenActive(navToken)) return;
+      main.innerHTML =
+        '<p class="error">Không tìm thấy trang: ' +
+        esc(parsed.key) +
+        '</p><p class="muted">Thử <button type="button" class="btn-ghost btn-sm" onclick="location.reload(true)">tải lại cứng</button> (Cmd/Ctrl+Shift+R) nếu vừa cập nhật Console.</p>';
+    } catch (e) {
+      if (!isNavTokenActive(navToken)) return;
+      main.innerHTML =
+        '<p class="error">Lỗi: ' +
+        esc(errorMessage(e)) +
+        '</p><p class="muted" style="margin-top:8px"><button type="button" class="btn-ghost btn-sm" onclick="location.reload()">Tải lại</button></p>';
+    }
+  } finally {
+    hideAppLoading();
   }
 }
 

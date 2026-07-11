@@ -86,8 +86,10 @@ func mergeGhDeployment(existing, g deploymentRow) deploymentRow {
 	if existing.RuntimeDetail == "" {
 		existing.RuntimeDetail = g.RuntimeDetail
 	}
-	if existing.Status == "in_progress" && g.Status != "" && g.Status != "in_progress" {
-		existing.Status = g.Status
+	// Chỉ nhận failed từ GitHub. Không copy success từ GH row —
+	// success tổng chỉ do runtime/traffic gate (tránh nhấp nháy success → in_progress).
+	if existing.Status == "in_progress" && strings.EqualFold(strings.TrimSpace(g.Status), "failed") {
+		existing.Status = "failed"
 	}
 	if deploymentIsTerminal(existing) {
 		existing.Live = false

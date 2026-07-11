@@ -23,8 +23,8 @@
   --radius: 16px;
 }
 
-.main a,
-.card a,
+.main a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout),
+.card a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout),
 .pipe-link,
 .addon-redis-app-probe a {
   color: var(--link);
@@ -33,16 +33,16 @@
   transition: color 0.15s ease, border-color 0.15s ease;
 }
 
-.main a:hover,
-.card a:hover,
+.main a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout):hover,
+.card a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout):hover,
 .pipe-link:hover,
 .addon-redis-app-probe a:hover {
   color: var(--link-hover);
   border-bottom-color: rgba(165, 243, 252, 0.7);
 }
 
-.main a code,
-.card a code,
+.main a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout) code,
+.card a:not(.btn-primary):not(.btn-ghost):not(.btn-danger):not(.btn-logout) code,
 .addon-redis-app-probe a code {
   color: inherit;
 }
@@ -836,11 +836,7 @@ body {
 .sidebar a,
 .nav-link,
 .nav-back,
-.res-link,
-.btn-primary,
-.btn-ghost,
-.btn-danger,
-.btn-logout {
+.res-link {
   border-bottom: none !important;
 }
 
@@ -3305,6 +3301,138 @@ tr.dns-row td {
   line-height: 1.5;
 }
 
+.ui-dialog-form {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0 4px;
+}
+
+.ui-dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.ui-dialog-field input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.policy-form h3 {
+  margin: 18px 0 8px;
+  font-size: 15px;
+}
+
+.policy-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.policy-root .login-form label,
+.policy-root .form-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 160px;
+}
+
+.policy-root .form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.policy-root .form-row input {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+.policy-root .policy-form {
+  margin: 0;
+}
+
+.policy-help {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.policy-infra {
+  margin-bottom: 14px;
+}
+
+.policy-infra-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 80%, var(--border));
+}
+
+.policy-infra-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.policy-infra-grid strong {
+  font-size: 15px;
+}
+
+.policy-infra-caution {
+  border-color: color-mix(in srgb, #c9882a 45%, var(--border));
+}
+
+.policy-infra-warn {
+  border-color: color-mix(in srgb, #c44 50%, var(--border));
+  background: color-mix(in srgb, #c44 8%, var(--bg));
+}
+
+.policy-infra-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.addon-quota-field.addon-quota-invalid input,
+input.input-invalid {
+  border-color: #c44 !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, #c44 40%, transparent);
+}
+
+.addon-quota-hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.addon-quota-hint.error-text {
+  color: #e07070;
+}
+
 .ui-dialog-details {
   position: relative;
   margin: 12px 0 0;
@@ -3924,6 +4052,58 @@ tr.dns-row td {
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.addon-minio-files-toolbar {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.addon-minio-files-input-native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.addon-minio-file-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  margin: 0;
+}
+
+.addon-minio-files-name {
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+
+.addon-minio-files-key {
+  min-width: 140px;
+  max-width: 220px;
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #334155);
+  background: var(--surface, #0f172a);
+  color: inherit;
+}
+
+.addon-minio-files-actions {
+  white-space: nowrap;
+}
+
+.addon-minio-files-actions .danger {
+  color: var(--danger, #f87171);
 }
 
 .addon-redis-doc-box {

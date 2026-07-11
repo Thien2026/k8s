@@ -722,6 +722,7 @@ const routes = {
   "platform-projects": (main) => pagePlatformProjects(main),
   addons: (main) => pageAddons(main),
   gitops: (main) => pageGitOps(main),
+  policy: (main) => pagePlatformPolicy(main),
   "add-worker": (main) => pageAddWorker(main),
   audit: (main) => pageAudit(main),
   users: (main) => pageUsers(main),

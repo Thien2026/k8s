@@ -114,6 +114,9 @@ func (h *Handler) syncProjectDomain(ctx context.Context, p projectRow, d *projec
 		Namespace:   ns,
 		Routes:      routes,
 	}
+	if pol, _, err := h.loadPlatformPolicy(ctx); err == nil {
+		in.ProxyBodySize = pol.IngressProxyBodySize
+	}
 	if err := syncer.SyncIngress(ctx, clusterID, in); err != nil {
 		d.SyncStatus = "error"
 		d.SyncError = err.Error()

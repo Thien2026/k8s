@@ -43,6 +43,7 @@ type Config struct {
 	QuickLoginEnabled    bool
 	QuickLoginEmail      string
 	QuickLoginPassword   string
+	PolicyUnlockPassphrase string
 	ArgoCDURL            string
 	ArgoCDNamespace      string
 	GrafanaURL           string
@@ -145,6 +146,7 @@ func Load() Config {
 		QuickLoginEnabled:  os.Getenv("QUICK_LOGIN_ENABLED") == "true",
 		QuickLoginEmail:    firstNonEmpty(os.Getenv("QUICK_LOGIN_EMAIL"), os.Getenv("PLATFORM_ADMIN_EMAIL")),
 		QuickLoginPassword: firstNonEmpty(os.Getenv("QUICK_LOGIN_PASSWORD"), os.Getenv("PLATFORM_ADMIN_PASSWORD")),
+		PolicyUnlockPassphrase: strings.TrimSpace(os.Getenv("POLICY_UNLOCK_PASSPHRASE")),
 		ArgoCDURL:          argocdURL,
 		ArgoCDNamespace:    firstNonEmpty(os.Getenv("ARGOCD_NAMESPACE"), "argocd"),
 		GrafanaURL:           grafanaURL,

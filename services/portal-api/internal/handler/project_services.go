@@ -277,7 +277,7 @@ func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, o
 		}
 		ok, err := client.RepoPathExists(ctx, token, owner, ghRepo, ctxPath, branch)
 		if err != nil {
-			return fmt.Errorf("không kiểm tra được GitHub: %w", err)
+			return fmt.Errorf("không kiểm tra được thư mục %q trên branch %q: %w", ctxPath, branch, err)
 		}
 		if !ok {
 			return fmt.Errorf("thư mục %q không có trên branch %q — chọn branch có backend/frontend (vd. multi-service) hoặc sửa thư mục", ctxPath, branch)
@@ -286,10 +286,10 @@ func (h *Handler) validateMultiServicePaths(ctx context.Context, userID int64, o
 		if deploy.NormalizeBuildMode(s.BuildMode) == "dockerfile" && df != "" {
 			ok, err := client.RepoPathExists(ctx, token, owner, ghRepo, df, branch)
 			if err != nil {
-				return fmt.Errorf("không kiểm tra được Dockerfile: %w", err)
+				return fmt.Errorf("không kiểm tra được Dockerfile %q trên branch %q: %w", df, branch, err)
 			}
 			if !ok {
-				return fmt.Errorf("Dockerfile %q không có trên branch %q", df, branch)
+				return fmt.Errorf("Dockerfile %q không có trên branch %q (service %s) — đổi build_mode sang buildpack hoặc sửa đường dẫn", df, branch, s.Name)
 			}
 		}
 	}

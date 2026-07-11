@@ -49,7 +49,16 @@ function renderDeployCollapsibleCard(slug, sectionId, summaryHtml, bodyHtml, def
 
 function bindDeployCollapsibleCards(root, slug) {
   if (!root) return;
+  var nodes = [];
+  if (root.classList && root.classList.contains("deploy-collapsible") && root.getAttribute("data-deploy-section")) {
+    nodes.push(root);
+  }
   root.querySelectorAll(".deploy-collapsible[data-deploy-section]").forEach(function (el) {
+    nodes.push(el);
+  });
+  nodes.forEach(function (el) {
+    if (el.dataset.deployCollapseBound === "1") return;
+    el.dataset.deployCollapseBound = "1";
     var sid = el.getAttribute("data-deploy-section");
     var sslug = el.getAttribute("data-deploy-slug") || slug;
     el.addEventListener("toggle", function () {
@@ -57,11 +66,15 @@ function bindDeployCollapsibleCards(root, slug) {
     });
   });
   root.querySelectorAll(".deploy-collapsible-no-toggle").forEach(function (el) {
+    if (el.dataset.deployNoToggleBound === "1") return;
+    el.dataset.deployNoToggleBound = "1";
     el.addEventListener("click", function (e) {
       e.stopPropagation();
     });
   });
   root.querySelectorAll(".deploy-collapsible-summary-actions").forEach(function (el) {
+    if (el.dataset.deploySummaryActionsBound === "1") return;
+    el.dataset.deploySummaryActionsBound = "1";
     el.addEventListener("click", function (e) {
       e.stopPropagation();
     });

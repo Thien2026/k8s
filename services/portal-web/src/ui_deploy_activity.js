@@ -1,14 +1,42 @@
 /* Deploy activity card, actions, poll. */
 
+function deployActivityCollapsibleSummary(envLabel, badgeHtml) {
+  return (
+    '<div class="deploy-collapsible-summary-inner">' +
+    '<span class="deploy-collapsible-chev" aria-hidden="true"></span>' +
+    '<div class="deploy-collapsible-title-row">' +
+    "<h3 style=\"margin:0\">Tiến trình deploy · " +
+    esc(envLabel) +
+    "</h3>" +
+    (badgeHtml || "") +
+    "</div></div>"
+  );
+}
+
+function wrapDeployActivityCollapsible(slug, envLabel, bodyHtml, badgeHtml, defaultOpen) {
+  return renderDeployCollapsibleCard(
+    slug || "",
+    "progress",
+    deployActivityCollapsibleSummary(envLabel, badgeHtml),
+    bodyHtml,
+    defaultOpen !== false,
+    { id: "deploy-activity-card", extraClass: "deploy-activity-collapsible" }
+  );
+}
+
 function renderDeployActivityCard(activity, opts) {
   opts = opts || {};
   const showHistory = opts.showHistory === true;
   const showPromotePrep = opts.showPromotePrep === true;
   const showPromoteBar = opts.showPromoteBar === true;
+  const slug = opts.slug || "";
   if (activity && activity.loading) {
-    return (
-      '<div class="card" style="margin-bottom:16px" id="deploy-activity-card"><h3>Tiến trình deploy</h3>' +
-      '<p class="loading">Đang tải tiến trình…</p></div>'
+    return wrapDeployActivityCollapsible(
+      slug,
+      (opts.expectedEnv || "dev").toUpperCase(),
+      '<p class="loading">Đang tải tiến trình…</p>',
+      "",
+      true
     );
   }
   if (!activity || (!activity.current && !(activity.items || []).length)) {
@@ -27,15 +55,15 @@ function renderDeployActivityCard(activity, opts) {
           (opts.slug
             ? ' <a class="pipe-link" href="' + esc(projectRoute(opts.slug, "deploy-history")) + '">Xem lịch sử deploy →</a>'
             : "");
-    return (
-      '<div class="card" style="margin-bottom:16px" id="deploy-activity-card" data-deploy-env="' +
-      esc(emptyEnv) +
-      '"><h3>Tiến trình deploy · ' +
-      esc(emptyEnvLabel) +
-      "</h3>" +
-      extra +
-      emptyBody +
-      "</div>"
+    return wrapDeployActivityCollapsible(
+      slug,
+      emptyEnvLabel,
+      extra + emptyBody,
+      "",
+      true
+    ).replace(
+      'id="deploy-activity-card"',
+      'id="deploy-activity-card" data-deploy-env="' + esc(emptyEnv) + '"'
     );
   }
   const envLabel = deployActivityEnv(activity, opts.expectedEnv).toUpperCase();
@@ -117,17 +145,28 @@ function renderDeployActivityCard(activity, opts) {
         : "") +
       "</p>";
   }
-  return (
-    '<div class="card" style="margin-bottom:16px" id="deploy-activity-card" data-deploy-env="' +
-    esc(deployActivityEnv(activity, opts.expectedEnv)) +
-    '" data-deploy-live="' +
-    (cur && deployIsLive(cur) ? "1" : "0") +
-    '"><h3>Tiến trình deploy · ' +
-    esc(envLabel) +
-    "</h3>" +
-    profileCtx +
-    body +
-    "</div>"
+  const liveBadge =
+    cur && deployIsLive(cur)
+      ? '<span class="badge warn">LIVE</span>'
+      : cur && cur.status === "success"
+        ? '<span class="badge ok">OK</span>'
+        : cur && cur.status === "failed"
+          ? '<span class="badge bad">Lỗi</span>'
+          : "";
+  const wrapped = wrapDeployActivityCollapsible(
+    slug,
+    envLabel,
+    profileCtx + body,
+    liveBadge,
+    true
+  );
+  return wrapped.replace(
+    'id="deploy-activity-card"',
+    'id="deploy-activity-card" data-deploy-env="' +
+      esc(deployActivityEnv(activity, opts.expectedEnv)) +
+      '" data-deploy-live="' +
+      (cur && deployIsLive(cur) ? "1" : "0") +
+      '"'
   );
 }
 
@@ -387,7 +426,12 @@ function updateDeployActivityDOM(activity, slug, promoteReadiness, expectedEnv, 
       if (newDetails && !wasOpen) newDetails.open = false;
       const newHistory = fresh.querySelector(".deploy-history-wrap");
       if (newHistory && wasHistoryOpen) newHistory.open = true;
+      // Giữ trạng thái thu gọn section Tiến trình khi poll refresh
+      if (card.tagName === "DETAILS" && fresh.tagName === "DETAILS") {
+        fresh.open = card.open;
+      }
       card.replaceWith(fresh);
+      bindDeployCollapsibleCards(fresh, slug);
       bindDeployActivityActions(slug, expectedEnv, promoteReadiness);
     }
     return;

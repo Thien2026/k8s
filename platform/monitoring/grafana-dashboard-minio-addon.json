@@ -1,0 +1,124 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "minio_cluster_usage_total_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "legendFormat": "usage",
+          "refId": "A"
+        },
+        {
+          "expr": "minio_cluster_capacity_usable_total_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "legendFormat": "usable total",
+          "refId": "B"
+        },
+        {
+          "expr": "minio_cluster_capacity_usable_free_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "legendFormat": "usable free",
+          "refId": "C"
+        }
+      ],
+      "title": "MinIO capacity / usage",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(rate(minio_s3_requests_total{namespace=\"$namespace\",pod=~\"$release-.*\"}[5m]))",
+          "legendFormat": "S3 req/s",
+          "refId": "A"
+        }
+      ],
+      "title": "S3 requests / sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 8 },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "minio_cluster_nodes_online_total{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Nodes online",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 8 },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "100 * (1 - minio_cluster_capacity_usable_free_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"} / clamp_min(minio_cluster_capacity_usable_total_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}, 1))",
+          "refId": "A"
+        }
+      ],
+      "title": "Capacity used %",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 8 },
+      "id": 5,
+      "targets": [
+        {
+          "expr": "minio_cluster_usage_total_bytes{namespace=\"$namespace\",pod=~\"$release-.*\"}",
+          "refId": "A"
+        }
+      ],
+      "title": "Object usage",
+      "type": "stat"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["platform", "minio", "addon"],
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(minio_cluster_nodes_online_total, namespace)",
+        "refresh": 2,
+        "sort": 1
+      },
+      {
+        "name": "release",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(minio_cluster_nodes_online_total{namespace=\"$namespace\"}, pod)",
+        "regex": "/^(.*)-\\d+$/",
+        "refresh": 2,
+        "sort": 1
+      }
+    ]
+  },
+  "time": { "from": "now-6h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Platform MinIO addon",
+  "uid": "platform-minio-addon",
+  "version": 1
+}
