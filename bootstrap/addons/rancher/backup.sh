@@ -12,7 +12,18 @@ BACKUP_DIR="${BACKUP_DIR:-/var/backups/platform-k8s}"
 BACKUP_CRON="${BACKUP_CRON:-0 3 * * *}"
 BACKUP_RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
 
+if ! command -v rclone >/dev/null 2>&1; then
+  log "Cài rclone cho backup offsite S3-compatible..."
+  apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq rclone
+fi
+
 chmod +x "${ROOT_DIR}/scripts/backup-cluster.sh"
+chmod +x "${ROOT_DIR}/scripts/backup-offsite-worker.sh"
+chmod +x "${ROOT_DIR}/scripts/backup-scheduler.sh"
+chmod +x "${ROOT_DIR}/scripts/restore-offsite.sh"
+chmod +x "${ROOT_DIR}/scripts/backup-project-restore-worker.sh"
+chmod +x "${ROOT_DIR}/scripts/minio-scan-worker.sh"
 chmod +x "${ROOT_DIR}/scripts/restore-etcd.sh"
 
 mkdir -p "${BACKUP_DIR}"
@@ -35,10 +46,13 @@ fi
 CRON_FILE="/etc/cron.d/platform-k8s-backup"
 log "Cài cron hàng ngày: ${BACKUP_CRON}"
 cat >"${CRON_FILE}" <<EOF
-# Platform K8s backup — config + copy etcd snapshots
+# Platform K8s backup — local etcd/config + scheduler offsite theo target Console
 SHELL=/bin/bash
 PATH=/var/lib/rancher/rke2/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ${BACKUP_CRON} root ROOT_DIR=${ROOT_DIR} BACKUP_DIR=${BACKUP_DIR} BACKUP_RETENTION_DAYS=${BACKUP_RETENTION_DAYS} ${ROOT_DIR}/scripts/backup-cluster.sh >>/var/log/platform-backup.log 2>&1
+* * * * * root ROOT_DIR=${ROOT_DIR} BACKUP_DIR=${BACKUP_DIR} ${ROOT_DIR}/scripts/backup-scheduler.sh >>/var/log/platform-backup.log 2>&1
+* * * * * root ROOT_DIR=${ROOT_DIR} ${ROOT_DIR}/scripts/backup-project-restore-worker.sh >>/var/log/platform-backup.log 2>&1
+* * * * * root ROOT_DIR=${ROOT_DIR} ${ROOT_DIR}/scripts/minio-scan-worker.sh >>/var/log/platform-backup.log 2>&1
 EOF
 chmod 644 "${CRON_FILE}"
 
@@ -49,6 +63,7 @@ ROOT_DIR="${ROOT_DIR}" BACKUP_DIR="${BACKUP_DIR}" BACKUP_RETENTION_DAYS="${BACKU
 log "Backup dir: ${BACKUP_DIR}"
 log "Log: /var/log/platform-backup.log"
 log "Khôi phục: ${ROOT_DIR}/scripts/restore-etcd.sh list"
-log "Khuyến nghị: rsync ${BACKUP_DIR} sang storage ngoài (S3/NAS) định kỳ"
+log "Offsite S3: tạo/test target trong Console, sau đó chạy ${ROOT_DIR}/scripts/backup-offsite-worker.sh"
+log "Scheduler offsite: cron mỗi phút đọc schedule_cron từ target Console."
 
 mark_step_done "$0"

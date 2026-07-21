@@ -103,6 +103,24 @@ function wrapPipelineSetupCard(slug, bodyHtml, summaryExtras, defaultOpen) {
   });
 }
 
+function renderPipelineStepCollapsible(slug, step, title, bodyHtml, defaultOpen) {
+  var sectionId = "pipeline-step-" + step;
+  var open = isDeploySectionOpen(slug, sectionId, defaultOpen);
+  return (
+    '<details class="pipeline-step deploy-collapsible"' +
+    (open ? " open" : "") +
+    ' data-deploy-section="' + esc(sectionId) +
+    '" data-deploy-slug="' + esc(slug) + '">' +
+    '<summary class="pipeline-step-head">' +
+    '<span class="pipeline-step-num">' + esc(String(step)) + "</span>" +
+    '<span class="pipeline-step-title">' + esc(title) + "</span>" +
+    '<span class="deploy-collapsible-chev pipeline-step-chev" aria-hidden="true"></span>' +
+    "</summary>" +
+    '<div class="pipeline-step-body">' + bodyHtml + "</div>" +
+    "</details>"
+  );
+}
+
 function githubRepoOptionsHtml(repo, ghRepos) {
   if (ghRepos && ghRepos.items === null) {
     return '<option value="" disabled>Đang tải danh sách repo…</option>';

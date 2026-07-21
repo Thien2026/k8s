@@ -273,6 +273,9 @@ func enrichWorkloadRow(row *ResourceRow, kind string, status, spec json.RawMessa
 		}
 		json.Unmarshal(spec, &sp)
 		if json.Unmarshal(status, &st) == nil {
+			row.JobSucceeded = st.Succeeded
+			row.JobFailed = st.Failed
+			row.JobActive = st.Active
 			row.Status = fmt.Sprintf("active=%d succeeded=%d", st.Active, st.Succeeded)
 			if sp.Completions != nil {
 				row.Completions = fmt.Sprintf("%d/%d", st.Succeeded, *sp.Completions)

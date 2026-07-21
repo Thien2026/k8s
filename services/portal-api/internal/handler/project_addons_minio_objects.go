@@ -2,6 +2,8 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +33,35 @@ type minioS3Creds struct {
 	ForcePathStyle bool
 }
 
+func newMinioScanObjectID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func (h *Handler) minioScanProfileCreds(ctx context.Context, p projectRow, env, bucket string) (minioS3Creds, int64, error) {
+	var bucketID int64
+	var secretName, status string
+	err := h.db.QueryRow(ctx, `SELECT b.id,sp.uploader_connection_secret,sp.status
+		FROM project_minio_buckets b JOIN project_minio_scan_profiles sp ON sp.bucket_id=b.id
+		WHERE b.project_id=$1 AND b.environment=$2 AND b.name=$3 AND b.scan_mode='required'`,
+		p.ID, env, bucket).Scan(&bucketID, &secretName, &status)
+	if err != nil || status != "ready" {
+		return minioS3Creds{}, 0, fmt.Errorf("scan profile bucket chưa sẵn sàng")
+	}
+	data, found, err := h.rancher.GetOpaqueSecretData(ctx, "", h.projectNamespace(p, env), secretName)
+	if err != nil || !found {
+		return minioS3Creds{}, 0, fmt.Errorf("uploader credential scan chưa sẵn sàng")
+	}
+	return minioS3Creds{
+		Endpoint: strings.TrimSpace(data["S3_ENDPOINT"]), AccessKey: strings.TrimSpace(data["S3_ACCESS_KEY"]),
+		SecretKey: strings.TrimSpace(data["S3_SECRET_KEY"]), Bucket: strings.TrimSpace(data["S3_BUCKET"]),
+		Region: strings.TrimSpace(data["S3_REGION"]), ForcePathStyle: true,
+	}, bucketID, nil
+}
+
 func (h *Handler) projectMinioS3Creds(ctx context.Context, projectID int64, env string) (minioS3Creds, error) {
 	vars, err := h.envVarsMap(ctx, projectID, env)
 	if err != nil {
@@ -52,6 +83,42 @@ func (h *Handler) projectMinioS3Creds(ctx context.Context, projectID int64, env 
 	}
 	if cfg.Endpoint == "" || cfg.AccessKey == "" || cfg.SecretKey == "" {
 		return minioS3Creds{}, fmt.Errorf("S3 chưa sẵn sàng — bật MinIO addon trước")
+	}
+	return cfg, nil
+}
+
+// projectMinioBucketS3Creds resolves only a DB-owned bucket, never a raw client bucket name.
+// The default `app` bucket continues using legacy runtime S3_* for compatibility.
+func (h *Handler) projectMinioBucketS3Creds(ctx context.Context, p projectRow, env, bucket string) (minioS3Creds, error) {
+	if bucket == "" || bucket == minioDefaultBucket {
+		return h.projectMinioS3Creds(ctx, p.ID, env)
+	}
+	name, err := normalizeMinioBucketName(bucket)
+	if err != nil {
+		return minioS3Creds{}, err
+	}
+	var secretName, status string
+	if err := h.db.QueryRow(ctx, `SELECT connection_secret,status FROM project_minio_buckets
+		WHERE project_id=$1 AND environment=$2 AND name=$3`, p.ID, env, name).Scan(&secretName, &status); err != nil {
+		return minioS3Creds{}, fmt.Errorf("bucket không tồn tại")
+	}
+	if status != "running" {
+		return minioS3Creds{}, fmt.Errorf("bucket chưa sẵn sàng")
+	}
+	data, found, err := h.rancher.GetOpaqueSecretData(ctx, "", h.projectNamespace(p, env), secretName)
+	if err != nil || !found {
+		return minioS3Creds{}, fmt.Errorf("credential bucket chưa sẵn sàng")
+	}
+	cfg := minioS3Creds{
+		Endpoint: strings.TrimSpace(data["S3_ENDPOINT"]), AccessKey: strings.TrimSpace(data["S3_ACCESS_KEY"]),
+		SecretKey: strings.TrimSpace(data["S3_SECRET_KEY"]), Bucket: strings.TrimSpace(data["S3_BUCKET"]),
+		Region: strings.TrimSpace(data["S3_REGION"]), ForcePathStyle: !strings.EqualFold(strings.TrimSpace(data["S3_FORCE_PATH_STYLE"]), "false"),
+	}
+	if cfg.Region == "" {
+		cfg.Region = "us-east-1"
+	}
+	if cfg.Endpoint == "" || cfg.AccessKey == "" || cfg.SecretKey == "" || cfg.Bucket != name {
+		return minioS3Creds{}, fmt.Errorf("credential bucket không hợp lệ")
 	}
 	return cfg, nil
 }
@@ -110,7 +177,7 @@ func (h *Handler) GetMinioAddonObjects(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
 		return
 	}
-	cfg, err := h.projectMinioS3Creds(r.Context(), p.ID, env)
+	cfg, err := h.projectMinioBucketS3Creds(r.Context(), p, env, strings.TrimSpace(r.URL.Query().Get("bucket")))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -152,7 +219,7 @@ func (h *Handler) GetMinioAddonObjects(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) effectiveMinioConsoleUploadMB(ctx context.Context, projectID int64, env string, pol platformPolicy) int {
+func (h *Handler) effectiveMinioConsoleUploadMB(ctx context.Context, projectID int64, env, bucket string, pol platformPolicy) int {
 	maxUploadMB := pol.MinioConsoleUploadMB
 	if maxUploadMB < 1 {
 		maxUploadMB = int(minioObjectsMaxUpload >> 20)
@@ -161,6 +228,12 @@ func (h *Handler) effectiveMinioConsoleUploadMB(ctx context.Context, projectID i
 		objMB := normalizeMinioMaxObjectMB(addon.MaxObjectMB)
 		if objMB < maxUploadMB {
 			maxUploadMB = objMB
+		}
+	}
+	if bucket != "" && bucket != minioDefaultBucket {
+		var bucketMax int
+		if err := h.db.QueryRow(ctx, `SELECT max_object_mb FROM project_minio_buckets WHERE project_id=$1 AND environment=$2 AND name=$3 AND status='running'`, projectID, env, bucket).Scan(&bucketMax); err == nil && bucketMax > 0 && bucketMax < maxUploadMB {
+			maxUploadMB = bucketMax
 		}
 	}
 	if pol.MinioMaxObjectMB > 0 && pol.MinioMaxObjectMB < maxUploadMB {
@@ -205,7 +278,8 @@ func (h *Handler) UploadMinioAddonObject(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "environment phải là dev hoặc prod"})
 		return
 	}
-	maxUploadMB := h.effectiveMinioConsoleUploadMB(r.Context(), p.ID, env, pol)
+	bucket := strings.TrimSpace(r.FormValue("bucket"))
+	maxUploadMB := h.effectiveMinioConsoleUploadMB(r.Context(), p.ID, env, bucket, pol)
 	maxUpload := int64(maxUploadMB) << 20
 	file, hdr, err := r.FormFile("file")
 	if err != nil {
@@ -228,7 +302,48 @@ func (h *Handler) UploadMinioAddonObject(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	cfg, err := h.projectMinioS3Creds(r.Context(), p.ID, env)
+	cleanBucket := bucket
+	if cleanBucket == "" {
+		cleanBucket = minioDefaultBucket
+	}
+	var scanMode string
+	_ = h.db.QueryRow(r.Context(), `SELECT scan_mode FROM project_minio_buckets WHERE project_id=$1 AND environment=$2 AND name=$3`,
+		p.ID, env, cleanBucket).Scan(&scanMode)
+	if scanMode == "required" {
+		cfg, bucketID, err := h.minioScanProfileCreds(r.Context(), p, env, cleanBucket)
+		if err != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()})
+			return
+		}
+		scanID, err := newMinioScanObjectID()
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "không tạo được scan id"})
+			return
+		}
+		stagedKey := "__quarantine/" + scanID + "/" + key
+		client := h.minioS3Client(cfg)
+		ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+		defer cancel()
+		contentType := hdr.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		if _, err := client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(cfg.Bucket), Key: aws.String(stagedKey), Body: file, ContentType: aws.String(contentType)}); err != nil {
+			writeJSON(w, http.StatusBadGateway, map[string]string{"error": "stage quarantine: " + err.Error()})
+			return
+		}
+		_, err = h.db.Exec(r.Context(), `INSERT INTO project_minio_object_scans
+			(id,project_id,environment,bucket_id,quarantine_key,destination_key,object_size,content_type,status,requested_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'queued',$9)`,
+			scanID, p.ID, env, bucketID, stagedKey, key, hdr.Size, contentType, u.ID)
+		if err != nil {
+			writeJSON(w, 500, map[string]string{"error": "lưu scan state: " + err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "scan_id": scanID, "status": "queued", "bucket": cleanBucket, "key": key, "size": hdr.Size})
+		return
+	}
+	cfg, err := h.projectMinioBucketS3Creds(r.Context(), p, env, bucket)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -283,7 +398,7 @@ func (h *Handler) DeleteMinioAddonObject(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	cfg, err := h.projectMinioS3Creds(r.Context(), p.ID, env)
+	cfg, err := h.projectMinioBucketS3Creds(r.Context(), p, env, strings.TrimSpace(r.URL.Query().Get("bucket")))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
@@ -322,7 +437,7 @@ func (h *Handler) DownloadMinioAddonObject(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	cfg, err := h.projectMinioS3Creds(r.Context(), p.ID, env)
+	cfg, err := h.projectMinioBucketS3Creds(r.Context(), p, env, strings.TrimSpace(r.URL.Query().Get("bucket")))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return

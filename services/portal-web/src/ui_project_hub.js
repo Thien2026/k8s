@@ -116,6 +116,11 @@ async function pageProjectHub(main, slug, tab, addon) {
     return;
   }
 
+  if (tab === "backups") {
+    await loadProjectBackups(main, slug, p);
+    return;
+  }
+
   if (tab === "runtime") {
     await loadProjectRuntimePage(main, slug, p);
     return;

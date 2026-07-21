@@ -17,16 +17,16 @@ import (
 )
 
 const (
-	minioAddonImage            = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
-	minioMCImage               = "minio/mc:latest"
-	minioAPIPort               = 9000
-	minioConsolePort           = 9001
-	minioDefaultStorageGB      = 5
-	minioDefaultMemoryMB       = 256
-	minioDefaultMaxObjectMB    = 100
-	minioDefaultBucket         = "app"
-	minioDistributedReplicas   = 4
-	minioDistributedStorageSC  = "longhorn"
+	minioAddonImage           = "minio/minio:RELEASE.2024-12-18T13-15-44Z"
+	minioMCImage              = "minio/mc:latest"
+	minioAPIPort              = 9000
+	minioConsolePort          = 9001
+	minioDefaultStorageGB     = 5
+	minioDefaultMemoryMB      = 256
+	minioDefaultMaxObjectMB   = 100
+	minioDefaultBucket        = "app"
+	minioDistributedReplicas  = 4
+	minioDistributedStorageSC = "longhorn"
 )
 
 type minioAddonAPIView struct {
@@ -260,26 +260,62 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 		return "", err
 	}
 
-	accessKey := ""
-	secretKey := ""
+	// Root key: chỉ dùng cho MinIO server + init job (admin). KHÔNG cấp cho app.
+	rootUser := ""
+	rootPassword := ""
 	authSecretName := release + "-auth"
 	if data, ok, err := h.rancher.GetOpaqueSecretData(ctx, "", ns, authSecretName); err == nil && ok {
-		accessKey = strings.TrimSpace(data["rootUser"])
-		secretKey = strings.TrimSpace(data["rootPassword"])
+		rootUser = strings.TrimSpace(data["rootUser"])
+		rootPassword = strings.TrimSpace(data["rootPassword"])
 	}
-	if accessKey == "" || secretKey == "" {
+	if rootUser == "" || rootPassword == "" {
 		var err error
-		accessKey, err = randomMinioAccessKey()
+		rootUser, err = randomMinioAccessKey()
 		if err != nil {
 			return "", err
 		}
-		secretKey, err = randomMinioSecretKey()
+		rootPassword, err = randomMinioSecretKey()
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// App key: service account riêng, chỉ read/write bucket app (không có quyền admin).
+	// Re-provision: giữ lại key cũ trong connection secret để app đang chạy không mất kết nối.
+	appAccessKey := ""
+	appSecretKey := ""
+	connSecretName := minioAddonConnectionSecretName(release)
+	if data, ok, err := h.rancher.GetOpaqueSecretData(ctx, "", ns, connSecretName); err == nil && ok {
+		appAccessKey = strings.TrimSpace(data["S3_ACCESS_KEY"])
+		appSecretKey = strings.TrimSpace(data["S3_SECRET_KEY"])
+	}
+	// Không tái dùng nếu app key trùng root (secret cũ từ thời chưa tách key).
+	if appAccessKey == rootUser {
+		appAccessKey = ""
+		appSecretKey = ""
+	}
+	if appAccessKey == "" || appSecretKey == "" {
+		var err error
+		appAccessKey, err = randomMinioAccessKey()
+		if err != nil {
+			return "", err
+		}
+		appSecretKey, err = randomMinioSecretKey()
 		if err != nil {
 			return "", err
 		}
 	}
 	bucket := minioDefaultBucket
 	storageGB := normalizeMinioStorageGB(addon.StorageGB)
+	// `storage_gb` của addon là capacity/PVC của instance; quota bucket app có thể
+	// đã được giảm để dành ngân sách cho các bucket mới. Không reset nó khi re-provision.
+	var existingAppQuota int
+	_ = h.db.QueryRow(ctx, `SELECT storage_gb FROM project_minio_buckets
+		WHERE project_id=$1 AND environment=$2 AND name=$3 AND status <> 'deleting'`,
+		p.ID, env, minioDefaultBucket).Scan(&existingAppQuota)
+	if existingAppQuota > 0 {
+		storageGB = existingAppQuota
+	}
 	maxObjectMB := normalizeMinioMaxObjectMB(addon.MaxObjectMB)
 	limitMi := addon.MaxMemoryMB
 	if limitMi < 128 {
@@ -302,8 +338,8 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 		},
 		"type": "Opaque",
 		"stringData": map[string]string{
-			"rootUser":     accessKey,
-			"rootPassword": secretKey,
+			"rootUser":     rootUser,
+			"rootPassword": rootPassword,
 		},
 	}
 	authJSON, _ := json.Marshal(authSecret)
@@ -499,7 +535,9 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 	}
 
 	endpoint := h.minioEndpoint(release, ns)
-	jobName := release + "-init-bucket"
+	// Tên duy nhất mỗi lần chạy: Rancher/K8s list có thể còn cache Job Complete cũ cùng tên,
+	// làm provisioning hiểu nhầm Job mới đã xong.
+	jobName := fmt.Sprintf("%s-init-%d", release, time.Now().UnixNano()%10000000000)
 	job := map[string]any{
 		"apiVersion": "batch/v1",
 		"kind":       "Job",
@@ -536,6 +574,8 @@ func (h *Handler) applyMinioAddonObjects(ctx context.Context, p projectRow, env 
 								{"name": "MINIO_ENDPOINT", "value": endpoint},
 								{"name": "MINIO_BUCKET", "value": bucket},
 								{"name": "MINIO_STORAGE_GB", "value": fmt.Sprintf("%d", storageGB)},
+								{"name": "APP_ACCESS_KEY", "value": appAccessKey},
+								{"name": "APP_SECRET_KEY", "value": appSecretKey},
 							},
 							"command": []string{"/bin/sh", "-c"},
 							"args": []string{
@@ -547,8 +587,44 @@ done
 mc mb -p "local/$MINIO_BUCKET" || true
 mc anonymous set none "local/$MINIO_BUCKET" || true
 # Hard quota ≈ Storage GB (PVC). Scanner-based — có thể vượt nhẹ tạm thời; PVC vẫn là trần cứng disk.
-mc admin bucket quota "local/$MINIO_BUCKET" --hard "${MINIO_STORAGE_GB}gb" || mc quota set "local/$MINIO_BUCKET" --size "${MINIO_STORAGE_GB}Gi" || true
-echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
+# mc mới (>=2023): "mc quota set". Fallback lệnh cũ "mc admin bucket quota" cho MinIO client cũ.
+if ! mc quota set "local/$MINIO_BUCKET" --size "${MINIO_STORAGE_GB}gi"; then
+  echo "mc quota set thất bại; thử cú pháp mc cũ" >&2
+  mc admin bucket quota "local/$MINIO_BUCKET" --hard "${MINIO_STORAGE_GB}gb"
+fi
+# Fail-closed: không chỉ tin exit code của lệnh set; phải đọc lại được quota native.
+mc quota info "local/$MINIO_BUCKET"
+echo "bucket ready: $MINIO_BUCKET native_quota=${MINIO_STORAGE_GB}gi verified"
+
+# --- App service account: chỉ read/write bucket app, KHÔNG có quyền admin ---
+# Inline policy gắn thẳng vào svcacct (giới hạn trong quyền của root parent → chỉ bucket app).
+cat >/tmp/app-policy.json <<EOF
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads"],
+      "Resource": ["arn:aws:s3:::${MINIO_BUCKET}"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Resource": ["arn:aws:s3:::${MINIO_BUCKET}/*"]
+    }
+  ]
+}
+EOF
+# Tạo (hoặc cập nhật) service account gắn access key app + inline policy giới hạn.
+if mc admin user svcacct info local "$APP_ACCESS_KEY" >/dev/null 2>&1; then
+  mc admin user svcacct edit local "$APP_ACCESS_KEY" --secret-key "$APP_SECRET_KEY" --policy /tmp/app-policy.json || true
+else
+  mc admin user svcacct add local "$MINIO_ROOT_USER" \
+    --access-key "$APP_ACCESS_KEY" --secret-key "$APP_SECRET_KEY" \
+    --policy /tmp/app-policy.json || true
+fi
+rm -f /tmp/app-policy.json
+echo "app svcacct ready: $APP_ACCESS_KEY (bucket=$MINIO_BUCKET, no-admin)"`,
 							},
 						},
 					},
@@ -556,11 +632,12 @@ echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 			},
 		},
 	}
-	// Xóa job cũ nếu có (re-provision) rồi tạo lại.
-	_ = h.rancher.DeleteNamespacedObject(ctx, "", "/apis/batch/v1/jobs", ns, jobName)
 	jobJSON, _ := json.Marshal(job)
 	if err := h.rancher.ApplyNamespacedObject(ctx, "", "/apis/batch/v1/jobs", ns, jobJSON); err != nil {
 		return "", fmt.Errorf("job init bucket: %w", err)
+	}
+	if err := h.waitMinioInitJob(ctx, ns, jobName); err != nil {
+		return "", err
 	}
 
 	if env == "prod" {
@@ -574,7 +651,6 @@ echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 		return "", fmt.Errorf("servicemonitor minio: %w", err)
 	}
 
-	connSecretName := minioAddonConnectionSecretName(release)
 	connSecret := map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
@@ -587,13 +663,13 @@ echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 		},
 		"type": "Opaque",
 		"stringData": map[string]string{
-			"S3_ENDPOINT":       endpoint,
-			"S3_ACCESS_KEY":     accessKey,
-			"S3_SECRET_KEY":     secretKey,
-			"S3_BUCKET":         bucket,
-			"S3_REGION":         "us-east-1",
-			"S3_USE_SSL":        "false",
-			"S3_MAX_OBJECT_MB":  fmt.Sprintf("%d", maxObjectMB),
+			"S3_ENDPOINT":      endpoint,
+			"S3_ACCESS_KEY":    appAccessKey,
+			"S3_SECRET_KEY":    appSecretKey,
+			"S3_BUCKET":        bucket,
+			"S3_REGION":        "us-east-1",
+			"S3_USE_SSL":       "false",
+			"S3_MAX_OBJECT_MB": fmt.Sprintf("%d", maxObjectMB),
 		},
 	}
 	connJSON, _ := json.Marshal(connSecret)
@@ -606,8 +682,8 @@ echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 		secret   bool
 	}{
 		{"S3_ENDPOINT", endpoint, false},
-		{"S3_ACCESS_KEY", accessKey, true},
-		{"S3_SECRET_KEY", secretKey, true},
+		{"S3_ACCESS_KEY", appAccessKey, true},
+		{"S3_SECRET_KEY", appSecretKey, true},
 		{"S3_BUCKET", bucket, false},
 		{"S3_REGION", "us-east-1", false},
 		{"S3_USE_SSL", "false", false},
@@ -625,6 +701,34 @@ echo "bucket ready: $MINIO_BUCKET quota=${MINIO_STORAGE_GB}gb"`,
 		return "", fmt.Errorf("restart minio statefulset: %w", err)
 	}
 	return connSecretName, nil
+}
+
+// waitMinioInitJob chỉ cho provisioning thành công sau khi bucket, native quota và app IAM
+// đã được init Job xác minh. Tránh báo running ngay khi Job mới chỉ được tạo.
+func (h *Handler) waitMinioInitJob(ctx context.Context, namespace, jobName string) error {
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		list, err := h.rancher.ListK8s(ctx, "", "jobs", namespace, 1, 100)
+		if err == nil {
+			for _, job := range list.Items {
+				if job.Name != jobName {
+					continue
+				}
+				if job.JobSucceeded > 0 {
+					return nil
+				}
+				if job.JobFailed > 0 {
+					return fmt.Errorf("MinIO init job %s thất bại: %s", jobName, job.Message)
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("MinIO init job %s chưa hoàn tất: %w", jobName, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 func (h *Handler) applyMinioNetworkPolicy(ctx context.Context, release, ns, slug string) error {
@@ -669,20 +773,49 @@ func (h *Handler) applyMinioNetworkPolicy(ctx context.Context, release, ns, slug
 }
 
 func (h *Handler) provisionMinioAddon(ctx context.Context, p projectRow, engine, env string, addon *projectAddonView) error {
+	// Không cho thu nhỏ PVC/instance thấp hơn tổng quota bucket đã cấp.
+	if allocated, err := h.minioBucketAllocatedGB(ctx, p.ID, env); err == nil && allocated > addon.StorageGB {
+		return fmt.Errorf("storage instance %d GiB nhỏ hơn tổng quota bucket đã cấp %d GiB", addon.StorageGB, allocated)
+	}
 	h.setProjectAddonStatus(ctx, p.ID, engine, env, "provisioning")
 	runCtx, cancel := context.WithTimeout(ctx, 4*time.Minute)
 	defer cancel()
 	connSecret, err := h.applyMinioAddonObjects(runCtx, p, env, addon)
 	if err != nil {
+		h.setMinioQuotaVerification(ctx, p.ID, env, false, err.Error())
 		h.setProjectAddonStatus(ctx, p.ID, engine, env, "failed")
 		return err
 	}
+	h.setMinioQuotaVerification(ctx, p.ID, env, true, "")
 	h.setProjectAddonConnectionSecret(ctx, p.ID, engine, env, connSecret)
+	// First provision/backward compatibility: register legacy app bucket exactly once.
+	// Subsequent re-provision must preserve its already partitioned quota.
+	_, _ = h.db.Exec(ctx, `INSERT INTO project_minio_buckets
+		(project_id,environment,name,storage_gb,max_object_mb,connection_secret,status,quota_verified_at,is_default)
+		VALUES ($1,$2,'app',$3,$4,$5,'running',now(),true)
+		ON CONFLICT (project_id,environment,name) DO NOTHING`,
+		p.ID, env, normalizeMinioStorageGB(addon.StorageGB), normalizeMinioMaxObjectMB(addon.MaxObjectMB), connSecret)
 	h.setProjectAddonStatus(ctx, p.ID, engine, env, "running")
 	addon.HasConnection = true
 	addon.Status = "running"
 	addon.Topology = normalizeMinioTopology(addon.Topology)
 	return nil
+}
+
+// setMinioQuotaVerification lưu bằng chứng init Job đã set + mc quota info native quota.
+func (h *Handler) setMinioQuotaVerification(ctx context.Context, projectID int64, env string, verified bool, verifyErr string) {
+	if verified {
+		_, _ = h.db.Exec(ctx, `
+			UPDATE project_data_addons
+			SET minio_quota_verified_at=now(), minio_quota_verify_error=NULL, updated_at=now()
+			WHERE project_id=$1 AND engine='minio' AND environment=$2`, projectID, env)
+		return
+	}
+	_, _ = h.db.Exec(ctx, `
+		UPDATE project_data_addons
+		SET minio_quota_verified_at=NULL, minio_quota_verify_error=$3, updated_at=now()
+		WHERE project_id=$1 AND engine='minio' AND environment=$2`,
+		projectID, env, strings.TrimSpace(verifyErr))
 }
 
 func (h *Handler) reconcileMinioAddonStatus(ctx context.Context, p projectRow, addon *projectAddonView) projectAddonView {

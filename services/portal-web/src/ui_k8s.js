@@ -723,6 +723,7 @@ const routes = {
   addons: (main) => pageAddons(main),
   gitops: (main) => pageGitOps(main),
   policy: (main) => pagePlatformPolicy(main),
+  backups: (main) => pagePlatformBackups(main),
   "add-worker": (main) => pageAddWorker(main),
   audit: (main) => pageAudit(main),
   users: (main) => pageUsers(main),

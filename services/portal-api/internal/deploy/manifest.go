@@ -31,8 +31,10 @@ func rollingUpdateStrategy() map[string]any {
 	return map[string]any{
 		"type": "RollingUpdate",
 		"rollingUpdate": map[string]any{
-			"maxUnavailable": 0,
-			"maxSurge":       1,
+			// Project ResourceQuota thường được cấp sát tổng limit của workload.
+			// Không surge thêm pod vì admission sẽ từ chối khi pod cũ còn chiếm quota.
+			"maxUnavailable": 1,
+			"maxSurge":       0,
 		},
 	}
 }

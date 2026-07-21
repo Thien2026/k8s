@@ -817,6 +817,15 @@ func (h *Handler) CreateProjectAddon(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		// Trần tenant: tổng storage MinIO của project (env) không vượt quota project.
+		if ok, quotaGB, other, err := h.checkProjectStorageQuota(r.Context(), p.ID, env, storageGB, 0); err == nil && !ok {
+			writeJSON(w, http.StatusBadRequest, map[string]any{
+				"error": fmt.Sprintf("storage_gb vượt quota project (%s): còn %d Gi / %d Gi", env, quotaGB-other, quotaGB),
+				"code":  "above_project_quota",
+				"max":   quotaGB - other,
+			})
+			return
+		}
 		maxObjectMB = normalizeMinioMaxObjectMB(maxObjectMB)
 		if maxObjectMB > pol.MinioMaxObjectMB {
 			writeJSON(w, http.StatusBadRequest, map[string]any{
@@ -1057,7 +1066,17 @@ func (h *Handler) ProvisionProjectAddon(w http.ResponseWriter, r *http.Request) 
 				})
 				return
 			}
-			item.StorageGB = normalizeMinioStorageGB(body.StorageGB)
+			wantGB := normalizeMinioStorageGB(body.StorageGB)
+			// Trần tenant: trừ storage hiện tại của chính addon này rồi so quota project.
+			if ok, quotaGB, other, err := h.checkProjectStorageQuota(r.Context(), p.ID, env, wantGB, item.StorageGB); err == nil && !ok {
+				writeJSON(w, http.StatusBadRequest, map[string]any{
+					"error": fmt.Sprintf("storage_gb vượt quota project (%s): còn %d Gi / %d Gi", env, quotaGB-other, quotaGB),
+					"code":  "above_project_quota",
+					"max":   quotaGB - other,
+				})
+				return
+			}
+			item.StorageGB = wantGB
 			_, _ = h.db.Exec(r.Context(), `
 				UPDATE project_data_addons SET storage_gb=$1, updated_at=now()
 				WHERE project_id=$2 AND engine=$3 AND environment=$4`,

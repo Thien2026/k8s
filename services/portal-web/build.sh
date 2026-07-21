@@ -28,6 +28,7 @@ FILES=(
   src/ui_project_config.js
   src/ui_project_env.js
   src/ui_project_deploy.js
+  src/ui_project_backups.js
   src/ui_project_hub.js
   src/ui_overview_charts.js
   src/ui_k8s.js

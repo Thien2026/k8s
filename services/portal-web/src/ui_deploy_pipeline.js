@@ -444,8 +444,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     renderPipelinePolicyCallout() +
     crosscheck +
     '<form id="pipeline-setup-form" class="login-form pipeline-wizard">' +
-    '<div class="pipeline-step">' +
-    '<div class="pipeline-step-head"><span class="pipeline-step-num">1</span> Nguồn GitHub</div>' +
+    renderPipelineStepCollapsible(slug, 1, "Nguồn GitHub",
     '<p class="muted" style="margin:0 0 10px">Đã kết nối <strong>@' + esc(ghStatus.login || "") + "</strong></p>" +
     '<label>Repository' +
     selectWrapHtml("github-repo-select", '<option value="">— chọn repo —</option>' + ghRepoOpts, { name: "repo", required: true }) +
@@ -471,9 +470,8 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
         (repo.auto_deploy_enabled ? "checked" : "") +
         " /> Tự deploy lên cluster khi build xong</label>"
       : "") +
-    "</div>" +
-    '<div class="pipeline-step">' +
-    '<div class="pipeline-step-head"><span class="pipeline-step-num">2</span> Chốt kiểu chạy</div>' +
+    "", true) +
+    renderPipelineStepCollapsible(slug, 2, "Chốt kiểu chạy",
     '<div id="repo-detect-banner-slot">' + (isMulti ? contractBanner : renderServicesContractBanner(repoContract, canEdit)) + "</div>" +
     '<div class="layout-change-row">' +
     '<p class="muted pipeline-layout-hint">Chọn <em>một lần</em> trước khi sync workflow. Đã deploy mà muốn đổi topology?</p>' +
@@ -490,9 +488,8 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<div class="layout-option-body"><span class="layout-option-icon" aria-hidden="true">⚡</span><strong>Web + API riêng</strong><span>Giao diện + API tách path</span></div></label></div>' +
     singleHint +
     multiPanel +
-    "</div>" +
-    '<div class="pipeline-step">' +
-    '<div class="pipeline-step-head"><span class="pipeline-step-num">3</span> Đồng bộ workflow</div>' +
+    "", true) +
+    renderPipelineStepCollapsible(slug, 3, "Đồng bộ workflow",
     (repo.workflow_stale
       ? '<div class="banner warn" style="margin-bottom:10px">' + esc(repo.workflow_stale_reason || "Cần đồng bộ workflow trước khi push.") + "</div>"
       : "") +
@@ -501,7 +498,7 @@ function renderPipelineSetupCard(slug, svcData, repo, ghStatus, ghRepos, canEdit
     '<button type="submit" class="btn-primary" id="github-setup-submit">Lưu &amp; đồng bộ GitHub</button>' +
     '<button type="button" class="btn-ghost btn-sm" id="pipeline-save-draft">Chỉ lưu Console</button>' +
     '<button type="button" class="btn-ghost btn-sm" id="github-disconnect-btn">Ngắt GitHub</button>' +
-    "</div></div>" +
+    "</div>", true) +
     "</form>",
     statusChips,
     true

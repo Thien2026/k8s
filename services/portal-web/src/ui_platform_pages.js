@@ -1,5 +1,126 @@
 /* Platform admin pages. */
 
+async function pagePlatformBackups(main) {
+  main.innerHTML = '<p class="loading">Đang tải backup config…</p>';
+  try {
+    const res = await api("/api/v1/admin/backups/targets");
+    const history = await api("/api/v1/admin/backups/runs");
+    const items = res.items || [];
+    const target = items[0] || {};
+    const runs = history.items || [];
+    const tested = target.last_tested_at && !target.last_test_error;
+    const configured = !!target.id;
+    const targetState = !configured ? "Chưa cấu hình storage" : target.enabled && tested ? "Đang sẵn sàng" : target.enabled ? "Cần test lại target" : "Target đang tắt";
+    const targetTone = !configured || !target.enabled ? "warn" : tested ? "ok" : "danger";
+    const cronParts = String(target.schedule_cron || "0 3 * * *").trim().split(/\s+/);
+    const cronMinute = /^(0|15|30|45)$/.test(cronParts[0]) ? cronParts[0] : "0";
+    const cronUTCHour = /^(?:[01]?\d|2[0-3])$/.test(cronParts[1]) ? parseInt(cronParts[1], 10) : 20;
+    const cronHour = String((cronUTCHour + 7) % 24);
+    const dailyCron = cronParts.length === 5 && cronParts[2] === "*" && cronParts[3] === "*" && cronParts[4] === "*";
+    const hourOptions = Array.from({ length: 24 }, function (_, hour) {
+      const value = String(hour);
+      return '<option value="' + value + '"' + (value === cronHour ? " selected" : "") + ">" + value.padStart(2, "0") + ":00</option>";
+    }).join("");
+    const minuteOptions = ["0", "15", "30", "45"].map(function (minute) {
+      return '<option value="' + minute + '"' + (minute === cronMinute ? " selected" : "") + ">" + minute.padStart(2, "0") + "</option>";
+    }).join("");
+    main.innerHTML =
+      '<div class="page-header"><h2 class="page-title">Backup Platform</h2>' +
+      '<p class="page-subtitle">Quản lý backup toàn Platform: PostgreSQL, etcd/config và MinIO của các project.</p></div>' +
+      '<div class="backup-status-grid">' +
+      '<div class="card backup-status-card"><span class="muted">Backup local</span><strong>Đã sẵn sàng</strong><p class="muted">Snapshot etcd và config chạy trên control-plane.</p></div>' +
+      '<div class="card backup-status-card"><span class="muted">Storage offsite</span><strong class="backup-state-' + esc(targetTone) + '">' + esc(targetState) + '</strong><p class="muted">' +
+      (configured ? "Target: " + esc(target.name) + " · " + esc(target.bucket) : "Chưa phát sinh chi phí. Có thể gắn B2, R2 hoặc MinIO VPS sau.") +
+      "</p></div>" +
+      '<div class="card backup-status-card"><span class="muted">Khôi phục an toàn</span><strong>Restore cô lập</strong><p class="muted">Luôn restore sang vùng tạm trước, không ghi đè production.</p></div></div>' +
+      '<div class="banner ' + (configured ? "warn" : "info") + '">' +
+      (configured
+        ? "Backup offsite chỉ chạy khi target Test thành công và được bật. Scheduler kiểm tra lịch mỗi phút; worker xử lý tuần tự."
+        : "Bạn chưa cần mua storage ngay. Khi có VPS Storage/B2/R2: tạo bucket + Secret credential, cấu hình target tại đây, Test rồi bật lịch backup.") +
+      "</div>" +
+      '<details class="card detail-card backup-config"' + (configured ? "" : " open") + '><summary><span><strong>1. Cấu hình storage offsite</strong><span class="muted"> · S3-compatible: B2, R2, AWS S3, Wasabi hoặc MinIO VPS</span></span><span class="deploy-collapsible-chev" aria-hidden="true"></span></summary>' +
+      '<div class="backup-config-body"><p class="muted">Credential chỉ nằm trong Kubernetes Secret; Console không lưu hoặc hiển thị access key.</p>' +
+      '<form id="backup-target-form" class="login-form">' +
+      '<div class="form-row"><label>Tên target<input name="name" required value="' + esc(target.name || "primary-offsite") + '" /></label>' +
+      '<label>Provider<select name="provider" disabled><option>S3-compatible</option></select></label></div>' +
+      '<label>Endpoint<input name="endpoint" required placeholder="https://s3.us-west-000.backblazeb2.com" value="' + esc(target.endpoint || "") + '" /></label>' +
+      '<div class="form-row"><label>Region<input name="region" value="' + esc(target.region || "us-east-1") + '" /></label>' +
+      '<label>Bucket<input name="bucket" required placeholder="platform-backups" value="' + esc(target.bucket || "") + '" /></label></div>' +
+      '<div class="form-row"><label>Prefix<input name="prefix" value="' + esc(target.prefix || "platform-backups") + '" /></label>' +
+      '<label>Credential Secret<input name="credentials_secret" required placeholder="backup-s3-credentials" value="' + esc(target.credentials_secret || "") + '" /></label></div>' +
+      '<p class="muted">Secret trong namespace <code>' + esc(res.secret_namespace || "platform") + '</code>; bắt buộc keys: <code>access_key_id</code>, <code>secret_access_key</code>. Secret không được lưu hoặc hiển thị trên Console.</p>' +
+      '<div class="form-row"><label>Lịch backup<select name="schedule_preset"><option value="daily"' + (dailyCron ? " selected" : "") + '>Hằng ngày</option><option value="weekly"' + (target.schedule_cron === "0 20 * * 0" ? " selected" : "") + '>Hằng tuần · Chủ nhật</option><option value="custom"' + (!dailyCron && target.schedule_cron !== "0 20 * * 0" ? " selected" : "") + '>Cron nâng cao</option></select></label>' +
+      '<label>Giữ số bản thành công<input name="retention_count" type="number" min="1" max="1000" value="' + esc(String(target.retention_count || 3)) + '" /></label></div>' +
+      '<div class="form-row backup-time-picker"><label>Giờ chạy (UTC+7)<select name="schedule_hour">' + hourOptions + '</select></label><label>Phút<select name="schedule_minute">' + minuteOptions + '</select></label></div>' +
+      '<label class="backup-cron-custom">Cron nâng cao<input name="schedule_cron" value="' + esc(target.schedule_cron || "0 3 * * *") + '" /><span class="muted">Chỉ dùng khi chọn Cron nâng cao. Lịch thường được lưu theo UTC nhưng form hiển thị UTC+7.</span></label>' +
+      '<label class="auto-deploy-toggle"><input name="enabled" type="checkbox"' + (target.enabled ? " checked" : "") + ' /> Bật backup theo lịch sau khi Test thành công</label>' +
+      '<div class="form-actions"><button type="submit" class="btn-primary">Lưu target</button>' +
+      (target.id ? '<button type="button" class="btn-ghost" id="backup-target-test">Test kết nối</button>' : "") +
+      (target.id && tested && target.enabled ? '<button type="button" class="btn-ghost" id="backup-run-now">Backup ngay</button>' : "") +
+      "</div></form>" +
+      '<p class="muted" id="backup-target-status">' +
+      (tested ? "✓ Test gần nhất: " + esc(fmtTime(target.last_tested_at)) : target.last_test_error ? "Lỗi test: " + esc(target.last_test_error) : "Chưa test target.") +
+      "</p></div></details>" +
+      '<div class="card detail-card backup-next-steps"><h3>2. Khi có Storage VPS hoặc cloud storage</h3>' +
+      '<ol><li>Tạo bucket private và access key chỉ giới hạn bucket backup.</li><li>Tạo Secret trong namespace <code>' + esc(res.secret_namespace || "platform") + '</code> với <code>access_key_id</code> và <code>secret_access_key</code>.</li><li>Lưu target, Test kết nối, bật lịch và chạy một backup thủ công.</li><li>Thực hiện restore drill vào vùng cô lập trước khi coi backup là sẵn sàng.</li></ol>' +
+      '<p class="muted">Hiện backup theo platform run; dữ liệu MinIO được tách theo namespace project/env trong từng run.</p></div>' +
+      '<div class="card detail-card"><h3>Lịch sử backup</h3>' +
+      '<table class="data-table"><thead><tr><th>Thời gian</th><th>Target</th><th>Loại</th><th>Trạng thái</th><th>Artifact</th><th>Lỗi</th></tr></thead><tbody>' +
+      (runs.length ? runs.map(function (r) {
+        return "<tr><td>" + esc(fmtTime(r.created_at)) + "</td><td>" + esc(r.target_name || "—") + "</td><td>" + esc(r.run_kind) + "</td><td>" + badgeStatus(r.status) + "</td><td>" + esc(String(r.artifact_count || 0)) + " · " + esc(formatBytesShort(r.total_bytes || 0)) + "</td><td>" + esc(r.error_message || "—") + "</td></tr>";
+      }).join("") : '<tr><td colspan="6" class="muted">Chưa có backup run.</td></tr>') +
+      "</tbody></table></div>";
+    const form = main.querySelector("#backup-target-form");
+    const presetSelect = form.querySelector('[name="schedule_preset"]');
+    const timePicker = form.querySelector(".backup-time-picker");
+    const cronCustom = form.querySelector(".backup-cron-custom");
+    function updateScheduleFields() {
+      const custom = presetSelect.value === "custom";
+      timePicker.hidden = custom;
+      cronCustom.hidden = !custom;
+    }
+    presetSelect.onchange = updateScheduleFields;
+    updateScheduleFields();
+    form.onsubmit = async function (e) {
+      e.preventDefault();
+      const fd = new FormData(form);
+      try {
+        const preset = fd.get("schedule_preset");
+        const localHour = parseInt(fd.get("schedule_hour"), 10);
+        const utcHour = (localHour + 17) % 24;
+        const scheduledCron = preset === "custom"
+          ? fd.get("schedule_cron")
+          : String(fd.get("schedule_minute")) + " " + utcHour + " * * " + (preset === "weekly" ? "0" : "*");
+        await api("/api/v1/admin/backups/targets", { method: "POST", body: {
+          name: fd.get("name"), endpoint: fd.get("endpoint"), region: fd.get("region"), bucket: fd.get("bucket"),
+          prefix: fd.get("prefix"), credentials_secret: fd.get("credentials_secret"), schedule_cron: scheduledCron,
+          retention_days: 3650, retention_count: parseInt(fd.get("retention_count"), 10), encryption_enabled: true, enabled: fd.get("enabled") === "on"
+        }});
+        toastSuccess("Đã lưu backup target"); pagePlatformBackups(main);
+      } catch (err) { toastError(err.message || "Không lưu được target"); }
+    };
+    const testBtn = main.querySelector("#backup-target-test");
+    if (testBtn) testBtn.onclick = async function () {
+      try { await api("/api/v1/admin/backups/targets/" + target.id + "/test", { method: "POST" }); toastSuccess("S3 bucket sẵn sàng"); pagePlatformBackups(main); }
+      catch (err) { toastError(err.message || "Test target thất bại"); }
+    };
+    const runBtn = main.querySelector("#backup-run-now");
+    if (runBtn) runBtn.onclick = async function () {
+      runBtn.disabled = true;
+      try {
+        await api("/api/v1/admin/backups/runs", { method: "POST", body: { target_id: target.id } });
+        toastSuccess("Backup đã được xếp hàng");
+        pagePlatformBackups(main);
+      } catch (err) {
+        runBtn.disabled = false;
+        toastError(err.message || "Không tạo được backup run");
+      }
+    };
+  } catch (err) {
+    main.innerHTML = '<p class="error-text">' + esc(err.message || "Không tải được Backup") + "</p>";
+  }
+}
+
 function openCreateProjectDialog(providers, defaultProvider, userItems) {
   return new Promise(function (resolve) {
     const overlay = document.createElement("div");
@@ -495,12 +616,14 @@ async function pagePlatformProjects(main) {
       const delBtn = canDeleteProject()
         ? '<button type="button" class="btn-ghost btn-sm btn-danger-text project-del-btn" data-slug="' + esc(p.slug) + '" data-name="' + esc(p.name) + '" data-ns-dev="' + esc(p.namespace_dev) + '" data-ns-prod="' + esc(p.namespace_prod) + '">Xóa</button>'
         : "";
+      const quotaBtn =
+        '<button type="button" class="btn-ghost btn-sm project-quota-btn" data-slug="' + esc(p.slug) + '" data-name="' + esc(p.name) + '">Quota</button>';
       rows +=
         "<tr><td><a class=\"res-link\" href=\"#/project/" + esc(p.slug) + '">' + esc(p.name) + "</a></td>" +
         "<td><code>" + esc(p.slug) + "</code></td>" +
         "<td>" + esc(p.namespace_dev) + "</td><td>" + esc(p.namespace_prod) + "</td>" +
         "<td>" + esc((p.registry && p.registry.label) || p.registry_provider || "ghcr") + "</td>" +
-        '<td class="table-actions">' + delBtn + "</td></tr>";
+        '<td class="table-actions">' + quotaBtn + delBtn + "</td></tr>";
     });
 
     main.innerHTML =
@@ -587,9 +710,104 @@ async function pagePlatformProjects(main) {
         }
       };
     });
+
+    main.querySelectorAll(".project-quota-btn").forEach(function (btn) {
+      btn.onclick = function () {
+        openProjectQuotaDialog(btn.dataset.slug, btn.dataset.name);
+      };
+    });
   }
 
   renderList();
+}
+
+/* ── Admin: xem/sửa quota tài nguyên per-project (dev + prod) ── */
+async function openProjectQuotaDialog(slug, name) {
+  let data;
+  try {
+    data = await withAppLoading(function () {
+      return api("/api/v1/admin/projects/" + encodeURIComponent(slug) + "/quota");
+    }, { title: "Đang tải quota…" });
+  } catch (err) {
+    toastError(err.message || "Không tải được quota");
+    return;
+  }
+
+  function envFields(env, q) {
+    q = q || {};
+    const p = env + "-";
+    return (
+      '<div class="quota-env-block"><h4 class="quota-env-title">' +
+      (env === "prod" ? "Prod" : "Dev") +
+      (q.is_override ? ' <span class="quota-badge-override">override</span>' : "") +
+      "</h4>" +
+      '<div class="quota-grid">' +
+      '<label>Storage (GB)<input type="number" min="1" max="2000" id="q-' + p + 'storage" value="' + esc(String(q.storage_gb || 0)) + '" /></label>' +
+      '<label>RAM (MB)<input type="number" min="128" max="65536" id="q-' + p + 'mem" value="' + esc(String(q.memory_mb || 0)) + '" /></label>' +
+      '<label>CPU (mCPU)<input type="number" min="100" max="64000" id="q-' + p + 'cpu" value="' + esc(String(q.cpu_m || 0)) + '" /></label>' +
+      '<label>Max pods<input type="number" min="1" max="500" id="q-' + p + 'pods" value="' + esc(String(q.max_pods || 0)) + '" /></label>' +
+      '<label>Max PVC<input type="number" min="1" max="200" id="q-' + p + 'pvc" value="' + esc(String(q.max_pvcs || 0)) + '" /></label>' +
+      "</div></div>"
+    );
+  }
+
+  const overlay = document.createElement("div");
+  overlay.className = "ui-overlay";
+  overlay.innerHTML =
+    '<div class="ui-dialog ui-dialog-default quota-dialog" role="dialog" aria-modal="true">' +
+    '<div class="ui-dialog-glow"></div>' +
+    '<h3 class="ui-dialog-title">Quota tài nguyên · ' + esc(name || slug) + "</h3>" +
+    '<p class="ui-dialog-message muted">Trần tài nguyên mỗi môi trường (ResourceQuota trên namespace). Storage áp cứng qua K8s. Lưu = áp ngay.</p>' +
+    '<div class="quota-unit-note">' +
+    '<strong>Đơn vị:</strong> Storage = GiB (1 GiB = 1.024 MiB) · RAM = MiB · CPU = mCPU (1.000 mCPU = 1 CPU core) · ' +
+    'Max pods/PVC = số lượng tối đa.' +
+    "</div>" +
+    envFields("dev", data.dev) +
+    envFields("prod", data.prod) +
+    '<div class="ui-dialog-actions">' +
+    '<button type="button" class="btn-ghost quota-cancel">Đóng</button>' +
+    '<button type="button" class="btn-primary quota-save">Lưu (áp ResourceQuota)</button>' +
+    "</div></div>";
+
+  function close() {
+    overlay.classList.remove("show");
+    setTimeout(function () { overlay.remove(); }, 200);
+  }
+  overlay.querySelector(".quota-cancel").onclick = close;
+  overlay.onclick = function (e) { if (e.target === overlay) close(); };
+
+  function readEnv(env) {
+    const p = env + "-";
+    const num = function (id) { return Number(overlay.querySelector("#q-" + p + id).value); };
+    return {
+      environment: env,
+      storage_gb: num("storage"),
+      memory_mb: num("mem"),
+      cpu_m: num("cpu"),
+      max_pods: num("pods"),
+      max_pvcs: num("pvc"),
+    };
+  }
+
+  overlay.querySelector(".quota-save").onclick = async function () {
+    try {
+      await withAppLoading(async function () {
+        for (const env of ["dev", "prod"]) {
+          await api("/api/v1/admin/projects/" + encodeURIComponent(slug) + "/quota", {
+            method: "PATCH",
+            body: readEnv(env),
+          });
+        }
+      }, { title: "Đang lưu quota + áp ResourceQuota…" });
+      toastSuccess("Đã cập nhật quota " + (name || slug));
+      close();
+    } catch (err) {
+      toastError(err.message || "Lưu quota thất bại");
+    }
+  };
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(function () { overlay.classList.add("show"); });
 }
 
 async function pagePlatformPolicy(main) {

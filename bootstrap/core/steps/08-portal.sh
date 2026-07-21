@@ -53,12 +53,20 @@ import_image "${WEB_IMAGE}" "${ROOT_DIR}/services/portal-web"
 
 CORS_ORIGIN="https://${PLATFORM_HOST}"
 
-RANCHER_URL="${RANCHER_URL:-https://${RANCHER_HOST}}"
 RANCHER_TOKEN=""
 if [[ -f "${ROOT_DIR}/config/rancher.env" ]]; then
   # shellcheck source=/dev/null
   source "${ROOT_DIR}/config/rancher.env"
 fi
+# portal-api gọi Rancher IN-CLUSTER (qua hostAlias → IP public). Cert Rancher chỉ valid cho
+# hostname đúng SAN; host public thường trả cert ingress mặc định (ingress.local) → TLS fail.
+# Ưu tiên RANCHER_INTERNAL_URL (endpoint cert verify được, vd sslip.io) cho portal-api;
+# nếu trống, auto-derive từ NODE_PUBLIC_IP (rancher.<ip-dashed>.sslip.io); cuối cùng mới fallback host public.
+# Đặt SAU khi source rancher.env để internal URL luôn thắng (tránh TLS mismatch khi re-provision addon).
+if [[ -z "${RANCHER_INTERNAL_URL:-}" && -n "${NODE_PUBLIC_IP:-}" ]]; then
+  RANCHER_INTERNAL_URL="https://rancher.${NODE_PUBLIC_IP//./-}.sslip.io"
+fi
+RANCHER_URL="${RANCHER_INTERNAL_URL:-${RANCHER_URL:-https://${RANCHER_HOST}}}"
 if [[ -z "${RANCHER_TOKEN}" ]] && kubectl -n "${NS}" get secret portal-api-env >/dev/null 2>&1; then
   RANCHER_TOKEN="$(kubectl -n "${NS}" get secret portal-api-env -o jsonpath='{.data.RANCHER_TOKEN}' 2>/dev/null | base64 -d 2>/dev/null || true)"
 fi

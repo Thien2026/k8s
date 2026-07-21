@@ -96,6 +96,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	_, _ = h.db.Exec(r.Context(),
 		`INSERT INTO project_members (project_id, user_id, role) VALUES ($1, $2, 'owner') ON CONFLICT DO NOTHING`,
 		id, actor.ID)
+	// Seed quota mặc định (dev+prod) từ platform policy — trần tài nguyên per-project.
+	if err := h.seedProjectEnvQuota(r.Context(), id); err != nil {
+		warnings = append(warnings, "Seed quota mặc định thất bại: "+err.Error())
+	}
 
 	for _, uid := range body.MemberIDs {
 		if uid == actor.ID {
@@ -113,6 +117,13 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			for _, ns := range []string{nsDev, nsProd} {
 				if err := h.rancher.EnsureNamespace(r.Context(), cid, ns); err != nil {
 					warnings = append(warnings, fmt.Sprintf("Namespace %s: %s", ns, err.Error()))
+				}
+			}
+			// Gắn ResourceQuota (trần tài nguyên) lên từng namespace ngay sau khi tạo.
+			quotaProj := projectRow{ID: id, Slug: slug, NamespaceDev: nsDev, NamespaceProd: nsProd}
+			for _, env := range []string{"dev", "prod"} {
+				if err := h.syncProjectEnvQuota(r.Context(), quotaProj, env); err != nil {
+					warnings = append(warnings, fmt.Sprintf("ResourceQuota %s: %s", env, err.Error()))
 				}
 			}
 		} else {

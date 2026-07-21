@@ -22,8 +22,17 @@ type platformPolicy struct {
 	MinioConsoleUploadMB int    `json:"minio_console_upload_mb"`
 	MinioMaxObjectMB     int    `json:"minio_max_object_mb"`
 	IngressProxyBodySize string `json:"ingress_proxy_body_size"`
-	UnlockConfigured     bool   `json:"unlock_configured,omitempty"`
-	UpdatedAt            string `json:"updated_at,omitempty"`
+	// Default quota per (project × env) — áp cho project mới; override riêng ở project_env_quota.
+	DefaultQuotaStorageGBDev  int `json:"default_quota_storage_gb_dev"`
+	DefaultQuotaStorageGBProd int `json:"default_quota_storage_gb_prod"`
+	DefaultQuotaMemoryMBDev   int `json:"default_quota_memory_mb_dev"`
+	DefaultQuotaMemoryMBProd  int `json:"default_quota_memory_mb_prod"`
+	DefaultQuotaCPUmDev       int `json:"default_quota_cpu_m_dev"`
+	DefaultQuotaCPUmProd      int `json:"default_quota_cpu_m_prod"`
+	DefaultQuotaMaxPods       int `json:"default_quota_max_pods"`
+	DefaultQuotaMaxPVCs       int `json:"default_quota_max_pvcs"`
+	UnlockConfigured          bool   `json:"unlock_configured,omitempty"`
+	UpdatedAt                 string `json:"updated_at,omitempty"`
 }
 
 func defaultPlatformPolicy() platformPolicy {
@@ -35,6 +44,14 @@ func defaultPlatformPolicy() platformPolicy {
 		MinioConsoleUploadMB: 10,
 		MinioMaxObjectMB:     5120,
 		IngressProxyBodySize: "32m",
+		DefaultQuotaStorageGBDev:  20,
+		DefaultQuotaStorageGBProd: 50,
+		DefaultQuotaMemoryMBDev:   2048,
+		DefaultQuotaMemoryMBProd:  4096,
+		DefaultQuotaCPUmDev:       2000,
+		DefaultQuotaCPUmProd:      4000,
+		DefaultQuotaMaxPods:       50,
+		DefaultQuotaMaxPVCs:       20,
 	}
 }
 
@@ -46,12 +63,26 @@ func (h *Handler) loadPlatformPolicy(ctx context.Context) (platformPolicy, strin
 		SELECT redis_max_memory_mb, redis_max_clients,
 		       minio_max_storage_gb, minio_max_memory_mb, minio_console_upload_mb,
 		       COALESCE(minio_max_object_mb, 5120),
-		       ingress_proxy_body_size, COALESCE(policy_unlock_hash, ''), updated_at
+		       ingress_proxy_body_size,
+		       COALESCE(default_quota_storage_gb_dev, 20),
+		       COALESCE(default_quota_storage_gb_prod, 50),
+		       COALESCE(default_quota_memory_mb_dev, 2048),
+		       COALESCE(default_quota_memory_mb_prod, 4096),
+		       COALESCE(default_quota_cpu_m_dev, 2000),
+		       COALESCE(default_quota_cpu_m_prod, 4000),
+		       COALESCE(default_quota_max_pods, 50),
+		       COALESCE(default_quota_max_pvcs, 20),
+		       COALESCE(policy_unlock_hash, ''), updated_at
 		FROM platform_policy WHERE id = 1`).Scan(
 		&def.RedisMaxMemoryMB, &def.RedisMaxClients,
 		&def.MinioMaxStorageGB, &def.MinioMaxMemoryMB, &def.MinioConsoleUploadMB,
 		&def.MinioMaxObjectMB,
-		&def.IngressProxyBodySize, &unlockHash, &updatedAt,
+		&def.IngressProxyBodySize,
+		&def.DefaultQuotaStorageGBDev, &def.DefaultQuotaStorageGBProd,
+		&def.DefaultQuotaMemoryMBDev, &def.DefaultQuotaMemoryMBProd,
+		&def.DefaultQuotaCPUmDev, &def.DefaultQuotaCPUmProd,
+		&def.DefaultQuotaMaxPods, &def.DefaultQuotaMaxPVCs,
+		&unlockHash, &updatedAt,
 	)
 	if err != nil {
 		return def, "", err

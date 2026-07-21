@@ -40,6 +40,7 @@ func (h *Handler) ExplorerMenu(w http.ResponseWriter, r *http.Request) {
 	if u.Role == auth.RoleAdmin {
 		menu = append(menu,
 			item{Key: "policy", Label: "Platform Policy", Section: "platform", Group: "Platform", Type: "page"},
+			item{Key: "backups", Label: "Backup", Section: "platform", Group: "Platform", Type: "page"},
 			item{Key: "gitops", Label: "GitOps", Section: "platform", Group: "Platform", Type: "page"},
 		)
 	}

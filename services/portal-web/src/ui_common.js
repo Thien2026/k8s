@@ -173,7 +173,10 @@ const PROJECT_NAV_GROUPS = [
     group: "project-van-hanh",
     label: "Vận hành",
     defaultCollapsed: true,
-    items: [{ tab: "ops", label: "Sổ lệnh K8s", icon: "⌘" }],
+    items: [
+      { tab: "ops", label: "Sổ lệnh K8s", icon: "⌘" },
+      { tab: "backups", label: "Backup & Recovery", icon: "▣" },
+    ],
   },
   {
     group: "project-cau-hinh",

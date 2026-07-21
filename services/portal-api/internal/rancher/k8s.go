@@ -39,6 +39,9 @@ type ResourceRow struct {
 	Schedule              string  `json:"schedule,omitempty"`
 	Suspend               string  `json:"suspend,omitempty"`
 	Completions           string  `json:"completions,omitempty"`
+	JobSucceeded          int     `json:"job_succeeded,omitempty"`
+	JobFailed             int     `json:"job_failed,omitempty"`
+	JobActive             int     `json:"job_active,omitempty"`
 	Selector              string  `json:"selector,omitempty"`
 	Project               string  `json:"project,omitempty"`
 	Ready                 bool    `json:"ready,omitempty"`

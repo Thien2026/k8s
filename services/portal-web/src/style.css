@@ -2558,13 +2558,6 @@ tr.dns-row td {
   padding-top: 0;
 }
 
-  margin: 0 0 12px 1.2rem;
-  padding: 0;
-  color: var(--text);
-  font-size: 14px;
-  line-height: 1.6;
-}
-
 .snippet-head {
   display: flex;
   align-items: center;
@@ -3326,6 +3319,134 @@ tr.dns-row td {
   font-size: 14px;
 }
 
+/* Quota dialog (admin per-project) */
+.quota-dialog {
+  max-width: 560px;
+  width: 100%;
+}
+
+.quota-unit-note {
+  margin: 10px 0 4px;
+  padding: 9px 10px;
+  border-left: 3px solid rgba(139, 92, 246, 0.75);
+  border-radius: 0 8px 8px 0;
+  background: rgba(139, 92, 246, 0.09);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.quota-unit-note strong {
+  color: var(--text);
+}
+
+.quota-env-block {
+  margin: 14px 0 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.quota-env-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.quota-badge-override {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--warn);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.quota-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 10px;
+}
+
+.quota-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.quota-grid input {
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+}
+
+/* Backup dashboard: dùng được ngay cả khi chưa mua storage offsite. */
+.backup-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0 0 14px;
+}
+
+.backup-status-card {
+  min-height: 116px;
+  padding: 16px;
+}
+
+.backup-status-card > span,
+.backup-status-card > strong {
+  display: block;
+}
+
+.backup-status-card strong {
+  margin-top: 6px;
+  font-size: 16px;
+}
+
+.backup-status-card p {
+  margin: 7px 0 0;
+  line-height: 1.45;
+}
+
+.backup-state-ok { color: #86efac; }
+.backup-state-warn { color: #fcd34d; }
+.backup-state-danger { color: #fca5a5; }
+
+.backup-config {
+  padding: 0;
+  overflow: hidden;
+}
+
+.backup-config > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 17px 18px;
+  list-style: none;
+}
+
+.backup-config > summary::-webkit-details-marker { display: none; }
+.backup-config-body { padding: 0 18px 18px; }
+.backup-next-steps ol { margin: 8px 0 10px 20px; padding: 0; }
+.backup-next-steps li { margin: 7px 0; line-height: 1.45; }
+.backup-cron-custom { margin-top: 10px; }
+.backup-cron-custom .muted { display: block; margin-top: 4px; font-size: 12px; }
+
+@media (max-width: 760px) {
+  .backup-status-grid { grid-template-columns: 1fr; }
+}
+
 .policy-form h3 {
   margin: 18px 0 8px;
   font-size: 15px;
@@ -3844,6 +3965,57 @@ input.input-invalid {
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 10px;
 }
+
+.addon-stat-card {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.addon-stat-card strong {
+  font-size: 15px;
+}
+
+.addon-minio-storage-block {
+  margin-bottom: 14px;
+}
+
+.addon-minio-storage-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.addon-minio-capacity-grid {
+  margin-bottom: 8px;
+}
+
+.addon-minio-usage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin: 4px 0 8px;
+}
+
+.addon-minio-usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #34d399, #fbbf24 70%, #f87171);
+}
+
+.addon-minio-quota-hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.native-quota-verified { color: #86efac; }
+.native-quota-failed { color: #fca5a5; }
+.native-quota-unverified { color: #fcd34d; }
 
 .addon-redis-stat {
   padding: 12px;
@@ -4618,22 +4790,42 @@ input.input-invalid {
 }
 
 .pipeline-wizard .pipeline-step {
-  margin-bottom: 20px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(15, 20, 35, 0.28);
 }
 .pipeline-wizard .pipeline-step:last-child {
-  border-bottom: none;
   margin-bottom: 0;
-  padding-bottom: 0;
 }
 .pipeline-step-head {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 12px;
+  margin: 0;
+  padding: 12px 14px;
   font-weight: 600;
   font-size: 14px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.pipeline-step-head::-webkit-details-marker {
+  display: none;
+}
+.pipeline-step-title {
+  flex: 1;
+}
+.pipeline-step-chev {
+  margin-left: auto;
+}
+.pipeline-step-body {
+  padding: 2px 14px 16px;
+  border-top: 1px solid var(--border);
+}
+.pipeline-step:not([open]) .pipeline-step-head {
+  color: var(--muted);
 }
 .pipeline-step-num {
   display: inline-flex;

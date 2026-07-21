@@ -207,7 +207,7 @@ async function loadProjectRuntimePage(main, slug, p) {
 function renderAddonMinioMonitor() {
   return (
     '<div class="addon-minio-monitor">' +
-    '<p class="muted">Số liệu từ Prometheus (MinIO cluster metrics).</p>' +
+    '<p class="muted">Dung lượng volume (Tổng / Đã dùng / Còn lại) + object data từ Prometheus.</p>' +
     '<div class="addon-redis-monitor-actions">' +
     '<button type="button" class="btn-ghost btn-sm" id="addon-minio-stats-refresh">Làm mới</button>' +
     '<div class="monitor-segmented" id="addon-minio-window-segment">' +
@@ -219,7 +219,7 @@ function renderAddonMinioMonitor() {
     '<a class="btn-ghost btn-sm hidden" id="addon-minio-grafana-link" href="#" target="_blank" rel="noopener">Mở Grafana</a>' +
     '<span class="muted" id="addon-minio-stats-ts"></span>' +
     "</div>" +
-    '<div class="addon-redis-stats-grid" id="addon-minio-stats-grid">' +
+    '<div id="addon-minio-stats-grid">' +
     '<p class="muted">Đang tải metrics…</p>' +
     "</div>" +
     '<div class="addon-redis-sparklines hidden" id="addon-minio-sparklines"></div>' +
@@ -465,13 +465,15 @@ function renderAddonMinioOps(canManage) {
   );
 }
 
-function renderAddonMinioFiles(canManage, bucket) {
+function renderAddonMinioFiles(canManage, bucket, buckets) {
+  const options = (buckets || []).filter(function (b) { return b.status === "running"; }).map(function (b) {
+    return '<option value="' + esc(b.name) + '"' + (b.name === bucket ? " selected" : "") + ">" + esc(b.name) + "</option>";
+  }).join("");
   return (
     '<div class="addon-minio-files">' +
-    '<p class="muted">Duyệt object trong bucket <code>' +
-    esc(bucket || "app") +
-    "</code> · upload tối đa 10 MiB.</p>" +
+    '<p class="muted">Duyệt object theo bucket · upload tối đa 10 MiB.</p>' +
     '<div class="addon-redis-keys-toolbar addon-minio-files-toolbar">' +
+    '<label>Bucket <select id="addon-minio-files-bucket">' + options + "</select></label>" +
     '<label>Prefix <input type="text" id="addon-minio-files-prefix" placeholder="(trống = tất cả)" value=""></label>' +
     '<button type="button" class="btn-primary btn-sm" id="addon-minio-files-refresh">Làm mới</button>' +
     (canManage
@@ -493,6 +495,84 @@ function renderAddonMinioFiles(canManage, bucket) {
   );
 }
 
+function renderAddonMinioBuckets(data, canManage) {
+  const items = data.items || [];
+  const rows = items.map(function (b) {
+    const badge = b.is_default ? ' <span class="badge neutral">default</span>' : "";
+    const state = b.status === "running" ? '<span class="badge ok">ready</span>' : '<span class="badge warn">' + esc(b.status || "unknown") + "</span>";
+    const scan = b.scan_mode === "required"
+      ? '<span class="badge warn">scan required</span>'
+      : '<span class="badge muted">scan tắt</span>';
+    return "<tr><td><code>" + esc(b.name) + "</code>" + badge + "</td><td>" + esc(String(b.storage_gb)) + " Gi</td><td>" +
+      esc(String(b.max_object_mb)) + " Mi</td><td>" + state + "<br>" + scan + "</td><td>" +
+      (canManage ? '<button class="btn-ghost btn-sm addon-minio-bucket-edit" data-bucket="' + esc(b.name) + '" data-quota="' + esc(String(b.storage_gb)) + '">Chỉnh quota</button>' +
+        (b.scan_mode === "disabled" ? ' <button class="btn-ghost btn-sm addon-minio-scan-enable" data-bucket="' + esc(b.name) + '">Bật scan</button>' : "") : "—") +
+      "</td></tr>";
+  }).join("") || '<tr><td colspan="5" class="muted">Chưa có bucket.</td></tr>';
+  return '<div class="addon-minio-buckets"><p class="muted">Ngân sách instance: <strong>' + esc(String(data.instance_storage_gb || 0)) +
+    ' Gi</strong> · đã phân bổ <strong>' + esc(String(data.allocated_storage_gb || 0)) + ' Gi</strong> · còn <strong>' +
+    esc(String(data.free_storage_gb || 0)) + " Gi</strong>. Giảm quota bucket <code>app</code> trước khi tạo bucket mới.</p>" +
+    '<table class="addon-redis-keys-table"><thead><tr><th>Bucket</th><th>Quota</th><th>Max object</th><th>Trạng thái</th><th></th></tr></thead><tbody>' + rows + "</tbody></table>" +
+    (canManage ? '<div class="addon-quota-form" style="margin-top:12px"><label class="addon-quota-field">Tên bucket<input id="addon-minio-bucket-name" placeholder="media-private"></label>' +
+      '<label class="addon-quota-field">Quota (Gi)<input id="addon-minio-bucket-storage" type="number" min="1" value="1"></label>' +
+      '<label class="addon-quota-field">Max object (MiB)<input id="addon-minio-bucket-object" type="number" min="1" value="100"></label>' +
+      '<button class="btn-primary btn-sm" id="addon-minio-bucket-create">+ Tạo bucket</button></div>' : "") + "</div>";
+}
+
+function bindAddonMinioBuckets(slug, env, canManage, reload) {
+  if (!canManage) return;
+  document.querySelectorAll(".addon-minio-bucket-edit").forEach(function (btn) {
+    btn.onclick = async function () {
+      const next = window.prompt("Quota mới (GiB) cho bucket " + btn.dataset.bucket + ":", btn.dataset.quota);
+      if (next === null) return;
+      try {
+        await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/buckets/" + encodeURIComponent(btn.dataset.bucket) +
+          projectQs({ environment: env }), { method: "PATCH", body: { storage_gb: Number(next) } });
+        toastSuccess("Đã cập nhật quota bucket");
+        reload();
+      } catch (err) { toastError(err.message || "Không cập nhật được quota"); }
+    };
+  });
+  document.querySelectorAll(".addon-minio-scan-enable").forEach(function (btn) {
+    btn.onclick = async function () {
+      const ok = await uiConfirm(
+        "Bật scan bắt buộc cho " + btn.dataset.bucket + "? App key sẽ bị thu hồi quyền ghi trực tiếp bucket clean. Upload Console sẽ chờ scan trước khi file xuất hiện.",
+        { title: "Bật antivirus quarantine" }
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await withAppLoading(function () {
+          return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/buckets/" + encodeURIComponent(btn.dataset.bucket) +
+            "/scan/enable" + projectQs({ environment: env }), { method: "POST", timeout: 180000 });
+        }, { title: "Đang tạo quarantine và khóa direct upload…" });
+        toastSuccess("Đã bật scan required. Upload mới sẽ vào quarantine.");
+        reload();
+      } catch (err) { toastError(err.message || "Không bật được scan"); btn.disabled = false; }
+    };
+  });
+  const create = document.getElementById("addon-minio-bucket-create");
+  if (create) create.onclick = async function () {
+    const name = (document.getElementById("addon-minio-bucket-name") || {}).value || "";
+    const storage = Number((document.getElementById("addon-minio-bucket-storage") || {}).value);
+    const object = Number((document.getElementById("addon-minio-bucket-object") || {}).value);
+    create.disabled = true;
+    try {
+      const result = await withAppLoading(function () {
+        return api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/buckets", { method: "POST", body: {
+          environment: env, name: name, storage_gb: storage, max_object_mb: object
+        }, timeout: 180000 });
+      }, { title: "Đang tạo bucket và service account…" });
+      window.prompt(
+        "Đã tạo bucket " + result.name + ". Sao chép JSON credential ngay; sau khi đóng sẽ không được API hiển thị lại.",
+        JSON.stringify(result.connection || {}, null, 2)
+      );
+      toastSuccess("Đã tạo bucket " + result.name + ".");
+      reload();
+    } catch (err) { toastError(err.message || "Không tạo được bucket"); create.disabled = false; }
+  };
+}
+
 function fmtMinioObjectSize(n) {
   n = Number(n) || 0;
   if (n < 1024) return n + " B";
@@ -500,10 +580,11 @@ function fmtMinioObjectSize(n) {
   return (n / 1048576).toFixed(1) + " MiB";
 }
 
-function bindAddonMinioFiles(slug, env, canManage) {
+function bindAddonMinioFiles(slug, env, canManage, bucket, reload) {
   const body = document.getElementById("addon-minio-files-body");
   const meta = document.getElementById("addon-minio-files-meta");
   const prefixEl = document.getElementById("addon-minio-files-prefix");
+  const bucketEl = document.getElementById("addon-minio-files-bucket");
   if (!body) return;
 
   async function loadObjects() {
@@ -514,7 +595,7 @@ function bindAddonMinioFiles(slug, env, canManage) {
         "/api/v1/projects/" +
           encodeURIComponent(slug) +
           "/addons/minio/objects" +
-          projectQs({ environment: env, prefix: prefix || undefined, limit: 100 }),
+          projectQs({ environment: env, bucket: bucket || undefined, prefix: prefix || undefined, limit: 100 }),
         { noLoading: true }
       );
       const items = data.items || [];
@@ -529,7 +610,7 @@ function bindAddonMinioFiles(slug, env, canManage) {
               "/api/v1/projects/" +
               encodeURIComponent(slug) +
               "/addons/minio/objects/download" +
-              projectQs({ environment: env, key: key });
+              projectQs({ environment: env, bucket: bucket || undefined, key: key });
             return (
               "<tr><td><code>" +
               esc(key) +
@@ -560,7 +641,7 @@ function bindAddonMinioFiles(slug, env, canManage) {
                 "/api/v1/projects/" +
                   encodeURIComponent(slug) +
                   "/addons/minio/objects" +
-                  projectQs({ environment: env, key: k }),
+                  projectQs({ environment: env, bucket: bucket || undefined, key: k }),
                 { method: "DELETE" }
               );
               toastSuccess("Đã xóa " + k);
@@ -593,6 +674,11 @@ function bindAddonMinioFiles(slug, env, canManage) {
       if (e.key === "Enter") loadObjects();
     };
   }
+  if (bucketEl) bucketEl.onchange = function () {
+    state.minioBucketSelection = state.minioBucketSelection || {};
+    state.minioBucketSelection[slug + ":" + env] = bucketEl.value;
+    reload();
+  };
   const uploadBtn = document.getElementById("addon-minio-files-upload");
   const fileInput = document.getElementById("addon-minio-files-input");
   const keyInput = document.getElementById("addon-minio-files-key");
@@ -613,6 +699,7 @@ function bindAddonMinioFiles(slug, env, canManage) {
       const fd = new FormData();
       fd.append("file", f);
       fd.append("environment", env);
+      if (bucket) fd.append("bucket", bucket);
       const key = keyInput ? keyInput.value.trim() : "";
       if (key) fd.append("key", key);
       uploadBtn.disabled = true;
@@ -670,16 +757,62 @@ function renderAddonMinioStatsGrid(data) {
         : "")
     );
   }
+  const total =
+    prom.capacity_total_bytes != null ? prom.capacity_total_bytes : prom.usable_total_bytes;
+  const free =
+    prom.capacity_free_bytes != null ? prom.capacity_free_bytes : prom.usable_free_bytes;
+  const used =
+    prom.capacity_used_bytes != null
+      ? prom.capacity_used_bytes
+      : Math.max(0, (Number(total) || 0) - (Number(free) || 0));
+  const quotaGB = data.storage_quota_gb;
+  const nativeQuota = (data && data.native_quota) || {};
+  const usedPct = prom.used_pct != null ? prom.used_pct : 0;
+  const barW = Math.max(0, Math.min(100, Number(usedPct) || 0));
+
   return (
-    '<div class="addon-stat-card"><span class="muted">Usage</span><strong>' +
-    esc(formatBytesShort(prom.usage_total_bytes)) +
+    '<div class="addon-minio-storage-block">' +
+    '<p class="addon-minio-storage-title">Dung lượng ' +
+    '<span class="muted">(Budget project)</span></p>' +
+    '<div class="addon-minio-usage-bar" title="' +
+    esc(String(usedPct)) +
+    '%"><span style="width:' +
+    esc(String(barW)) +
+    '%"></span></div>' +
+    (quotaGB
+      ? '<p class="muted addon-minio-quota-hint">Budget: <strong>' +
+        esc(String(quotaGB)) +
+        " GiB</strong> (PVC + hard quota bucket)" +
+        (data.max_object_mb
+          ? " · Max object: <strong>" + esc(String(data.max_object_mb)) + " MiB</strong>"
+          : "") +
+        "</p>"
+      : "") +
+    '<p class="muted addon-minio-quota-hint">Native hard quota: <strong class="native-quota-' +
+    esc(String(nativeQuota.status || "unverified")) +
+    '">' +
+    esc(nativeQuota.status === "verified" ? "Đã xác minh" : nativeQuota.status === "failed" ? "Lỗi xác minh" : "Chưa xác minh") +
+    "</strong>" +
+    (nativeQuota.verified_at ? " · " + esc(new Date(nativeQuota.verified_at).toLocaleString()) : "") +
+    (nativeQuota.error ? " · " + esc(String(nativeQuota.error)) : "") +
+    "</p>" +
+    "</div>" +
+    '<div class="addon-redis-stats-grid">' +
+    '<div class="addon-stat-card"><span class="muted">Tổng</span><strong>' +
+    esc(formatBytesShort(total)) +
     "</strong></div>" +
-    '<div class="addon-stat-card"><span class="muted">Usable free</span><strong>' +
-    esc(formatBytesShort(prom.usable_free_bytes)) +
+    '<div class="addon-stat-card"><span class="muted">Đã dùng</span><strong>' +
+    esc(formatBytesShort(used)) +
     "</strong></div>" +
-    '<div class="addon-stat-card"><span class="muted">Used %</span><strong>' +
-    esc(String(prom.used_pct || 0)) +
+    '<div class="addon-stat-card"><span class="muted">Còn lại</span><strong>' +
+    esc(formatBytesShort(free)) +
+    "</strong></div>" +
+    '<div class="addon-stat-card"><span class="muted">Đã dùng %</span><strong>' +
+    esc(String(usedPct)) +
     "%</strong></div>" +
+    '<div class="addon-stat-card"><span class="muted">Số object</span><strong>' +
+    esc(String(prom.objects_count != null ? Math.round(prom.objects_count) : "—")) +
+    "</strong></div>" +
     '<div class="addon-stat-card"><span class="muted">Nodes online</span><strong>' +
     esc(String(prom.nodes_online || 0)) +
     "</strong></div>" +
@@ -689,8 +822,12 @@ function renderAddonMinioStatsGrid(data) {
     (k8s.available
       ? '<div class="addon-stat-card"><span class="muted">Pod RAM</span><strong>' +
         esc(String(k8s.memory_mib || 0)) +
-        " MiB</strong></div>"
-      : "")
+        " MiB</strong></div>" +
+        '<div class="addon-stat-card"><span class="muted">Pod CPU</span><strong>' +
+        esc(String(k8s.cpu_cores || 0)) +
+        "</strong></div>"
+      : "") +
+    "</div>"
   );
 }
 
@@ -1743,6 +1880,9 @@ async function loadProjectAddonMinio(main, slug, p) {
     const data = await api(
       "/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio" + projectQs({ environment: env })
     );
+    const bucketData = data.installed
+      ? await api("/api/v1/projects/" + encodeURIComponent(slug) + "/addons/minio/buckets" + projectQs({ environment: env })).catch(function () { return { items: [] }; })
+      : { items: [] };
     const ceilings = await api("/api/v1/platform/policy/ceilings").catch(function () { return {}; });
     const storageMax = ceilings.minio_max_storage_gb || 100;
     const memMax = ceilings.minio_max_memory_mb || 1024;
@@ -1830,13 +1970,17 @@ async function loadProjectAddonMinio(main, slug, p) {
     }
     const addon = data.addon || {};
     const canManage = !!data.can_manage;
+    const buckets = bucketData.items || [];
+    state.minioBucketSelection = state.minioBucketSelection || {};
+    const selectedBucket = state.minioBucketSelection[slug + ":" + env] ||
+      ((buckets.filter(function (b) { return b.is_default; })[0] || {}).name || addon.bucket || "app");
     const reasons = (addon.ha_capability && addon.ha_capability.reasons) || ha.reasons || [];
     const overviewBody = renderAddonMinioOverview(addon, haBadge, reasons);
     const connBody = renderAddonMinioConnection(addon, canManage);
     const quotaBody = renderAddonMinioQuota(addon, canManage, ceilings);
     const monitorBody = addon.has_connection ? renderAddonMinioMonitor() : '<p class="muted">Chưa có connection — chưa có metrics.</p>';
     const filesBody = addon.has_connection
-      ? renderAddonMinioFiles(canManage, addon.bucket || "app")
+      ? renderAddonMinioFiles(canManage, selectedBucket, buckets)
       : '<p class="muted">Bật MinIO và chờ connection để duyệt file.</p>';
     const opsBody = renderAddonMinioOps(canManage);
     const footerActions = canManage
@@ -1857,6 +2001,14 @@ async function loadProjectAddonMinio(main, slug, p) {
       "</strong> · <code>" +
       esc(data.namespace || "") +
       "</code></p>" +
+      renderDeployCollapsibleCard(
+        slug,
+        "addon-minio-buckets",
+        addonRedisCollapsibleSummary("Buckets", '<span class="badge neutral">' + esc(String(buckets.length)) + " bucket</span>"),
+        renderAddonMinioBuckets(bucketData, canManage),
+        true,
+        { id: "addon-sec-minio-buckets", extraClass: "addon-redis-collapsible" }
+      ) +
       renderDeployCollapsibleCard(
         slug,
         "addon-minio-overview",
@@ -1920,8 +2072,9 @@ async function loadProjectAddonMinio(main, slug, p) {
       footerActions;
 
     bindDeployCollapsibleCards(root, slug);
+    bindAddonMinioBuckets(slug, env, canManage, function () { loadProjectAddonMinio(main, slug, p); });
     if (addon.has_connection) {
-      bindAddonMinioFiles(slug, env, canManage);
+      bindAddonMinioFiles(slug, env, canManage, selectedBucket, function () { loadProjectAddonMinio(main, slug, p); });
     }
     const quotaValidate = canManage ? bindAddonMinioQuotaValidation(storageMax, memMax, objectMax) : null;
     const openQuotaBtn = document.getElementById("addon-minio-open-quota");

@@ -31,7 +31,7 @@ func TestK8sManifest_RollingUpdateDev(t *testing.T) {
 		t.Fatalf("want RollingUpdate, got %v", strat["type"])
 	}
 	ru := strat["rollingUpdate"].(map[string]any)
-	if ru["maxUnavailable"].(float64) != 0 || ru["maxSurge"].(float64) != 1 {
+	if ru["maxUnavailable"].(float64) != 1 || ru["maxSurge"].(float64) != 0 {
 		t.Fatalf("unexpected rollingUpdate: %v", ru)
 	}
 }
